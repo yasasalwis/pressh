@@ -1,18 +1,28 @@
-import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
+import { defineConfig } from "eslint/config";
 
 const eslintConfig = defineConfig([
-  ...nextVitals,
-  ...nextTs,
-  // Override default ignores of eslint-config-next.
-  globalIgnores([
-    // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
-  ]),
+  {
+    files: ["plugins/**/*.{ts,tsx,js,jsx,mjs}", "themes/**/*.{ts,tsx,js,jsx,mjs}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@pressh/core", "@pressh/core/*", "@pressh/engine", "@pressh/engine/*"],
+              message:
+                "Plugins and themes must not import @pressh/core or @pressh/engine directly. Use @pressh/sdk only.",
+            },
+            {
+              group: ["@pressh/sdk/host", "@pressh/sdk/internal"],
+              message:
+                "Plugins must import from @pressh/sdk (worker entry), not @pressh/sdk/host or /internal.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;
