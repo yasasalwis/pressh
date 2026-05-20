@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en" class="">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pressh — Architecture Dashboard v1</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { darkMode: 'class' };
+</script>
+<style>
+  :root { --brand:#6d28d9; --brand2:#0ea5e9; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .tabbtn.active { background: var(--brand); color:#fff; }
+  .mermaid { background:#fff; border-radius:12px; padding:14px; overflow:auto; }
+  .dark .mermaid { background:#0b1020; }
+  table.sortable th { cursor:pointer; user-select:none; }
+  table.sortable th:hover { text-decoration: underline; }
+  .badge { font-size:.7rem; font-weight:700; padding:.15rem .5rem; border-radius:999px; }
+  .fadein { animation: fade .35s ease; }
+  @keyframes fade { from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none} }
+  @media print {
+    .noprint { display:none !important; }
+    #tab-overview { display:block !important; }
+    .printtab { display:none !important; }
+  }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+
+<!-- HEADER -->
+<header class="noprint sticky top-0 z-40 backdrop-blur bg-white/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-800">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div class="w-9 h-9 rounded-xl grid place-items-center text-white font-black" style="background:linear-gradient(135deg,var(--brand),var(--brand2))">P</div>
+    <div class="mr-auto">
+      <h1 class="font-extrabold leading-none text-lg">Pressh</h1>
+      <p class="text-xs text-slate-500 dark:text-slate-400">Secure-by-default no-code CMS · Architecture Dashboard <span class="font-mono">v1</span></p>
+    </div>
+    <span id="statusBadge" class="badge bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">● Under Review</span>
+    <button id="themeToggle" class="text-sm px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800">🌓 Theme</button>
+  </div>
+  <!-- TABS -->
+  <nav class="max-w-7xl mx-auto px-2 pb-2 flex gap-1 overflow-x-auto text-sm">
+    <button data-tab="overview"     class="tabbtn active px-3 py-1.5 rounded-lg whitespace-nowrap">Overview</button>
+    <button data-tab="options"      class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Architecture Options</button>
+    <button data-tab="diagrams"     class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Diagrams</button>
+    <button data-tab="security"     class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Security &amp; Threats</button>
+    <button data-tab="scale"        class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Scale &amp; Perf</button>
+    <button data-tab="ops"          class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Reliability &amp; Ops</button>
+    <button data-tab="cost"         class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Cost</button>
+    <button data-tab="roadmap"      class="tabbtn px-3 py-1.5 rounded-lg whitespace-nowrap">Roadmap &amp; Self-Eval</button>
+  </nav>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-6">
+
+<!-- ===================== OVERVIEW ===================== -->
+<section id="tab-overview" class="tabpane fadein">
+  <div class="grid md:grid-cols-3 gap-4">
+    <div class="md:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 bg-white dark:bg-slate-900">
+      <h2 class="text-xl font-bold mb-2">Executive Summary</h2>
+      <p class="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+        <b>Pressh</b> is a self-hosted, no-code content management system built end-to-end in TypeScript, positioned as a
+        security-first alternative to WordPress. Its thesis is blunt: <i>"WordPress, but the data doesn't leak."</i>
+        Every architectural decision is filtered through the failure modes that make WordPress dangerous — plugin RCE,
+        SQL injection in plugin code, IDOR via guessable IDs, REST user enumeration, and file-upload RCE.
+        Pressh neutralizes these by running <b>all</b> plugins in isolated worker threads behind a default-deny capability
+        gate, never executing third-party code in the render tree, and baking security into the core SDK so plugin authors
+        <i>cannot forget it</i>. The public site and admin studio run as <b>two independent processes</b> on a unified
+        <b>Hono + Vite (SSR)</b> stack — no Next.js — using a WordPress-style front-controller so new content types,
+        pages, and plugin endpoints go live at request time with <b>zero rebuild</b>.
+      </p>
+    </div>
+    <div class="rounded-2xl border-2 border-violet-300 dark:border-violet-700 p-5 bg-violet-50 dark:bg-violet-950/30">
+      <div class="badge bg-violet-600 text-white mb-2 inline-block">★ RECOMMENDED</div>
+      <h3 class="font-bold">Option A — Two-Process Trust-Split</h3>
+      <p class="text-sm mt-2 text-slate-600 dark:text-slate-300">Separate Studio (admin) and Site (public) processes, each
+      with its own plugin host and worker pool. <b>Why:</b> it gives the strongest blast-radius isolation — a compromised
+      public plugin can never reach an admin session — which <i>is</i> the product. Both processes can co-locate on one box,
+      so small installs pay almost no ops tax.</p>
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-4 gap-4 mt-4">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <p class="text-xs uppercase tracking-wide text-slate-400">Deployment</p>
+      <p class="font-bold mt-1">Self-hosted, single-tenant</p>
+      <p class="text-xs text-slate-500 mt-1">Docker / npm — one install = one site (the WordPress model)</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <p class="text-xs uppercase tracking-wide text-slate-400">Scale target</p>
+      <p class="font-bold mt-1">SMB &amp; publishers</p>
+      <p class="text-xs text-slate-500 mt-1">Thousands → low-millions monthly views; file-default + tag-cache</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <p class="text-xs uppercase tracking-wide text-slate-400">Compliance</p>
+      <p class="font-bold mt-1">Strict GDPR</p>
+      <p class="text-xs text-slate-500 mt-1">Export, erasure, consent, retention — first-class engine features</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <p class="text-xs uppercase tracking-wide text-slate-400">No-code surface</p>
+      <p class="font-bold mt-1">Model · Build · Theme</p>
+      <p class="text-xs text-slate-500 mt-1">Content types, drag-drop pages, menus, forms, theming — no code</p>
+    </div>
+  </div>
+
+  <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-5 bg-white dark:bg-slate-900 mt-4">
+    <h3 class="font-bold mb-3">Requirements recap</h3>
+    <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+      <div>• <b>Stack:</b> TypeScript monorepo — core / engine / sdk / runtime / ui-kit + 2 apps</div>
+      <div>• <b>Servers:</b> Hono (HTTP) + Vite (build/SSR), React 19 UI</div>
+      <div>• <b>Plugins:</b> uniform worker-thread isolation, capability-gated RPC</div>
+      <div>• <b>Admin UI extensions:</b> iframe-sandboxed, strict CSP</div>
+      <div>• <b>Storage:</b> filesystem default + SQLite index; Postgres/SQLite/Mongo adapters</div>
+      <div>• <b>Users:</b> Owner / Admin / Editor / Author / Viewer + draft→review→publish</div>
+      <div>• <b>Availability target:</b> 99.9% single-node; horizontal site scaling for HA</div>
+      <div>• <b>14 secure-by-default baselines</b> locked (see Security tab)</div>
+    </div>
+  </div>
+
+  <div class="noprint mt-6 flex flex-col items-center gap-3">
+    <button id="approveBtn" class="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-lg">✓ Approve This Architecture</button>
+    <p id="approveMsg" class="hidden text-emerald-600 dark:text-emerald-400 font-semibold text-center"></p>
+  </div>
+</section>
+
+<!-- ===================== OPTIONS ===================== -->
+<section id="tab-options" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Architecture Options</h2>
+  <p class="text-sm text-slate-500 mb-5">All three keep the locked decisions (Hono+Vite, TS monorepo, worker-isolated plugins, file-default storage). They differ on <b>process topology</b> — which changes isolation, ops simplicity, and performance.</p>
+
+  <!-- Option A -->
+  <div class="rounded-2xl border-2 border-violet-300 dark:border-violet-700 p-5 bg-white dark:bg-slate-900 mb-5">
+    <div class="flex items-center gap-2 mb-1"><span class="badge bg-violet-600 text-white">★ RECOMMENDED</span><h3 class="text-xl font-bold">Option A — Two-Process Trust-Split</h3></div>
+    <p class="text-sm text-slate-500 italic mb-3">"Admin and public never share a process."</p>
+    <p class="text-sm leading-relaxed text-slate-600 dark:text-slate-300">Studio (admin) and Site (public) run as separate OS processes, each booting its <i>own</i> PluginHost and worker pool, both reading the same <code class="font-mono text-violet-600">/content</code> + <code class="font-mono text-violet-600">/plugins</code> on disk but never sharing memory. A reverse proxy routes <code class="font-mono">/admin</code> to Studio (lockable behind VPN/SSO/IP allowlist) and everything else to Site. State lives entirely in storage, so either process can be restarted or horizontally scaled independently. For a small install both processes run on one host under a process manager — the isolation is logical, not necessarily physical.</p>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <table class="text-sm w-full"><thead><tr class="text-left text-emerald-600"><th class="py-1">Pros</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-0.5">✓ Strongest blast radius isolation — public compromise can't touch admin sessions/cookies</td></tr>
+        <tr><td class="py-0.5">✓ Independent scaling: site scales out, studio stays single small node</td></tr>
+        <tr><td class="py-0.5">✓ Studio can be firewalled off the public internet entirely</td></tr>
+        <tr><td class="py-0.5">✓ Crash/restart of one process never degrades the other</td></tr>
+        <tr><td class="py-0.5">✓ Matches the security thesis — no shared trust boundary to subvert</td></tr>
+      </tbody></table>
+      <table class="text-sm w-full"><thead><tr class="text-left text-rose-600"><th class="py-1">Cons</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-0.5">✗ Two processes to supervise (mitigated: one compose file / process manager)</td></tr>
+        <tr><td class="py-0.5">✗ Slightly higher baseline RAM (two worker pools)</td></tr>
+        <tr><td class="py-0.5">✗ Shared storage needs file-locking discipline for concurrent writes</td></tr>
+        <tr><td class="py-0.5">✗ Cache invalidation must cross the process boundary (pub/sub or storage-watch)</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-5 bg-white dark:bg-slate-900 mb-5">
+    <h3 class="text-xl font-bold">Option B — Single-Process Modular Monolith</h3>
+    <p class="text-sm text-slate-500 italic mb-3">"One Hono server, admin and public separated by middleware."</p>
+    <p class="text-sm leading-relaxed text-slate-600 dark:text-slate-300">A single Hono process serves both <code class="font-mono">/admin</code> and public routes, with one shared PluginHost and worker pool. Route namespacing + middleware enforce authz. Simplest possible deploy: one container, one port, one thing to watch. Worker isolation for plugins still holds — but admin and public requests share the host process and the same plugin workers.</p>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <table class="text-sm w-full"><thead><tr class="text-left text-emerald-600"><th class="py-1">Pros</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-0.5">✓ Simplest ops — one process, lowest RAM, easiest local dev</td></tr>
+        <tr><td class="py-0.5">✓ No cross-process cache invalidation problem</td></tr>
+        <tr><td class="py-0.5">✓ Fastest path to a running MVP</td></tr>
+        <tr><td class="py-0.5">✓ Single shared worker pool = better plugin-worker utilization</td></tr>
+      </tbody></table>
+      <table class="text-sm w-full"><thead><tr class="text-left text-rose-600"><th class="py-1">Cons</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-0.5">✗ Weaker trust boundary — a host-process bug exposes admin + public together</td></tr>
+        <tr><td class="py-0.5">✗ Can't firewall admin separately from public traffic</td></tr>
+        <tr><td class="py-0.5">✗ Public-traffic spikes can starve admin responsiveness</td></tr>
+        <tr><td class="py-0.5">✗ Undercuts the core security differentiator</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-5 bg-white dark:bg-slate-900 mb-5">
+    <h3 class="text-xl font-bold">Option C — Static-First Hybrid</h3>
+    <p class="text-sm text-slate-500 italic mb-3">"Pre-render published pages to static; hydrate dynamic bits via API."</p>
+    <p class="text-sm leading-relaxed text-slate-600 dark:text-slate-300">On publish, the engine renders content to static HTML written to disk/CDN. The public "site" is mostly static files; dynamic features (search, forms, comments, personalization) call the API process. Studio + API run like Option A. Smallest possible public attack surface (static files can't be injected), best raw performance.</p>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <table class="text-sm w-full"><thead><tr class="text-left text-emerald-600"><th class="py-1">Pros</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-0.5">✓ Best performance &amp; cacheability; trivial CDN fronting</td></tr>
+        <tr><td class="py-0.5">✓ Tiny public attack surface — mostly static assets</td></tr>
+        <tr><td class="py-0.5">✓ Public tier can survive even if the app process is down</td></tr>
+      </tbody></table>
+      <table class="text-sm w-full"><thead><tr class="text-left text-rose-600"><th class="py-1">Cons</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-0.5">✗ Build/publish step adds latency between "publish" and "live"</td></tr>
+        <tr><td class="py-0.5">✗ Truly dynamic / personalized / logged-in pages are awkward</td></tr>
+        <tr><td class="py-0.5">✗ Large sites = large static rebuilds; incremental rebuild is complex</td></tr>
+        <tr><td class="py-0.5">✗ Instant preview &amp; A/B harder; more moving parts than B</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  <!-- Comparison matrix -->
+  <h3 class="font-bold mb-2 mt-6">Side-by-side comparison <span class="text-xs font-normal text-slate-400">(1 = poor, 5 = excellent)</span></h3>
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table class="sortable w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr>
+      <th class="text-left p-3">Dimension</th><th class="p-3">A · Trust-Split</th><th class="p-3">B · Monolith</th><th class="p-3">C · Static-First</th>
+    </tr></thead>
+    <tbody>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-3 font-semibold">Security posture</td><td class="p-3 text-center text-emerald-600 font-bold">5</td><td class="p-3 text-center">3</td><td class="p-3 text-center">4</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-3 font-semibold">Scalability ceiling</td><td class="p-3 text-center">5</td><td class="p-3 text-center">3</td><td class="p-3 text-center text-emerald-600 font-bold">5</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-3 font-semibold">Operational simplicity</td><td class="p-3 text-center">3</td><td class="p-3 text-center text-emerald-600 font-bold">5</td><td class="p-3 text-center">2</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-3 font-semibold">Time-to-MVP</td><td class="p-3 text-center">4</td><td class="p-3 text-center text-emerald-600 font-bold">5</td><td class="p-3 text-center">2</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-3 font-semibold">Cost (small install)</td><td class="p-3 text-center">4</td><td class="p-3 text-center text-emerald-600 font-bold">5</td><td class="p-3 text-center">4</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-3 font-semibold">Dynamism / instant-live</td><td class="p-3 text-center text-emerald-600 font-bold">5</td><td class="p-3 text-center">5</td><td class="p-3 text-center">2</td></tr>
+      <tr class="border-t-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50"><td class="p-3 font-bold">Total</td><td class="p-3 text-center font-bold text-violet-600">26</td><td class="p-3 text-center font-bold">26</td><td class="p-3 text-center font-bold">19</td></tr>
+    </tbody>
+  </table></div>
+  <p class="text-xs text-slate-500 mt-2">A and B tie on raw score, but the tie-breaker is the product thesis: <b>security is the differentiator</b>, so A wins. The ops gap vs B is closed by co-locating both processes on one host for small deployments — you keep the trust boundary without running more infrastructure.</p>
+</section>
+
+<!-- ===================== DIAGRAMS ===================== -->
+<section id="tab-diagrams" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Diagram Gallery</h2>
+  <p class="text-sm text-slate-500 mb-5">Full set for the recommended <b>Option A</b>, plus comparative container views for B and C.</p>
+
+  <h3 class="font-bold mt-4 mb-2">C4 — System Context</h3>
+  <div class="mermaid">
+flowchart TB
+  visitor["👤 Anonymous Visitor<br/>(reads public site)"]
+  editor["👤 Content Editor / Author<br/>(no-code: model, build, publish)"]
+  admin["👤 Site Admin / Owner<br/>(users, plugins, settings)"]
+  devp["👤 Plugin / Theme Developer<br/>(authors TS extensions)"]
+  subject["👤 Data Subject<br/>(GDPR export / erasure)"]
+
+  pressh(("Pressh CMS<br/>self-hosted, single-tenant"))
+
+  smtp["✉️ SMTP / Email"]
+  cdn["🌐 CDN / Reverse Proxy"]
+  cve["🛡️ Plugin CVE Feed"]
+  db["🗄️ Optional External DB<br/>(Postgres / Mongo)"]
+  obj["📦 Optional Object Store<br/>(S3-compatible media)"]
+
+  visitor -->|HTTPS GET| pressh
+  editor -->|HTTPS /admin| pressh
+  admin -->|HTTPS /admin| pressh
+  devp -->|installs signed plugin bundle| pressh
+  subject -->|GDPR request| pressh
+  pressh -->|send mail| smtp
+  cdn -->|caches public pages| pressh
+  pressh -->|sync vuln data| cve
+  pressh -.->|optional adapter| db
+  pressh -.->|optional adapter| obj
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">C4 — Container (Option A · Two-Process Trust-Split)</h3>
+  <div class="mermaid">
+flowchart TB
+  proxy["🌐 Reverse Proxy / TLS<br/>(Caddy / Nginx)"]
+
+  subgraph SITE["Site Process · public — Hono + Vite SSR"]
+    fc["Front Controller<br/>catch-all route resolver"]
+    apidisp["API Dispatcher<br/>catch-all /api/*"]
+    ssr["SSR Render + Tag Cache"]
+    host1["PluginHost #1"]
+    w1["worker: plugin A"]
+    w2["worker: plugin B"]
+    host1 --> w1
+    host1 --> w2
+  end
+
+  subgraph STUDIO["Studio Process · admin — Hono + Vite SPA"]
+    spa["Admin SPA (React 19)"]
+    adminapi["Admin API + RPC"]
+    iframes["Iframe-sandboxed<br/>plugin panels (CSP)"]
+    host2["PluginHost #2"]
+    w3["worker: plugin A"]
+    host2 --> w3
+  end
+
+  subgraph PKG["Shared packages (in-process libs)"]
+    core["@pressh/core<br/>auth · caps · vault · audit · jobs"]
+    engine["@pressh/engine<br/>content · blocks · query · i18n · media"]
+  end
+
+  subgraph STORE["Storage layer"]
+    fs["📁 Filesystem (content + media)"]
+    idx["🗃️ SQLite index sidecar"]
+    vault["🔐 Secrets vault (AES-256-GCM)"]
+  end
+
+  proxy -->|"/ , /api"| fc
+  proxy -->|"/admin (allowlist)"| spa
+  fc --> ssr
+  fc --> engine
+  apidisp -->|capability check| host1
+  ssr --> engine
+  spa --> adminapi
+  adminapi -->|capability check| host2
+  adminapi --> core
+  adminapi --> engine
+  iframes -. postMessage .- spa
+  engine --> core
+  core --> fs
+  core --> idx
+  core --> vault
+  engine --> fs
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">Comparative Container — Option B (Monolith) vs C (Static-First)</h3>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="mermaid">
+flowchart TB
+  p2["Reverse Proxy"]
+  subgraph MONO["Single Hono Process (Option B)"]
+    mw["Auth/Route middleware"]
+    pub["Public SSR"]
+    adm["Admin SPA+API"]
+    h["PluginHost (shared)"]
+    ww["workers"]
+    h-->ww
+  end
+  store2["Storage (FS+SQLite+Vault)"]
+  p2-->mw
+  mw-->pub
+  mw-->adm
+  pub-->store2
+  adm-->h
+  adm-->store2
+    </div>
+    <div class="mermaid">
+flowchart TB
+  cdn3["CDN"]
+  static["📄 Static HTML/CSS/JS<br/>(rendered on publish)"]
+  subgraph API3["API + Studio Process (Option C)"]
+    pub3["Render-on-publish job"]
+    dyn["Dynamic API<br/>(search/forms/comments)"]
+    h3["PluginHost"]
+  end
+  store3["Storage"]
+  cdn3-->static
+  cdn3-->|"/api dynamic"| dyn
+  pub3-->|writes| static
+  pub3-->store3
+  dyn-->h3
+  dyn-->store3
+    </div>
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">Sequence — Editor publishes a page (auth + CSRF + capability + cache)</h3>
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor E as Editor (browser)
+  participant ST as Studio (Hono)
+  participant CR as Core (auth/caps)
+  participant EN as Engine
+  participant FS as Storage
+  participant SI as Site (cache)
+  E->>ST: POST /admin/api/content/:id/publish (cookie + CSRF token)
+  ST->>CR: verify session + CSRF
+  alt invalid session / CSRF
+    CR-->>ST: 401 / 403
+    ST-->>E: error (no enumeration detail)
+  else valid
+    CR->>CR: capability check (content.publish)
+    CR-->>ST: granted
+    ST->>EN: transition draft → published (new revision)
+    EN->>FS: write entry + revision (UUID id)
+    EN->>CR: append audit log entry
+    EN->>SI: revalidateTag("content:"+id)
+    SI-->>EN: cache purged
+    EN-->>ST: published @ revision N
+    ST-->>E: 200 OK
+  end
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">Sequence — Public request through the Front Controller (incl. plugin RPC)</h3>
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor V as Visitor
+  participant PX as Proxy/CDN
+  participant FC as Site Front Controller
+  participant EN as Engine
+  participant FS as Storage
+  participant PH as PluginHost
+  participant WK as Plugin Worker
+  V->>PX: GET /blog/my-post
+  PX->>FC: cache miss → forward
+  FC->>EN: resolve(url) → content + blocks
+  EN->>FS: read published entry (scoped: published-only)
+  FS-->>EN: entry
+  EN->>PH: render hook (capability-checked)
+  PH->>WK: RPC over parentPort (structured clone)
+  WK-->>PH: block output (sanitized)
+  PH-->>EN: result
+  EN-->>FC: rendered HTML
+  FC->>PX: 200 + Cache-Tag headers
+  PX-->>V: HTML (then cached)
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">Data Flow — Content create → publish → serve</h3>
+  <div class="mermaid">
+flowchart LR
+  in["Editor input<br/>(blocks JSON)"] --> san["Per-block<br/>sanitizer"]
+  san --> val["Zod schema<br/>validation"]
+  val --> store[("Storage<br/>FS + index")]
+  store --> rev["Revision<br/>(append-only)"]
+  store --> tag["Cache tag<br/>registry"]
+  store --> audit["Audit log<br/>(append-only)"]
+  store --> render["SSR render"]
+  render --> cache["Tag cache"]
+  cache --> cdn["CDN edge"]
+  cdn --> visitor["Visitor"]
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">Entity Relationship — Core data model</h3>
+  <div class="mermaid">
+erDiagram
+  USER ||--o{ SESSION : has
+  USER }o--o{ ROLE : assigned
+  ROLE }o--o{ CAPABILITY : grants
+  CONTENT_TYPE ||--o{ FIELD : defines
+  CONTENT_TYPE ||--o{ CONTENT_ENTRY : typed
+  CONTENT_ENTRY ||--o{ REVISION : versions
+  CONTENT_ENTRY ||--o{ LOCALE_VARIANT : translated
+  CONTENT_ENTRY }o--o{ MEDIA : references
+  MENU ||--o{ MENU_ITEM : contains
+  FORM ||--o{ FORM_SUBMISSION : collects
+  PLUGIN ||--o{ CAPABILITY_GRANT : requests
+  PLUGIN ||--|| PLUGIN_SIGNATURE : "verified by"
+  USER ||--o{ AUDIT_ENTRY : actor
+  SECRET ||--o{ CAPABILITY_GRANT : "scoped to"
+  USER {
+    uuid id PK
+    string email
+    string password_hash
+    bool mfa_enabled
+    timestamp created_at
+  }
+  CONTENT_ENTRY {
+    uuid id PK
+    uuid type_id FK
+    string slug
+    enum status
+    uuid author_id FK
+    timestamp published_at
+  }
+  REVISION {
+    uuid id PK
+    uuid entry_id FK
+    int version
+    json blocks
+    uuid editor_id FK
+  }
+  AUDIT_ENTRY {
+    uuid id PK
+    string action
+    uuid actor_id
+    json detail
+    string prev_hash
+    timestamp at
+  }
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">State Machine — Content lifecycle</h3>
+  <div class="mermaid">
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> InReview: submit (content.submit)
+  InReview --> Draft: request changes
+  InReview --> Scheduled: approve + future date
+  InReview --> Published: approve + publish (content.publish)
+  Scheduled --> Published: scheduler job fires
+  Published --> Draft: unpublish → new draft revision
+  Published --> Archived: archive
+  Archived --> Draft: restore
+  Archived --> [*]: GDPR erase (audited)
+  </div>
+
+  <h3 class="font-bold mt-6 mb-2">Deployment — Single-host small install (Option A co-located)</h3>
+  <div class="mermaid">
+flowchart TB
+  internet["🌍 Internet"]
+  subgraph HOST["Docker host (1 VM)"]
+    cad["Caddy/Nginx<br/>TLS + routing"]
+    subgraph C1["container: site"]
+      sp["Site process<br/>(public)"]
+    end
+    subgraph C2["container: studio"]
+      stp["Studio process<br/>(admin, allowlisted)"]
+    end
+    vol["📁 Volume: /content /plugins /media"]
+    sql["SQLite index"]
+  end
+  internet -->|443| cad
+  cad -->|public| sp
+  cad -->|"/admin + IP allowlist"| stp
+  sp --- vol
+  stp --- vol
+  sp --- sql
+  stp --- sql
+  </div>
+</section>
+
+<!-- ===================== SECURITY ===================== -->
+<section id="tab-security" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Security &amp; Threat Model</h2>
+  <p class="text-sm text-slate-500 mb-5">Pressh exists because WordPress leaks. This is the most important tab.</p>
+
+  <h3 class="font-bold mb-2">STRIDE analysis</h3>
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table class="sortable w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr>
+      <th class="text-left p-2">Threat</th><th class="p-2">Category</th><th class="p-2">Likelihood</th><th class="p-2">Impact</th><th class="text-left p-2">Built-in mitigation</th>
+    </tr></thead>
+    <tbody class="text-slate-600 dark:text-slate-300">
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Malicious plugin runs arbitrary host code (RCE)</td><td class="p-2 text-center">Elevation</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">Worker-thread isolation; plugin never imported into host; RPC-only channel</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Plugin reads data it wasn't granted</td><td class="p-2 text-center">Info Disclosure</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">Default-deny capability gate on every cross-boundary RPC</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">IDOR — guess sequential content IDs</td><td class="p-2 text-center">Info Disclosure</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">UUID v4 IDs everywhere; public scope = published-only</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">User enumeration via public API</td><td class="p-2 text-center">Info Disclosure</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">No user data on public endpoints; uniform error responses</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Stored XSS via block content</td><td class="p-2 text-center">Tampering</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">Per-block sanitization; raw HTML needs explicit capability; strict CSP</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">CSRF on admin mutations</td><td class="p-2 text-center">Tampering</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">CSRF tokens enforced in SDK — authors can't forget</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">File-upload RCE / polyglot</td><td class="p-2 text-center">Elevation</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">Magic-byte + content-type + extension whitelist; stored outside web root</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Secret theft from process memory/env</td><td class="p-2 text-center">Info Disclosure</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">Sealed AES-256-GCM vault; plugins get scoped tokens by name, never raw env</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Plugin admin UI steals studio session</td><td class="p-2 text-center">Spoofing</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">Iframe sandbox (allow-scripts allow-forms); no same-origin cookie access</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Credential stuffing / brute force</td><td class="p-2 text-center">Spoofing</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">Rate limiting + account lockout + argon2 hashing in auth core</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Tampering with audit history</td><td class="p-2 text-center">Repudiation</td><td class="p-2 text-center">L</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">Append-only, hash-chained audit log</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Known-vulnerable plugin installed</td><td class="p-2 text-center">Elevation</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">CVE feed sync; host refuses to load flagged plugins; signature required in prod</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Plugin DoS (infinite loop / memory bomb)</td><td class="p-2 text-center">DoS</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">Per-worker CPU/timeout + memory caps; host kills + restarts</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Controls by layer</h3>
+      <ul class="text-sm space-y-1 text-slate-600 dark:text-slate-300">
+        <li><b>Edge:</b> TLS-only, HSTS, reverse proxy, optional WAF/rate-limit, admin IP allowlist</li>
+        <li><b>Network:</b> studio private subnet/firewall; egress restricted to declared plugin origins</li>
+        <li><b>App:</b> strict CSP, CSRF tokens, output sanitization, OWASP input validation (Zod)</li>
+        <li><b>Data:</b> UUID IDs, encryption at rest for <code>sensitive</code> fields, published-only public scope</li>
+        <li><b>Identity:</b> argon2, sessions in httpOnly cookies, MFA-ready, RBAC capabilities, lockout</li>
+        <li><b>Supply chain:</b> plugin signing, CVE feed, dependency pinning, SBOM in CI</li>
+      </ul>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">14 secure-by-default baselines (locked)</h3>
+      <ol class="text-xs space-y-0.5 text-slate-600 dark:text-slate-300 list-decimal list-inside">
+        <li>UUID content IDs</li><li>Public APIs return published-only</li><li>No user enumeration</li>
+        <li>Block sanitization; raw HTML gated</li><li>CSRF tokens in SDK</li><li>Encrypted <code>sensitive</code> fields</li>
+        <li>Sealed secrets vault</li><li>Append-only audit log</li><li>TLS required in prod</li>
+        <li>Strict CSP; declared origins</li><li>Plugin CVE feed</li><li>Auth rate-limit + lockout</li>
+        <li>Upload validation</li><li>No raw DB access for plugins</li>
+      </ol>
+    </div>
+  </div>
+
+  <h3 class="font-bold mb-2 mt-5">GDPR compliance mapping</h3>
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table class="w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr><th class="text-left p-2">GDPR requirement</th><th class="text-left p-2">Article</th><th class="text-left p-2">How Pressh satisfies it</th></tr></thead>
+    <tbody class="text-slate-600 dark:text-slate-300">
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Right of access</td><td class="p-2">Art. 15</td><td class="p-2">Data-subject export job: all records keyed to a subject, machine-readable</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Right to erasure</td><td class="p-2">Art. 17</td><td class="p-2">Cascade-erase with audited tombstone; sensitive data crypto-shredded</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Data portability</td><td class="p-2">Art. 20</td><td class="p-2">Export in JSON; importable schema</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Consent</td><td class="p-2">Art. 6/7</td><td class="p-2">Consent manager + cookie banner; consent state stored &amp; auditable</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Records of processing</td><td class="p-2">Art. 30</td><td class="p-2">Append-only audit log of every mutation &amp; data access</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Storage limitation</td><td class="p-2">Art. 5(1e)</td><td class="p-2">Configurable retention policies + scheduled purge jobs</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Security of processing</td><td class="p-2">Art. 32</td><td class="p-2">Encryption at rest/in transit; the entire threat model above</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 class="font-bold mb-2 mt-5">Secrets management</h3>
+  <p class="text-sm text-slate-600 dark:text-slate-300">A sealed vault (<code class="font-mono">SecretsBackend</code> interface) ships with a file-based <b>AES-256-GCM</b> backend keyed by <code class="font-mono">PRESSH_MASTER_KEY</code> (provided via env/secret-manager at boot, never written to disk in plaintext). Plugins never see <code>process.env</code>; they request a secret <i>by name</i> and receive a short-lived scoped token only if their manifest holds the matching capability. Rotation: re-encrypt on key roll; audit log records every secret access.</p>
+</section>
+
+<!-- ===================== SCALE ===================== -->
+<section id="tab-scale" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Scalability &amp; Performance</h2>
+  <p class="text-sm text-slate-500 mb-5">Target: SMB &amp; publishers — thousands to low-millions of monthly views per site.</p>
+
+  <h3 class="font-bold mb-2">Per-component scaling strategy</h3>
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table class="w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr><th class="text-left p-2">Component</th><th class="text-left p-2">Strategy</th></tr></thead>
+    <tbody class="text-slate-600 dark:text-slate-300">
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Site process</td><td class="p-2">Stateless → horizontal scale behind proxy; all state in storage</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Studio process</td><td class="p-2">Stays single small node (admin traffic is tiny); vertical if needed</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Render cache</td><td class="p-2">Tag-based cache + CDN edge; invalidate by content tag on publish</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Plugin workers</td><td class="p-2">Pool per process; cap count; cache plugin output to avoid repeated RPC</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Storage (FS default)</td><td class="p-2">SQLite index for queries; migrate to Postgres adapter past ~100k entries</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Media</td><td class="p-2">Local disk → S3-compatible object store + CDN as volume grows</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Capacity model</h3>
+      <ul class="text-sm space-y-1 text-slate-600 dark:text-slate-300">
+        <li><b>Launch (1 VM, 2 vCPU / 4 GB):</b> ~200–500 req/s cached, ~30–60 req/s SSR-uncached, comfortably serves a site at low-millions of monthly views with CDN in front.</li>
+        <li><b>2-year (3× site nodes + managed Postgres + CDN):</b> ~1.5k+ req/s SSR, multi-site portfolio scale; bottleneck shifts to DB writes, not render.</li>
+        <li><b>Editorial:</b> dozens of concurrent editors on one studio node is fine — admin is low-QPS, capability checks are in-process.</li>
+      </ul>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Bottleneck map (in order)</h3>
+      <ol class="text-sm space-y-1 text-slate-600 dark:text-slate-300 list-decimal list-inside">
+        <li><b>SSR CPU on cache miss</b> → tag-cache + CDN + stale-while-revalidate</li>
+        <li><b>Plugin RPC latency on plugin-heavy pages</b> → batch RPCs, memoize plugin output per content version</li>
+        <li><b>FS write contention under concurrent publish</b> → SQLite index + switch to Postgres adapter</li>
+        <li><b>Media bandwidth</b> → object store + CDN offload</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900 mt-4">
+    <h3 class="font-bold mb-2">Caching philosophy</h3>
+    <p class="text-sm text-slate-600 dark:text-slate-300">Public pages are cached by <b>content tag</b>, not by time. A page caches indefinitely and is purged the instant its content (or a dependency) changes via <code>revalidateTag</code> — so editors see instant-live updates <i>and</i> visitors get CDN-speed. Personalized/logged-in responses bypass cache. Plugin output is memoized per content revision to keep worker RPC off the hot path.</p>
+  </div>
+</section>
+
+<!-- ===================== OPS ===================== -->
+<section id="tab-ops" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Reliability &amp; Operations</h2>
+
+  <h3 class="font-bold mb-2 mt-2">Failure modes</h3>
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table class="w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr><th class="text-left p-2">Component</th><th class="text-left p-2">Failure</th><th class="text-left p-2">Detection</th><th class="text-left p-2">Mitigation / recovery</th></tr></thead>
+    <tbody class="text-slate-600 dark:text-slate-300">
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Plugin worker</td><td class="p-2">Crash / hang / OOM</td><td class="p-2">Heartbeat + timeout</td><td class="p-2">Host kills &amp; restarts worker; request fails closed; &lt;1s</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Site process</td><td class="p-2">Crash</td><td class="p-2">Health check</td><td class="p-2">Supervisor/orchestrator restart; CDN serves stale; seconds</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Storage (FS)</td><td class="p-2">Corruption / disk full</td><td class="p-2">Disk + integrity alerts</td><td class="p-2">Restore from backup; SQLite index rebuildable from files</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">SQLite index</td><td class="p-2">Index drift</td><td class="p-2">Checksum on boot</td><td class="p-2">Rebuild index from canonical files (idempotent)</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Secrets vault</td><td class="p-2">Bad master key</td><td class="p-2">Decrypt failure on boot</td><td class="p-2">Fail-closed startup; operator supplies correct key</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Scheduler</td><td class="p-2">Missed job after downtime</td><td class="p-2">Persisted job state</td><td class="p-2">Catch-up on restart; jobs are idempotent</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">RTO / RPO &amp; DR</h3>
+      <ul class="text-sm space-y-1 text-slate-600 dark:text-slate-300">
+        <li><b>RPO:</b> ≤ 24h with daily backups; ≤ 1h with hourly snapshots / DB WAL</li>
+        <li><b>RTO:</b> single-node restore ~15–30 min from backup volume</li>
+        <li><b>DR posture:</b> active-passive — nightly off-host backup of <code>/content</code>, <code>/media</code>, vault, DB; restore to a fresh host</li>
+        <li>Stateless site processes mean HA = run ≥2 behind the proxy</li>
+      </ul>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Observability stack</h3>
+      <ul class="text-sm space-y-1 text-slate-600 dark:text-slate-300">
+        <li><b>Logs:</b> structured JSON (pino), sensitive fields redacted</li>
+        <li><b>Metrics:</b> Prometheus — req rate, SSR p50/p99, cache hit %, worker restarts</li>
+        <li><b>Tracing:</b> OpenTelemetry across proxy → app → worker RPC</li>
+        <li><b>Alerting:</b> SLO breach (p99, error rate, worker crash loop) → runbook links</li>
+        <li><b>Audit log</b> doubles as a security/compliance signal</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900 mt-4">
+    <h3 class="font-bold mb-2">Runbook sketches (top 3)</h3>
+    <ul class="text-sm space-y-2 text-slate-600 dark:text-slate-300">
+      <li><b>Worker crash-loop for plugin X:</b> check worker logs → if reproducible, disable plugin via admin (capability revoke) → site degrades gracefully (block renders fallback) → file issue with plugin author.</li>
+      <li><b>Public site 5xx spike:</b> check health + SSR p99 → confirm cache hit % drop → warm cache / scale site nodes → if storage-bound, check disk + index integrity.</li>
+      <li><b>Suspected breach / anomalous capability use:</b> consult audit log → rotate <code>PRESSH_MASTER_KEY</code> + sessions → quarantine offending plugin → restore from known-good backup if needed.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ===================== COST ===================== -->
+<section id="tab-cost" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Cost Model</h2>
+  <p class="text-sm text-slate-500 mb-5">Self-hosted, so cost = the operator's infrastructure. Figures are directional monthly USD.</p>
+
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Launch (single site)</h3>
+      <table class="w-full text-sm"><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-1">1 VM (2 vCPU / 4 GB)</td><td class="text-right font-mono">$20–40</td></tr>
+        <tr><td class="py-1">CDN (free tier → light)</td><td class="text-right font-mono">$0–10</td></tr>
+        <tr><td class="py-1">Object storage (media)</td><td class="text-right font-mono">$0–5</td></tr>
+        <tr><td class="py-1">SMTP (transactional)</td><td class="text-right font-mono">$0–15</td></tr>
+        <tr><td class="py-1">Backups</td><td class="text-right font-mono">$2–5</td></tr>
+        <tr class="border-t font-bold"><td class="py-1">Total</td><td class="text-right font-mono">~$25–75/mo</td></tr>
+      </tbody></table>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">2-year (high-traffic / portfolio)</h3>
+      <table class="w-full text-sm"><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-1">3× site nodes</td><td class="text-right font-mono">$120–240</td></tr>
+        <tr><td class="py-1">Studio node</td><td class="text-right font-mono">$20–40</td></tr>
+        <tr><td class="py-1">Managed Postgres</td><td class="text-right font-mono">$50–150</td></tr>
+        <tr><td class="py-1">CDN (high traffic)</td><td class="text-right font-mono">$30–100</td></tr>
+        <tr><td class="py-1">Object storage + egress</td><td class="text-right font-mono">$20–60</td></tr>
+        <tr class="border-t font-bold"><td class="py-1">Total</td><td class="text-right font-mono">~$240–630/mo</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-4">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Build vs. buy</h3>
+      <table class="w-full text-sm"><thead><tr class="text-left text-slate-400"><th>Component</th><th>Decision</th></tr></thead><tbody class="text-slate-600 dark:text-slate-300">
+        <tr><td class="py-1">CMS core / engine / plugin host</td><td class="font-semibold text-violet-600">Build</td></tr>
+        <tr><td class="py-1">CDN</td><td>Buy</td></tr>
+        <tr><td class="py-1">SMTP / email</td><td>Buy</td></tr>
+        <tr><td class="py-1">Object storage</td><td>Buy</td></tr>
+        <tr><td class="py-1">Managed DB (optional)</td><td>Buy</td></tr>
+        <tr><td class="py-1">Auth / RBAC</td><td class="font-semibold text-violet-600">Build (core to product)</td></tr>
+      </tbody></table>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-2">Top cost levers</h3>
+      <ol class="text-sm space-y-1 text-slate-600 dark:text-slate-300 list-decimal list-inside">
+        <li><b>CDN cache hit %</b> — high tag-cache hit ratio slashes origin nodes (biggest lever)</li>
+        <li><b>Stay file-default</b> until you truly need managed Postgres (~$50–150/mo saved)</li>
+        <li><b>Reserved/committed instances</b> for steady site nodes (~30–50% off on-demand)</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ROADMAP ===================== -->
+<section id="tab-roadmap" class="tabpane hidden">
+  <h2 class="text-2xl font-bold mb-1">Roadmap &amp; Self-Evaluation</h2>
+  <p class="text-sm text-slate-500 mb-4">The phase plan is dependency-ordered and sized so an implementation agent can complete each phase end-to-end with a clear acceptance gate — no missing parts between phases.</p>
+
+  <div class="flex flex-wrap gap-2 mb-3 text-xs noprint">
+    <span class="text-slate-400 self-center">Filter:</span>
+    <button class="rmfilter px-2 py-1 rounded border border-slate-300 dark:border-slate-700" data-f="all">All</button>
+    <button class="rmfilter px-2 py-1 rounded border border-slate-300 dark:border-slate-700" data-f="MVP">MVP</button>
+    <button class="rmfilter px-2 py-1 rounded border border-slate-300 dark:border-slate-700" data-f="Scale">Scale</button>
+    <button class="rmfilter px-2 py-1 rounded border border-slate-300 dark:border-slate-700" data-f="Mature">Mature</button>
+  </div>
+
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table id="roadmapTable" class="sortable w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr>
+      <th class="text-left p-2">#</th><th class="text-left p-2">Phase / deliverable</th><th class="p-2">Wave</th><th class="p-2">Effort</th><th class="p-2">Impact</th><th class="text-left p-2">Depends on</th>
+    </tr></thead>
+    <tbody class="text-slate-600 dark:text-slate-300">
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">0</td><td class="p-2"><b>Monorepo &amp; tooling skeleton</b> — npm workspaces, tsconfig base, Vitest (<code>@pressh/*→src</code> aliases), <code>build:packages</code> (tsc -b), lint, CI. <i>Accept:</i> build + test green on empty pkgs.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">S</td><td class="p-2 text-center">H</td><td class="p-2">—</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">1</td><td class="p-2"><b>core: kernel primitives</b> — types, Result/error model, async hook bus, capability registry, pino logger, config loader. <i>Accept:</i> hook bus + capability registry unit tests.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">M</td><td class="p-2 text-center">H</td><td class="p-2">0</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">2</td><td class="p-2"><b>Storage interface + FS adapter + SQLite index</b> — <code>StorageAdapter</code>, filesystem content store, better-sqlite3 index, migrations. <i>Accept:</i> CRUD round-trip + index rebuild.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">M</td><td class="p-2 text-center">H</td><td class="p-2">1</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">3</td><td class="p-2"><b>Secrets vault + audit log</b> — <code>SecretsBackend</code> + AES-256-GCM file backend; append-only hash-chained audit writer. <i>Accept:</i> encrypt/decrypt + tamper-evident chain tests.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">M</td><td class="p-2 text-center">H</td><td class="p-2">1,2</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">4</td><td class="p-2"><b>Auth &amp; RBAC core</b> — users, roles (Owner/Admin/Editor/Author/Viewer), capabilities, sessions (httpOnly), argon2, rate-limit + lockout, CSRF issuance. <i>Accept:</i> login/logout, role→cap resolution, lockout, CSRF verify.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">L</td><td class="p-2 text-center">H</td><td class="p-2">1,2,3</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">5</td><td class="p-2"><b>engine: content model</b> — Zod-backed ContentType + Field, ContentEntry, Revisions, draft→review→publish state machine, i18n per-locale records. <i>Accept:</i> define type, create/edit/publish, revision diff, locale variant.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">L</td><td class="p-2 text-center">H</td><td class="p-2">2,4</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">6</td><td class="p-2"><b>Block system &amp; sanitization</b> — block schema, per-block sanitizers, raw-HTML capability gate, block registry. <i>Accept:</i> XSS payloads stripped; raw-HTML gate enforced.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">M</td><td class="p-2 text-center">H</td><td class="p-2">5</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">7</td><td class="p-2"><b>Query resolver + URL resolution</b> — slug→content resolution, published-only public scoping, no enumeration, UUID IDs. <i>Accept:</i> resolve slug; drafts hidden from public scope.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">M</td><td class="p-2 text-center">H</td><td class="p-2">5,6</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">8</td><td class="p-2"><b>sdk + runtime: plugin host</b> — worker-thread host, RPC proxy over parentPort, capability gate per call, manifest + signature verify, endpoint manifest. <i>Accept:</i> load sample plugin in real worker, RPC call, capability-denial test, unsigned rejected in prod.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">XL</td><td class="p-2 text-center">H</td><td class="p-2">1,3,4</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">9</td><td class="p-2"><b>apps/site: Hono + Vite SSR</b> — front controller (catch-all → engine resolve), API dispatcher (catch-all → plugin RPC), SSR pipeline, tag-cache + revalidate, sitemap/robots, strict CSP, image route. <i>Accept:</i> publish → live SSR URL; install plugin → endpoint answers; publish invalidates cache.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">XL</td><td class="p-2 text-center">H</td><td class="p-2">5,6,7,8</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">10</td><td class="p-2"><b>apps/studio: Vite SPA + Hono</b> — admin shell, auth UI, <b>no-code content-type builder</b>, drag-drop block page editor, media library (magic-byte upload validation, outside web root), menu builder, form builder. <i>Accept:</i> full no-code flow — model type, build page, upload media, publish, see live.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">XL</td><td class="p-2 text-center">H</td><td class="p-2">4,5,6,7</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">11</td><td class="p-2"><b>Theming</b> — theme package format, curated default theme, visual customizer (color/font/spacing/layout tokens), iframe-sandboxed preview. <i>Accept:</i> switch theme, customize tokens, preview, publish.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">L</td><td class="p-2 text-center">M</td><td class="p-2">9,10</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">12</td><td class="p-2"><b>Plugin admin UI (iframe)</b> — sandboxed panels from studio with strict CSP, postMessage bridge. <i>Accept:</i> sample plugin renders in sandboxed iframe, talks via postMessage, can't read studio cookies.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">M</td><td class="p-2 text-center">H</td><td class="p-2">8,10</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="MVP"><td class="p-2">13</td><td class="p-2"><b>GDPR features</b> — subject export (Art.15/20), erasure (Art.17) w/ cascade + audit, consent manager + cookie banner, retention policies, sensitive-field log redaction. <i>Accept:</i> export, audited erase, redaction verified.</td><td class="p-2 text-center">MVP</td><td class="p-2 text-center">L</td><td class="p-2 text-center">H</td><td class="p-2">3,4,5</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="Scale"><td class="p-2">14</td><td class="p-2"><b>Background jobs scheduler</b> — persisted, capability-gated queue (scheduled publish, cache warm, backups, CVE sync). <i>Accept:</i> schedule publish, runs, survives restart.</td><td class="p-2 text-center">Scale</td><td class="p-2 text-center">M</td><td class="p-2 text-center">M</td><td class="p-2">1,3</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="Scale"><td class="p-2">15</td><td class="p-2"><b>Plugin CVE feed + signing pipeline</b> — signature verify, CVE sync job, host refuses known-vuln plugins. <i>Accept:</i> signed loads, vuln rejected.</td><td class="p-2 text-center">Scale</td><td class="p-2 text-center">M</td><td class="p-2 text-center">M</td><td class="p-2">8,14</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="Scale"><td class="p-2">16</td><td class="p-2"><b>Storage adapters</b> — Postgres / SQLite / Mongo implement <code>StorageAdapter</code>; FS→DB migration path. <i>Accept:</i> same suite passes on each adapter.</td><td class="p-2 text-center">Scale</td><td class="p-2 text-center">L</td><td class="p-2 text-center">M</td><td class="p-2">2</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="Scale"><td class="p-2">17</td><td class="p-2"><b>Observability + ops</b> — pino logs, OTel traces, Prometheus metrics, health/readiness, Docker + compose, backup/restore CLI, seed CLI. <i>Accept:</i> compose up → working install; backup/restore round-trip.</td><td class="p-2 text-center">Scale</td><td class="p-2 text-center">L</td><td class="p-2 text-center">H</td><td class="p-2">9,10</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800" data-wave="Mature"><td class="p-2">18</td><td class="p-2"><b>Hardening + production readiness</b> — TLS enforcement, security headers, dependency scan + SAST in CI, Playwright e2e, load test, docs. <i>Accept:</i> security checklist green; e2e golden path passes.</td><td class="p-2 text-center">Mature</td><td class="p-2 text-center">L</td><td class="p-2 text-center">H</td><td class="p-2">all</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid md:grid-cols-3 gap-4 mt-5">
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-1">Wave 1 — MVP (phases 0–13)</h3>
+      <p class="text-sm text-slate-600 dark:text-slate-300">A secure, fully no-code CMS that publishes a real site, runs isolated plugins, and meets GDPR. Deferred: multi-adapter, CVE automation, deep observability.</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-1">Wave 2 — Scale (14–17)</h3>
+      <p class="text-sm text-slate-600 dark:text-slate-300">Jobs, supply-chain automation, DB adapters, and the ops/observability needed to run it for real and scale horizontally.</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-white dark:bg-slate-900">
+      <h3 class="font-bold mb-1">Wave 3 — Mature (18+)</h3>
+      <p class="text-sm text-slate-600 dark:text-slate-300">Hardening, automated security testing, e2e + load testing, marketplace/registry, advanced i18n &amp; workflows.</p>
+    </div>
+  </div>
+
+  <h3 class="font-bold mb-2 mt-6">Self-Evaluation — Option A</h3>
+  <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+  <table class="w-full text-sm bg-white dark:bg-slate-900">
+    <thead class="bg-slate-100 dark:bg-slate-800"><tr><th class="text-left p-2">Dimension</th><th class="p-2">Score</th><th class="text-left p-2">Rationale</th></tr></thead>
+    <tbody class="text-slate-600 dark:text-slate-300">
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Security &amp; threat coverage</td><td class="p-2 text-center font-bold text-emerald-600">9/10</td><td class="p-2">Uniform isolation + capability gate + 14 baselines directly counter WordPress's failure modes. −1: worker isolation is only as strong as the RPC serialization boundary; needs careful review.</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Scalability &amp; performance</td><td class="p-2 text-center font-bold">8/10</td><td class="p-2">Stateless site + tag-cache + CDN scales well for the target. −2: per-call worker RPC adds latency on plugin-heavy pages; FS default has a ceiling.</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Reliability &amp; fault tolerance</td><td class="p-2 text-center font-bold">8/10</td><td class="p-2">Fail-closed workers, idempotent jobs, rebuildable index. −2: single-node default; HA requires deliberate setup.</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Operational complexity</td><td class="p-2 text-center font-bold">7/10</td><td class="p-2">Two processes + worker pools + vault add moving parts vs. PHP-on-shared-host. −3: meaningfully more to operate than WordPress's drop-in model.</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2 font-semibold">Cost efficiency</td><td class="p-2 text-center font-bold">8/10</td><td class="p-2">Runs on one small VM at launch; file-default avoids DB cost. −2: two worker pools cost more RAM than a monolith.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="rounded-2xl border border-amber-300 dark:border-amber-700 p-4 bg-amber-50 dark:bg-amber-950/30 mt-4">
+    <h3 class="font-bold mb-2">Honest limitations</h3>
+    <ul class="text-sm space-y-1 text-slate-700 dark:text-slate-200">
+      <li><b>What it doesn't handle well:</b> very plugin-heavy pages pay RPC latency; truly massive single sites will outgrow the FS default and need the DB adapter early; it's heavier to operate than WordPress's "drop files on shared hosting."</li>
+      <li><b>Assumptions that would invalidate the recommendation:</b> if you actually need multi-tenant SaaS, the trust model and data layer change substantially (revisit before Phase 2). If plugin ecosystem velocity matters more than safety, the isolation tax may feel too high.</li>
+      <li><b>With double the budget:</b> add a managed control plane, hosted SaaS tier, a vetted plugin marketplace with automated security review, and multi-region active-active.</li>
+      <li><b>With half:</b> ship Option B (single-process monolith) for MVP and split into two processes later — accept the weaker trust boundary temporarily, document it loudly.</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="noprint max-w-7xl mx-auto px-4 py-8 text-xs text-slate-400">
+  Pressh Architecture Dashboard v1 · generated by the System Architecture skill · review each tab, then approve to generate the full document suite.
+</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+</script>
+<script>
+  // Theme toggle
+  const root = document.documentElement;
+  const saved = localStorage.getItem('pressh-theme');
+  if (saved === 'dark') root.classList.add('dark');
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    root.classList.toggle('dark');
+    localStorage.setItem('pressh-theme', root.classList.contains('dark') ? 'dark' : 'light');
+  });
+
+  // Tabs
+  const panes = document.querySelectorAll('.tabpane');
+  document.querySelectorAll('.tabbtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tabbtn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      panes.forEach(p => p.classList.add('hidden'));
+      const pane = document.getElementById('tab-' + btn.dataset.tab);
+      pane.classList.remove('hidden');
+      pane.classList.add('fadein');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+
+  // Approve
+  const approveBtn = document.getElementById('approveBtn');
+  approveBtn.addEventListener('click', () => {
+    const badge = document.getElementById('statusBadge');
+    badge.textContent = '● Approved';
+    badge.className = 'badge bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+    approveBtn.classList.add('hidden');
+    const msg = document.getElementById('approveMsg');
+    msg.textContent = 'Design approved. Return to the conversation to generate the full document suite.';
+    msg.classList.remove('hidden');
+  });
+
+  // Sortable tables
+  document.querySelectorAll('table.sortable').forEach(table => {
+    table.querySelectorAll('th').forEach((th, idx) => {
+      th.addEventListener('click', () => {
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const asc = !(th.dataset.asc === 'true');
+        th.dataset.asc = asc;
+        rows.sort((a, b) => {
+          const x = (a.children[idx]?.innerText || '').trim();
+          const y = (b.children[idx]?.innerText || '').trim();
+          const nx = parseFloat(x), ny = parseFloat(y);
+          if (!isNaN(nx) && !isNaN(ny)) return asc ? nx - ny : ny - nx;
+          return asc ? x.localeCompare(y) : y.localeCompare(x);
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+    });
+  });
+
+  // Roadmap filter
+  document.querySelectorAll('.rmfilter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const f = btn.dataset.f;
+      document.querySelectorAll('#roadmapTable tbody tr').forEach(tr => {
+        tr.style.display = (f === 'all' || tr.dataset.wave === f) ? '' : 'none';
+      });
+    });
+  });
+</script>
+</body>
+</html>
