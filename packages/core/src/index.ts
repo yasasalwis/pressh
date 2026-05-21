@@ -29,3 +29,24 @@ export { createFileSystemStorage } from "./storage/fs-adapter.js";
 export type { FileSystemStorageOptions } from "./storage/fs-adapter.js";
 export { runMigrations } from "./storage/migrations.js";
 export type { Cursor, Filter, Page, StorageAdapter, StoredDoc } from "./storage/types.js";
+
+export { createFileSecretsBackend, deriveMasterKey, MASTER_KEY_BYTES } from "./secrets.js";
+export type { SecretsBackend } from "./secrets.js";
+
+export { createFileAuditLog } from "./audit.js";
+export type { AuditEntry, AuditEntryInput, AuditLog, AuditQuery } from "./audit.js";
+
+export { hashPassword, verifyPassword } from "./auth/password.js";
+export {
+  ROLE_CAPABILITIES,
+  ROLE_NAMES,
+  capabilitiesForRoles,
+  isRoleName,
+} from "./auth/roles.js";
+export type { RoleName } from "./auth/roles.js";
+export { createCsrf } from "./auth/csrf.js";
+export type { CsrfProtection } from "./auth/csrf.js";
+export { createRateLimiter } from "./auth/rate-limit.js";
+export type { RateLimiter, RateLimiterOptions } from "./auth/rate-limit.js";
+export { createAuthService } from "./auth/service.js";
+export type { AuthService, AuthServiceOptions, LoginResult, User } from "./auth/service.js";
