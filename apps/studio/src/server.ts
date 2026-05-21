@@ -7,8 +7,14 @@ import {
   createCsrf,
   createFileAuditLog,
   createFileSystemStorage,
+  createScheduler,
 } from "@pressh/core";
-import { createContentService, createGdprService, createThemeService } from "@pressh/engine";
+import {
+  PUBLISH_JOB_TYPE,
+  createContentService,
+  createGdprService,
+  createThemeService,
+} from "@pressh/engine";
 import { PluginHost } from "@pressh/runtime";
 import { createStudioApp } from "./app.js";
 import type { PanelProvider } from "./app.js";
@@ -34,7 +40,15 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     path: opts.auditPath ?? join(opts.contentRoot, "..", "audit.log"),
   });
   const auth = await createAuthService({ storage, audit });
-  const content = createContentService({ storage, audit });
+  const scheduler = createScheduler({ storage, audit });
+  const content = createContentService({ storage, audit, scheduler });
+  scheduler.register(PUBLISH_JOB_TYPE, async (payload) => {
+    const entryId = (payload as { entryId?: string }).entryId;
+    if (entryId) {
+      await content.transition(["content.publish"], entryId, "published").catch(() => undefined);
+    }
+  });
+  scheduler.start();
   const media = createMediaService({ storage, audit, mediaRoot: opts.mediaRoot });
   const theme = createThemeService({ storage, audit });
   const gdpr = createGdprService({

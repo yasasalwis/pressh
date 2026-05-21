@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { CapabilityGate, PressError } from "@pressh/core";
-import type { AuditLog, Result, StorageAdapter } from "@pressh/core";
+import type { AuditLog, Result, Scheduler, StorageAdapter } from "@pressh/core";
 import { createBlockRegistry } from "./blocks/registry.js";
 import { sanitizeBlocks } from "./blocks/sanitize.js";
 import type { BlockRegistry } from "./blocks/types.js";
@@ -49,7 +49,12 @@ export interface ContentServiceOptions {
   audit: AuditLog;
   now?: () => number;
   blockRegistry?: BlockRegistry;
+  /** When set, scheduling content enqueues a `content.publish` job (Phase 14). */
+  scheduler?: Scheduler;
 }
+
+/** Job type the scheduler runs to publish content at its scheduled time. */
+export const PUBLISH_JOB_TYPE = "content.publish";
 
 export interface ContentService {
   createType(capabilities: string[], input: CreateTypeInput): Promise<ContentType>;
@@ -84,12 +89,14 @@ class ContentServiceImpl implements ContentService {
   readonly #now: () => number;
   readonly #gate = new CapabilityGate();
   readonly #blocks: BlockRegistry;
+  readonly #scheduler: Scheduler | undefined;
 
   constructor(opts: ContentServiceOptions) {
     this.#storage = opts.storage;
     this.#audit = opts.audit;
     this.#now = opts.now ?? (() => Date.now());
     this.#blocks = opts.blockRegistry ?? createBlockRegistry();
+    this.#scheduler = opts.scheduler;
   }
 
   #iso(): string {
@@ -255,6 +262,16 @@ class ContentServiceImpl implements ContentService {
     }
     entry.updatedAt = this.#iso();
     must(await this.#storage.put(ENTRIES, entry));
+
+    // Enqueue auto-publish at the scheduled time (Phase 14).
+    if (to === "scheduled" && this.#scheduler && opts.scheduledFor) {
+      await this.#scheduler.schedule({
+        type: PUBLISH_JOB_TYPE,
+        runAt: Date.parse(opts.scheduledFor),
+        payload: { entryId: entry.id },
+      });
+    }
+
     await this.#audit.append({
       action: "content.transition",
       actorId: null,

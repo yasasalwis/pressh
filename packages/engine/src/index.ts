@@ -54,7 +54,7 @@ export type {
   GdprServiceOptions,
   SubjectScope,
 } from "./gdpr.js";
-export { createContentService } from "./content-service.js";
+export { createContentService, PUBLISH_JOB_TYPE } from "./content-service.js";
 export type {
   ContentService,
   ContentServiceOptions,
