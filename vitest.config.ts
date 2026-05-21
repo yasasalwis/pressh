@@ -13,6 +13,9 @@ export default defineConfig({
       "@pressh/sdk": resolve(root, "packages/sdk/src/index.ts"),
       "@pressh/runtime": resolve(root, "packages/runtime/src/index.ts"),
       "@pressh/ui-kit": resolve(root, "packages/ui-kit/src/index.ts"),
+      "@pressh/adapter-sqlite": resolve(root, "adapters/sqlite/src/index.ts"),
+      "@pressh/adapter-postgres": resolve(root, "adapters/postgres/src/index.ts"),
+      "@pressh/adapter-mongo": resolve(root, "adapters/mongo/src/index.ts"),
     },
   },
   test: {

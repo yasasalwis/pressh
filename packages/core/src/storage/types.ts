@@ -38,7 +38,9 @@ export interface StorageAdapter {
     page?: Cursor,
   ): Promise<Result<Page<T>>>;
   transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<Result<T>>;
-  /** Rebuilds the derived index from the canonical files. Idempotent. */
+  /** Lists the collections that currently hold at least one record. */
+  listCollections(): Promise<Result<string[]>>;
+  /** Rebuilds the derived index from the canonical files. Idempotent (no-op for DB adapters). */
   rebuildIndex(): Promise<Result<void>>;
   close(): void;
 }

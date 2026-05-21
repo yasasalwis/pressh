@@ -198,6 +198,17 @@ class FileSystemStorageAdapter implements StorageAdapter {
     }
   }
 
+  async listCollections(): Promise<Result<string[]>> {
+    try {
+      const rows = this.#db
+        .prepare(`SELECT DISTINCT collection FROM docs ORDER BY collection`)
+        .all() as { collection: string }[];
+      return ok(rows.map((r) => r.collection));
+    } catch (e) {
+      return err(toPressError(e));
+    }
+  }
+
   close(): void {
     this.#db.close();
   }

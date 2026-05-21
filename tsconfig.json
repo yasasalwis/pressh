@@ -6,6 +6,9 @@
     { "path": "packages/sdk" },
     { "path": "packages/runtime" },
     { "path": "packages/ui-kit" },
+    { "path": "adapters/sqlite" },
+    { "path": "adapters/postgres" },
+    { "path": "adapters/mongo" },
     { "path": "apps/site" },
     { "path": "apps/studio" }
   ]
