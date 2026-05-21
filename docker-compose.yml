@@ -1,0 +1,40 @@
+# Single-host deployment of the two-process trust split (ADR-002).
+# `studio` (admin) is reachable only on the internal network here; front it with
+# a reverse proxy + IP allowlist in production (see RUNBOOK).
+services:
+  site:
+    build: .
+    command: ["node", "apps/site/dist/server.js"]
+    environment:
+      NODE_ENV: production
+      PRESSH_CONTENT_ROOT: /data/content
+    volumes:
+      - pressh-data:/data
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  studio:
+    build: .
+    command: ["node", "apps/studio/dist/server.js"]
+    environment:
+      NODE_ENV: production
+      PRESSH_CONTENT_ROOT: /data/content
+      PRESSH_MEDIA_ROOT: /data/media
+      # PRESSH_MASTER_KEY and PRESSH_CSRF_SECRET must be supplied as secrets.
+    volumes:
+      - pressh-data:/data
+    expose:
+      - "4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pressh-data:

@@ -53,6 +53,11 @@ export type { RateLimiter, RateLimiterOptions } from "./auth/rate-limit.js";
 export { createAuthService } from "./auth/service.js";
 export type { AuthService, AuthServiceOptions, LoginResult, User } from "./auth/service.js";
 
+export { createMetrics, requestId } from "./observability.js";
+export type { Labels, Metrics } from "./observability.js";
+export { createBackup, restoreBackup } from "./ops/backup.js";
+export type { BackupTargets } from "./ops/backup.js";
+
 export { createScheduler } from "./scheduler.js";
 export type {
   JobHandler,

@@ -61,6 +61,7 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     cache,
     themeService,
     gdpr,
+    storage,
     listPublishedPaths,
     ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
     ...(opts.production !== undefined ? { production: opts.production } : {}),

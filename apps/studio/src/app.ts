@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { CapabilityGate, PressError } from "@pressh/core";
+import { CapabilityGate, PressError, createMetrics, requestId } from "@pressh/core";
 import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
 import type { ContentService, ContentStatus, GdprService, ThemeService } from "@pressh/engine";
 import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
@@ -54,6 +54,25 @@ function mapError(error: unknown): { status: 400 | 401 | 403 | 404 | 409 | 500; 
 export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   const app = new Hono<Vars>();
   const gate = new CapabilityGate();
+  const metrics = createMetrics();
+
+  // Request-id correlation + request metrics (TDD §9).
+  app.use("*", async (c, next) => {
+    c.header("x-request-id", requestId(c.req.header("x-request-id")));
+    const start = Date.now();
+    await next();
+    metrics.inc("pressh_http_requests_total", "HTTP requests", { status: String(c.res.status) });
+    metrics.observe("pressh_http_request_ms", "HTTP request duration (ms)", Date.now() - start);
+  });
+
+  app.get("/healthz", (c) => c.json({ status: "ok" }));
+  app.get("/readyz", async (c) => {
+    const probe = await deps.storage.listCollections();
+    return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
+  });
+  app.get("/metrics", (c) =>
+    c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" }),
+  );
 
   const requireSession = async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
     const token = getCookie(c, SESSION_COOKIE);

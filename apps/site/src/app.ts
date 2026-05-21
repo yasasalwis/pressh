@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { PressError } from "@pressh/core";
+import { PressError, createMetrics, requestId } from "@pressh/core";
+import type { Metrics, StorageAdapter } from "@pressh/core";
 import type { GdprService, QueryResolver, ThemeService } from "@pressh/engine";
 import type { RenderCache } from "./cache.js";
 import { escapeHtml, renderBlocks, renderNotFound, renderPage } from "./render.js";
@@ -17,6 +18,8 @@ export interface SiteAppDeps {
   cache: RenderCache;
   themeService?: ThemeService;
   gdpr?: GdprService;
+  storage?: StorageAdapter;
+  metrics?: Metrics;
   listPublishedPaths?: () => Promise<string[]>;
   baseUrl?: string;
   production?: boolean;
@@ -32,6 +35,26 @@ function mapError(error: unknown): { status: 400 | 403 | 404 | 500; code: string
 
 export function createSiteApp(deps: SiteAppDeps): Hono {
   const app = new Hono();
+  const metrics = deps.metrics ?? createMetrics();
+
+  // Request-id correlation + request metrics (TDD §9).
+  app.use("*", async (c, next) => {
+    const id = requestId(c.req.header("x-request-id"));
+    c.header("x-request-id", id);
+    const start = Date.now();
+    await next();
+    metrics.inc("pressh_http_requests_total", "HTTP requests", { status: String(c.res.status) });
+    metrics.observe("pressh_http_request_ms", "HTTP request duration (ms)", Date.now() - start);
+  });
+
+  // Ops endpoints.
+  app.get("/healthz", (c) => c.json({ status: "ok" }));
+  app.get("/readyz", async (c) => {
+    if (!deps.storage) return c.json({ status: "ready" });
+    const probe = await deps.storage.listCollections();
+    return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
+  });
+  app.get("/metrics", (c) => c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" }));
 
   // Strict security headers on every response (baseline #9/#10).
   app.use("*", async (c, next) => {
