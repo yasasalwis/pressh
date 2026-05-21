@@ -4,6 +4,7 @@
     "rootDir": "src",
     "outDir": "dist"
   },
+  "references": [{ "path": "../core" }, { "path": "../sdk" }],
   "include": ["src/**/*"],
   "exclude": ["**/*.test.ts", "**/*.spec.ts", "dist"]
 }

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { CapabilityGate, PressError } from "@pressh/core";
 import type { AuditLog, Result, StorageAdapter } from "@pressh/core";
+import { createBlockRegistry } from "./blocks/registry.js";
+import { sanitizeBlocks } from "./blocks/sanitize.js";
+import type { BlockRegistry } from "./blocks/types.js";
 import { validateFields } from "./schema.js";
 import { capabilityForTransition, isAllowedTransition } from "./state-machine.js";
 import type { ContentEntry, ContentStatus, ContentType, FieldDef, Revision } from "./types.js";
@@ -45,6 +48,7 @@ export interface ContentServiceOptions {
   storage: StorageAdapter;
   audit: AuditLog;
   now?: () => number;
+  blockRegistry?: BlockRegistry;
 }
 
 export interface ContentService {
@@ -79,11 +83,13 @@ class ContentServiceImpl implements ContentService {
   readonly #audit: AuditLog;
   readonly #now: () => number;
   readonly #gate = new CapabilityGate();
+  readonly #blocks: BlockRegistry;
 
   constructor(opts: ContentServiceOptions) {
     this.#storage = opts.storage;
     this.#audit = opts.audit;
     this.#now = opts.now ?? (() => Date.now());
+    this.#blocks = opts.blockRegistry ?? createBlockRegistry();
   }
 
   #iso(): string {
@@ -166,6 +172,7 @@ class ContentServiceImpl implements ContentService {
     const locale = input.locale ?? DEFAULT_LOCALE;
     const type = await this.#requireType(input.typeId);
     const validated = validateFields(type.fields, input.fields);
+    const blocks = sanitizeBlocks(this.#blocks, input.blocks ?? [], { capabilities });
 
     const existing = must(
       await this.#storage.query<ContentEntry>(ENTRIES, { where: { slug: input.slug, locale } }),
@@ -188,7 +195,7 @@ class ContentServiceImpl implements ContentService {
       updatedAt: this.#iso(),
     };
     must(await this.#storage.put(ENTRIES, entry));
-    await this.#addRevision(entry, validated, input.blocks ?? [], input.authorId, 1);
+    await this.#addRevision(entry, validated, blocks, input.authorId, 1);
     await this.#audit.append({
       action: "content.create",
       actorId: input.authorId,
@@ -206,9 +213,10 @@ class ContentServiceImpl implements ContentService {
     const entry = await this.#requireEntry(entryId);
     const type = await this.#requireType(entry.typeId);
     const validated = validateFields(type.fields, input.fields);
+    const blocks = sanitizeBlocks(this.#blocks, input.blocks ?? [], { capabilities });
 
     const version = entry.currentRevision + 1;
-    await this.#addRevision(entry, validated, input.blocks ?? [], input.editorId, version);
+    await this.#addRevision(entry, validated, blocks, input.editorId, version);
     entry.currentRevision = version;
     entry.updatedAt = this.#iso();
     must(await this.#storage.put(ENTRIES, entry));

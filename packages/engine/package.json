@@ -17,6 +17,10 @@
   },
   "dependencies": {
     "@pressh/core": "*",
+    "sanitize-html": "^2.13.0",
     "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.13.0"
   }
 }
