@@ -6,6 +6,7 @@
     { "path": "packages/sdk" },
     { "path": "packages/runtime" },
     { "path": "packages/ui-kit" },
-    { "path": "apps/site" }
+    { "path": "apps/site" },
+    { "path": "apps/studio" }
   ]
 }

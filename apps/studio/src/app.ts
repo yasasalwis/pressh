@@ -1,0 +1,194 @@
+import { Hono } from "hono";
+import type { Context, Next } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { CapabilityGate, PressError } from "@pressh/core";
+import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
+import type { ContentService, ContentStatus } from "@pressh/engine";
+import type { MediaService } from "./media.js";
+import { ADMIN_HTML } from "./admin-html.js";
+
+const SESSION_COOKIE = "pressh_session";
+
+export interface StudioAppDeps {
+  auth: AuthService;
+  content: ContentService;
+  media: MediaService;
+  csrf: CsrfProtection;
+  storage: StorageAdapter;
+  production?: boolean;
+}
+
+type Vars = { Variables: { user: User; token: string } };
+
+function mapError(error: unknown): { status: 400 | 401 | 403 | 404 | 409 | 500; code: string } {
+  const code = error instanceof PressError ? error.code : "internal";
+  switch (code) {
+    case "unauthorized":
+      return { status: 401, code };
+    case "forbidden":
+    case "capability_denied":
+      return { status: 403, code };
+    case "not_found":
+      return { status: 404, code };
+    case "validation":
+      return { status: 400, code };
+    case "conflict":
+      return { status: 409, code };
+    default:
+      return { status: 500, code };
+  }
+}
+
+export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
+  const app = new Hono<Vars>();
+  const gate = new CapabilityGate();
+
+  const requireSession = async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
+    const token = getCookie(c, SESSION_COOKIE);
+    const user = token ? await deps.auth.validateSession(token) : null;
+    if (!token || !user) {
+      return c.json({ error: { code: "unauthorized", message: "Sign in required" } }, 401);
+    }
+    c.set("user", user);
+    c.set("token", token);
+    await next();
+    return undefined;
+  };
+
+  const requireCsrf = async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
+    if (!deps.csrf.verify(c.get("token"), c.req.header("x-csrf-token") ?? "")) {
+      return c.json({ error: { code: "forbidden", message: "Invalid CSRF token" } }, 403);
+    }
+    await next();
+    return undefined;
+  };
+
+  const caps = (c: Context<Vars>): string[] => deps.auth.capabilitiesFor(c.get("user"));
+
+  async function run(c: Context<Vars>, fn: () => Promise<unknown>): Promise<Response> {
+    try {
+      const data = await fn();
+      return c.json({ ok: true, data });
+    } catch (error) {
+      const { status, code } = mapError(error);
+      return c.json({ error: { code, message: code } }, status);
+    }
+  }
+
+  // --- served admin client ---
+  app.get("/", (c) => c.html(ADMIN_HTML));
+  app.get("/admin", (c) => c.html(ADMIN_HTML));
+
+  // --- auth ---
+  app.post("/admin/api/auth/login", async (c) => {
+    const { email, password } = await c.req.json<{ email: string; password: string }>();
+    try {
+      const { token, user } = await deps.auth.authenticate({ email, password });
+      setCookie(c, SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: deps.production ?? false,
+        path: "/",
+      });
+      return c.json({ user });
+    } catch (error) {
+      const { status } = mapError(error);
+      return c.json({ error: { code: "unauthorized", message: "Invalid credentials" } }, status);
+    }
+  });
+
+  app.post("/admin/api/auth/logout", requireSession, async (c) => {
+    await deps.auth.logout(c.get("token"));
+    deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    return c.json({ ok: true });
+  });
+
+  app.get("/admin/api/me", requireSession, (c) => {
+    const user = c.get("user");
+    return c.json({
+      user,
+      capabilities: deps.auth.capabilitiesFor(user),
+      csrfToken: deps.csrf.issue(c.get("token")),
+    });
+  });
+
+  // --- content types (no-code modeling) ---
+  app.get("/admin/api/types", requireSession, async (c) => {
+    if (!gate.check(caps(c), "content.read")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    const result = await deps.storage.query("content_types");
+    return c.json({ items: result.ok ? result.value.items : [] });
+  });
+
+  app.post("/admin/api/types", requireSession, requireCsrf, async (c) => {
+    const body = await c.req.json();
+    return run(c, () => deps.content.createType(caps(c), body));
+  });
+
+  // --- content authoring ---
+  app.get("/admin/api/content", requireSession, async (c) => {
+    if (!gate.check(caps(c), "content.read")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    const result = await deps.storage.query("content_entries");
+    return c.json({ items: result.ok ? result.value.items : [] });
+  });
+
+  app.post("/admin/api/content", requireSession, requireCsrf, async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    return run(c, () =>
+      deps.content.createEntry(caps(c), {
+        typeId: String(body["typeId"]),
+        slug: String(body["slug"]),
+        authorId: c.get("user").id,
+        fields: (body["fields"] as Record<string, unknown>) ?? {},
+        ...(Array.isArray(body["blocks"]) ? { blocks: body["blocks"] as unknown[] } : {}),
+        ...(typeof body["locale"] === "string" ? { locale: body["locale"] } : {}),
+      }),
+    );
+  });
+
+  app.put("/admin/api/content/:id", requireSession, requireCsrf, async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    return run(c, () =>
+      deps.content.saveEntry(caps(c), (c.req.param("id") ?? ""), {
+        fields: (body["fields"] as Record<string, unknown>) ?? {},
+        ...(Array.isArray(body["blocks"]) ? { blocks: body["blocks"] as unknown[] } : {}),
+        editorId: c.get("user").id,
+      }),
+    );
+  });
+
+  app.post("/admin/api/content/:id/publish", requireSession, requireCsrf, (c) =>
+    run(c, () => deps.content.transition(caps(c), (c.req.param("id") ?? ""), "published")),
+  );
+
+  app.post("/admin/api/content/:id/transition", requireSession, requireCsrf, async (c) => {
+    const body = await c.req.json<{ to: ContentStatus; scheduledFor?: string }>();
+    return run(c, () =>
+      deps.content.transition(
+        caps(c),
+        (c.req.param("id") ?? ""),
+        body.to,
+        body.scheduledFor !== undefined ? { scheduledFor: body.scheduledFor } : {},
+      ),
+    );
+  });
+
+  // --- media upload (validated, stored outside web root) ---
+  app.post("/admin/api/media", requireSession, requireCsrf, async (c) => {
+    if (!gate.check(caps(c), "media.write")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    const form = await c.req.parseBody();
+    const file = form["file"];
+    if (!(file instanceof File)) {
+      return c.json({ error: { code: "validation", message: "Missing file" } }, 400);
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return run(c, () => deps.media.store(file.name, file.type, bytes, c.get("user").id));
+  });
+
+  return app;
+}
