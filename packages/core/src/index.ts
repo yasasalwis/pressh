@@ -24,3 +24,8 @@ export type { Logger, LoggerOptions } from "./logger.js";
 
 export { loadConfig } from "./config.js";
 export type { AppEnv, ConfigStore, PresshConfig } from "./config.js";
+
+export { createFileSystemStorage } from "./storage/fs-adapter.js";
+export type { FileSystemStorageOptions } from "./storage/fs-adapter.js";
+export { runMigrations } from "./storage/migrations.js";
+export type { Cursor, Filter, Page, StorageAdapter, StoredDoc } from "./storage/types.js";

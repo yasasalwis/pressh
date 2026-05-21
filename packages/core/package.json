@@ -16,6 +16,10 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "better-sqlite3": "12.10.0",
     "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0"
   }
 }
