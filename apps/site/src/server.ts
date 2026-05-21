@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import { createFileAuditLog, createFileSystemStorage } from "@pressh/core";
 import {
@@ -73,4 +74,21 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     },
     cache,
   };
+}
+
+/** Start the Site from environment variables when run directly (`node dist/server.js`). */
+async function runFromEnv(): Promise<void> {
+  const port = Number(process.env["PRESSH_SITE_PORT"] ?? 3000);
+  const server = await createSiteServer({
+    contentRoot: process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content",
+    port,
+    production: process.env["NODE_ENV"] === "production",
+    ...(process.env["PRESSH_BASE_URL"] ? { baseUrl: process.env["PRESSH_BASE_URL"] } : {}),
+  });
+  server.start();
+  process.stdout.write(`Pressh Site (public) listening on http://localhost:${port}\n`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void runFromEnv();
 }

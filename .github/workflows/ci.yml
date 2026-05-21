@@ -18,3 +18,30 @@ jobs:
       - run: npm run build:packages
       - run: npm test
       - run: npm run lint
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Fail the build on high/critical dependency advisories (baseline: supply chain).
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+      # Generate a CycloneDX SBOM artifact.
+      - name: SBOM
+        run: npm sbom --sbom-format cyclonedx > sbom.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+        if: always()
+      # Lightweight secret scan — fail if obvious secrets are committed.
+      - name: Secret scan
+        run: |
+          if git grep -nE 'BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|aws_secret_access_key' -- ':!*.test.ts' ':!docs/**'; then
+            echo "Potential secret detected"; exit 1;
+          fi

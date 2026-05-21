@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { readdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { serve } from "@hono/node-server";
@@ -110,4 +111,23 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
       serve({ fetch: app.fetch, port: opts.port ?? 4000 });
     },
   };
+}
+
+/** Start the Studio from environment variables when run directly (`node dist/server.js`). */
+async function runFromEnv(): Promise<void> {
+  const port = Number(process.env["PRESSH_STUDIO_PORT"] ?? 4000);
+  const server = await createStudioServer({
+    contentRoot: process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content",
+    mediaRoot: process.env["PRESSH_MEDIA_ROOT"] ?? "./data/media",
+    port,
+    production: process.env["NODE_ENV"] === "production",
+    ...(process.env["PRESSH_CSRF_SECRET"] ? { csrfSecret: process.env["PRESSH_CSRF_SECRET"] } : {}),
+    ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
+  });
+  server.start();
+  process.stdout.write(`Pressh Studio (admin) listening on http://localhost:${port}/admin\n`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void runFromEnv();
 }
