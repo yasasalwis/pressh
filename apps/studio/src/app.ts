@@ -3,7 +3,7 @@ import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { CapabilityGate, PressError } from "@pressh/core";
 import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
-import type { ContentService, ContentStatus } from "@pressh/engine";
+import type { ContentService, ContentStatus, ThemeService } from "@pressh/engine";
 import type { MediaService } from "./media.js";
 import { ADMIN_HTML } from "./admin-html.js";
 
@@ -13,6 +13,7 @@ export interface StudioAppDeps {
   auth: AuthService;
   content: ContentService;
   media: MediaService;
+  theme: ThemeService;
   csrf: CsrfProtection;
   storage: StorageAdapter;
   production?: boolean;
@@ -174,6 +175,33 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
         body.scheduledFor !== undefined ? { scheduledFor: body.scheduledFor } : {},
       ),
     );
+  });
+
+  // --- theming (no-code customizer) ---
+  app.get("/admin/api/theme", requireSession, async (c) => {
+    if (!gate.check(caps(c), "content.read")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    return c.json({ settings: await deps.theme.getSettings(), themes: deps.theme.listThemes() });
+  });
+
+  app.put("/admin/api/theme", requireSession, requireCsrf, async (c) => {
+    const body = await c.req.json<{ theme?: string; tokens?: Record<string, string>; siteName?: string }>();
+    return run(c, () => deps.theme.setSettings(caps(c), body));
+  });
+
+  // Live preview rendered into a sandboxed iframe (no mutation → no CSRF).
+  app.post("/admin/api/theme/preview", requireSession, async (c) => {
+    if (!gate.check(caps(c), "themes.manage")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    const body = await c.req.json<{ theme?: string; tokens?: Record<string, string>; siteName?: string }>();
+    try {
+      return c.json({ html: deps.theme.preview(body) });
+    } catch (error) {
+      const { status, code } = mapError(error);
+      return c.json({ error: { code, message: code } }, status);
+    }
   });
 
   // --- media upload (validated, stored outside web root) ---

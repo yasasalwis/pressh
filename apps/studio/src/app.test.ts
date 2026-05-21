@@ -10,7 +10,7 @@ import {
   createFileSystemStorage,
 } from "@pressh/core";
 import type { StorageAdapter } from "@pressh/core";
-import { createContentService } from "@pressh/engine";
+import { createContentService, createThemeService } from "@pressh/engine";
 import { createStudioApp } from "./app";
 import { createMediaService } from "./media";
 
@@ -50,8 +50,9 @@ beforeEach(async () => {
   await auth.createUser({ email: "author@x.com", password: "authorpass1", roles: ["author"] });
   const content = createContentService({ storage, audit });
   const media = createMediaService({ storage, audit, mediaRoot: join(dir, "media") });
+  const theme = createThemeService({ storage, audit });
   const csrf = createCsrf(randomBytes(32));
-  app = createStudioApp({ auth, content, media, csrf, storage });
+  app = createStudioApp({ auth, content, media, theme, csrf, storage });
 });
 
 afterEach(async () => {

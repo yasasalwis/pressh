@@ -27,6 +27,25 @@ export type {
   ResolveScope,
   ResolvedContent,
 } from "./resolver.js";
+export {
+  createThemeRegistry,
+  createThemeService,
+  defaultTheme,
+  renderCssVars,
+  resolveTokens,
+  validateTokens,
+} from "./theming.js";
+export type {
+  ResolvedTheme,
+  ThemeDefinition,
+  ThemeLayoutInput,
+  ThemeRegistry,
+  ThemeService,
+  ThemeServiceOptions,
+  ThemeSettings,
+  ThemeTokenDef,
+  ThemeTokenType,
+} from "./theming.js";
 export { createContentService } from "./content-service.js";
 export type {
   ContentService,

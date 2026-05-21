@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { createFileAuditLog, createFileSystemStorage } from "@pressh/core";
-import { createContentService, createQueryResolver } from "@pressh/engine";
+import { createContentService, createQueryResolver, createThemeService } from "@pressh/engine";
 import { PluginHost } from "@pressh/runtime";
 import { createSiteApp } from "./app.js";
 import { createRenderCache } from "./cache.js";
@@ -29,6 +29,7 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
   });
   const content = createContentService({ storage, audit });
   const resolver = createQueryResolver({ content });
+  const themeService = createThemeService({ storage, audit });
   const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production });
   const cache = createRenderCache();
 
@@ -46,6 +47,7 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     resolver,
     pluginHost,
     cache,
+    themeService,
     listPublishedPaths,
     ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
     ...(opts.production !== undefined ? { production: opts.production } : {}),

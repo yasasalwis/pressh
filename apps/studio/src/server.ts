@@ -7,7 +7,7 @@ import {
   createFileAuditLog,
   createFileSystemStorage,
 } from "@pressh/core";
-import { createContentService } from "@pressh/engine";
+import { createContentService, createThemeService } from "@pressh/engine";
 import { createStudioApp } from "./app.js";
 import { createMediaService } from "./media.js";
 
@@ -32,6 +32,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const auth = await createAuthService({ storage, audit });
   const content = createContentService({ storage, audit });
   const media = createMediaService({ storage, audit, mediaRoot: opts.mediaRoot });
+  const theme = createThemeService({ storage, audit });
   const csrfSecret = opts.csrfSecret
     ? Buffer.from(opts.csrfSecret)
     : randomBytes(32);
@@ -41,6 +42,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     auth,
     content,
     media,
+    theme,
     csrf,
     storage,
     ...(opts.production !== undefined ? { production: opts.production } : {}),

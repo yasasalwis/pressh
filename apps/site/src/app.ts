@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { PressError } from "@pressh/core";
-import type { QueryResolver } from "@pressh/engine";
+import type { QueryResolver, ThemeService } from "@pressh/engine";
 import type { RenderCache } from "./cache.js";
 import { escapeHtml, renderBlocks, renderNotFound, renderPage } from "./render.js";
 
@@ -15,6 +15,7 @@ export interface SiteAppDeps {
   resolver: QueryResolver;
   pluginHost: SitePluginHost;
   cache: RenderCache;
+  themeService?: ThemeService;
   listPublishedPaths?: () => Promise<string[]>;
   baseUrl?: string;
   production?: boolean;
@@ -107,11 +108,14 @@ export function createSiteApp(deps: SiteAppDeps): Hono {
       const resolved = await deps.resolver.resolvePath(path, { scope: "public" });
       const title =
         typeof resolved.fields["title"] === "string" ? (resolved.fields["title"] as string) : resolved.slug;
-      const html = renderPage({
-        title,
-        body: renderBlocks(resolved.blocks),
-        locale: resolved.locale,
-      });
+      const body = renderBlocks(resolved.blocks);
+      let html: string;
+      if (deps.themeService) {
+        const t = await deps.themeService.resolve();
+        html = t.theme.layout({ title, body, locale: resolved.locale, cssVars: t.cssVars, siteName: t.siteName });
+      } else {
+        html = renderPage({ title, body, locale: resolved.locale });
+      }
       deps.cache.set(path, html, [`content:${resolved.id}`]);
       c.header("X-Cache", "MISS");
       c.header("Cache-Tag", `content:${resolved.id}`);
