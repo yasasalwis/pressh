@@ -110,6 +110,33 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.get("/", (c) => c.html(ADMIN_HTML));
   app.get("/admin", (c) => c.html(ADMIN_HTML));
 
+  // --- first-run setup wizard (WordPress-style) ---
+  // Public, but works ONLY while zero users exist; permanently disabled after.
+  app.get("/admin/api/setup/status", async (c) => {
+    return c.json({ needsSetup: !(await deps.auth.hasAnyUser()) });
+  });
+
+  app.post("/admin/api/setup", async (c) => {
+    if (await deps.auth.hasAnyUser()) {
+      return c.json({ error: { code: "conflict", message: "Already configured" } }, 409);
+    }
+    const { email, password } = await c.req.json<{ email: string; password: string }>();
+    try {
+      await deps.auth.createUser({ email, password, roles: ["owner"] });
+      const { token, user } = await deps.auth.authenticate({ email, password });
+      setCookie(c, SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: deps.production ?? false,
+        path: "/",
+      });
+      return c.json({ user });
+    } catch (error) {
+      const { status, code } = mapError(error);
+      return c.json({ error: { code, message: code } }, status);
+    }
+  });
+
   // --- auth ---
   app.post("/admin/api/auth/login", async (c) => {
     const { email, password } = await c.req.json<{ email: string; password: string }>();
@@ -164,6 +191,20 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     }
     const result = await deps.storage.query("content_entries");
     return c.json({ items: result.ok ? result.value.items : [] });
+  });
+
+  // Single entry + its current revision (fields + blocks) for the editor to load.
+  app.get("/admin/api/content/:id", requireSession, async (c) => {
+    if (!gate.check(caps(c), "content.read")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    const entry = await deps.content.getEntry(c.req.param("id") ?? "");
+    if (!entry) return c.json({ error: { code: "not_found", message: "not_found" } }, 404);
+    const revision = await deps.content.getRevision(entry.id, entry.currentRevision);
+    return c.json({
+      entry,
+      revision: revision ? { fields: revision.fields, blocks: revision.blocks } : { fields: {}, blocks: [] },
+    });
   });
 
   app.post("/admin/api/content", requireSession, requireCsrf, async (c) => {

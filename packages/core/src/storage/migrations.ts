@@ -32,18 +32,24 @@ export function runMigrations(db: DB): void {
        applied_at TEXT NOT NULL
      );`,
   );
-  const appliedRows = db.prepare(`SELECT version FROM _migrations`).all() as { version: number }[];
-  const applied = new Set(appliedRows.map((row) => row.version));
-
+  // Run under BEGIN IMMEDIATE so concurrent processes (the two-process trust
+  // split shares this index) serialize: the second waits for the write lock,
+  // then re-reads applied state INSIDE the transaction and skips. INSERT OR
+  // IGNORE is a final guard against a duplicate-version race.
   const apply = db.transaction(() => {
+    const applied = new Set(
+      (db.prepare(`SELECT version FROM _migrations`).all() as { version: number }[]).map(
+        (row) => row.version,
+      ),
+    );
     for (const migration of MIGRATIONS) {
       if (applied.has(migration.version)) continue;
       migration.up(db);
-      db.prepare(`INSERT INTO _migrations (version, applied_at) VALUES (?, ?)`).run(
+      db.prepare(`INSERT OR IGNORE INTO _migrations (version, applied_at) VALUES (?, ?)`).run(
         migration.version,
         new Date().toISOString(),
       );
     }
   });
-  apply();
+  apply.immediate();
 }

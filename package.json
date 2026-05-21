@@ -20,7 +20,10 @@
     "pretest": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "seed": "node apps/studio/dist/seed-cli.js",
+    "studio": "node apps/studio/dist/server.js",
+    "site": "node apps/site/dist/server.js"
   },
   "optionalDependencies": {
     "@emnapi/core": "1.10.0",

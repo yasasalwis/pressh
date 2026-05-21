@@ -54,7 +54,18 @@ class FileSystemStorageAdapter implements StorageAdapter {
     mkdirSync(opts.root, { recursive: true });
     mkdirSync(dirname(indexPath), { recursive: true });
     this.#db = new Database(indexPath);
-    this.#db.pragma("journal_mode = WAL");
+    // The two-process trust split shares this index file. busy_timeout makes
+    // writers wait for the WAL lock instead of failing with SQLITE_BUSY. The
+    // journal_mode switch needs a brief exclusive lock, so only do it when not
+    // already in WAL, and tolerate a concurrent switch by another process.
+    this.#db.pragma("busy_timeout = 5000");
+    try {
+      if (this.#db.pragma("journal_mode", { simple: true }) !== "wal") {
+        this.#db.pragma("journal_mode = WAL");
+      }
+    } catch {
+      // Another process is enabling WAL on the shared index right now — fine.
+    }
     runMigrations(this.#db);
   }
 

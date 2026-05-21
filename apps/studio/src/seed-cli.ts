@@ -7,7 +7,7 @@ import { seedOwner } from "./seed.js";
  * Reads PRESSH_CONTENT_ROOT / PRESSH_SEED_EMAIL / PRESSH_SEED_PASSWORD from env.
  */
 async function main(): Promise<void> {
-  const contentRoot = process.env["PRESSH_CONTENT_ROOT"] ?? "./content";
+  const contentRoot = process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content";
   const email = process.env["PRESSH_SEED_EMAIL"];
   const password = process.env["PRESSH_SEED_PASSWORD"];
   if (!email || !password) {

@@ -35,7 +35,14 @@ class SqliteStorageAdapter implements StorageAdapter {
 
   constructor(opts: SqliteStorageOptions) {
     this.#db = new Database(opts.path);
-    this.#db.pragma("journal_mode = WAL");
+    this.#db.pragma("busy_timeout = 5000");
+    try {
+      if (this.#db.pragma("journal_mode", { simple: true }) !== "wal") {
+        this.#db.pragma("journal_mode = WAL");
+      }
+    } catch {
+      // Another process is enabling WAL on a shared file — fine.
+    }
     this.#db.exec(
       `CREATE TABLE IF NOT EXISTS docs (
          collection TEXT NOT NULL,

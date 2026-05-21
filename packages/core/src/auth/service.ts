@@ -62,6 +62,8 @@ export interface AuthService {
   logout(token: string): Promise<void>;
   capabilitiesFor(user: User): string[];
   getUserByEmail(email: string): Promise<User | null>;
+  /** True once at least one user exists — gates the first-run setup wizard. */
+  hasAnyUser(): Promise<boolean>;
 }
 
 function must<T>(result: Result<T>): T {
@@ -235,6 +237,11 @@ class AuthServiceImpl implements AuthService {
   async getUserByEmail(email: string): Promise<User | null> {
     const record = await this.#findRecordByEmail(email);
     return record ? toPublic(record) : null;
+  }
+
+  async hasAnyUser(): Promise<boolean> {
+    const page = must(await this.#storage.query<UserRecord>(USERS, {}, { limit: 1 }));
+    return page.items.length > 0;
   }
 }
 
