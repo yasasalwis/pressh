@@ -3,5 +3,6 @@
   "version": "0.0.0",
   "main": "index.mjs",
   "capabilities": ["storage.read:greetings"],
-  "endpoints": [{ "method": "POST", "path": "/greet", "handler": "greet" }]
+  "endpoints": [{ "method": "POST", "path": "/greet", "handler": "greet" }],
+  "panel": { "title": "Hello", "entry": "panel.html" }
 }

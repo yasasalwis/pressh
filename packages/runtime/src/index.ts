@@ -9,3 +9,16 @@ export const PRESSH_RUNTIME_VERSION = "0.0.0";
 
 export { PluginHost } from "./host.js";
 export type { LoadedEndpoint, PluginHostOptions } from "./host.js";
+
+export {
+  PANEL_SHIM_JS,
+  createPanelBridge,
+  panelFrameTag,
+  wrapPanelHtml,
+} from "./iframe-shim/index.js";
+export type {
+  PanelBridge,
+  PanelBridgeOptions,
+  PanelMessageEvent,
+  PanelRequest,
+} from "./iframe-shim/index.js";

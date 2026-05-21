@@ -13,6 +13,12 @@ export interface EndpointDef {
   handler: string;
 }
 
+export interface PluginPanelDef {
+  title: string;
+  /** HTML file (relative to the plugin folder) rendered in a sandboxed iframe. */
+  entry: string;
+}
+
 export interface PluginManifest {
   name: string;
   version: string;
@@ -20,6 +26,7 @@ export interface PluginManifest {
   main: string;
   capabilities: string[];
   endpoints?: EndpointDef[];
+  panel?: PluginPanelDef;
 }
 
 /** The capability-gated services a plugin handler may use. */

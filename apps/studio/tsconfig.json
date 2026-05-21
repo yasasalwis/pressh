@@ -6,7 +6,8 @@
   },
   "references": [
     { "path": "../../packages/core" },
-    { "path": "../../packages/engine" }
+    { "path": "../../packages/engine" },
+    { "path": "../../packages/runtime" }
   ],
   "include": ["src/**/*"],
   "exclude": ["**/*.test.ts", "**/*.spec.ts", "dist"]

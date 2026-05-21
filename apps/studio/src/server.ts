@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { serve } from "@hono/node-server";
 import {
@@ -8,12 +9,15 @@ import {
   createFileSystemStorage,
 } from "@pressh/core";
 import { createContentService, createThemeService } from "@pressh/engine";
+import { PluginHost } from "@pressh/runtime";
 import { createStudioApp } from "./app.js";
+import type { PanelProvider } from "./app.js";
 import { createMediaService } from "./media.js";
 
 export interface StudioServerOptions {
   contentRoot: string;
   mediaRoot: string;
+  pluginsDir?: string;
   auditPath?: string;
   port?: number;
   production?: boolean;
@@ -38,6 +42,21 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     : randomBytes(32);
   const csrf = createCsrf(csrfSecret);
 
+  // The Studio boots its own PluginHost (separate trust boundary, ADR-002).
+  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production });
+  if (opts.pluginsDir) {
+    const entries = await readdir(opts.pluginsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await pluginHost.load(join(opts.pluginsDir, entry.name)).catch(() => undefined);
+      }
+    }
+  }
+  const panels: PanelProvider = {
+    list: async () => pluginHost.panels(),
+    get: (plugin) => pluginHost.panel(plugin),
+  };
+
   const app = createStudioApp({
     auth,
     content,
@@ -45,6 +64,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     theme,
     csrf,
     storage,
+    panels,
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
 

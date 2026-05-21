@@ -198,6 +198,23 @@ export class PluginHost {
     return out;
   }
 
+  /** Plugins that declare an admin panel, for the Studio panel list. */
+  panels(): { plugin: string; title: string }[] {
+    const out: { plugin: string; title: string }[] = [];
+    for (const [, record] of this.#registry) {
+      if (record.manifest.panel) out.push({ plugin: record.manifest.name, title: record.manifest.panel.title });
+    }
+    return out;
+  }
+
+  /** Reads a plugin's admin panel HTML (served into a sandboxed iframe). */
+  async panel(name: string): Promise<{ title: string; html: string } | null> {
+    const record = this.#registry.get(name);
+    if (!record || !record.manifest.panel) return null;
+    const html = await readFile(join(record.dir, record.manifest.panel.entry), "utf8");
+    return { title: record.manifest.panel.title, html };
+  }
+
   async invoke(name: string, method: string, args: unknown): Promise<unknown> {
     const record = this.#registry.get(name);
     if (!record) throw new PressError("not_found", `Plugin not loaded: ${name}`);

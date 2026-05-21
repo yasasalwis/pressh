@@ -4,8 +4,15 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { CapabilityGate, PressError } from "@pressh/core";
 import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
 import type { ContentService, ContentStatus, ThemeService } from "@pressh/engine";
+import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
 import type { MediaService } from "./media.js";
 import { ADMIN_HTML } from "./admin-html.js";
+
+/** Source of plugin admin panels (wired from the PluginHost in the bootstrap). */
+export interface PanelProvider {
+  list(): Promise<{ plugin: string; title: string }[]>;
+  get(plugin: string): Promise<{ title: string; html: string } | null>;
+}
 
 const SESSION_COOKIE = "pressh_session";
 
@@ -16,6 +23,7 @@ export interface StudioAppDeps {
   theme: ThemeService;
   csrf: CsrfProtection;
   storage: StorageAdapter;
+  panels?: PanelProvider;
   production?: boolean;
 }
 
@@ -202,6 +210,36 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       const { status, code } = mapError(error);
       return c.json({ error: { code, message: code } }, status);
     }
+  });
+
+  // --- plugin admin panels (iframe-sandboxed, ADR-005) ---
+  app.get("/admin/plugins", requireSession, async (c) => {
+    return c.json({ items: deps.panels ? await deps.panels.list() : [] });
+  });
+
+  app.get("/admin/plugins/:plugin", requireSession, async (c) => {
+    const plugin = c.req.param("plugin") ?? "";
+    const panel = deps.panels ? await deps.panels.get(plugin) : null;
+    if (!panel) return c.text("Not found", 404);
+    // Parent wrapper that embeds the panel in a sandbox WITHOUT allow-same-origin.
+    return c.html(
+      `<!DOCTYPE html><meta charset="utf-8"><title>Plugin: ${plugin.replace(/[^a-zA-Z0-9_-]/g, "")}</title>` +
+        panelFrameTag(`/admin/plugins/${encodeURIComponent(plugin)}/panel`),
+    );
+  });
+
+  app.get("/admin/plugins/:plugin/panel", requireSession, async (c) => {
+    const plugin = c.req.param("plugin") ?? "";
+    const panel = deps.panels ? await deps.panels.get(plugin) : null;
+    if (!panel) return c.text("Not found", 404);
+    // Strict CSP: the panel may run inline script/style but cannot reach the
+    // network or be framed by anything but the Studio.
+    c.header(
+      "Content-Security-Policy",
+      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data:; frame-ancestors 'self'",
+    );
+    c.header("X-Content-Type-Options", "nosniff");
+    return c.html(wrapPanelHtml({ title: panel.title, body: panel.html }));
   });
 
   // --- media upload (validated, stored outside web root) ---
