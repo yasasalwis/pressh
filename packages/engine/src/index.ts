@@ -46,6 +46,14 @@ export type {
   ThemeTokenDef,
   ThemeTokenType,
 } from "./theming.js";
+export { createGdprService } from "./gdpr.js";
+export type {
+  EncRef,
+  GdprExport,
+  GdprService,
+  GdprServiceOptions,
+  SubjectScope,
+} from "./gdpr.js";
 export { createContentService } from "./content-service.js";
 export type {
   ContentService,

@@ -3,7 +3,7 @@ import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { CapabilityGate, PressError } from "@pressh/core";
 import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
-import type { ContentService, ContentStatus, ThemeService } from "@pressh/engine";
+import type { ContentService, ContentStatus, GdprService, ThemeService } from "@pressh/engine";
 import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
 import type { MediaService } from "./media.js";
 import { ADMIN_HTML } from "./admin-html.js";
@@ -24,6 +24,7 @@ export interface StudioAppDeps {
   csrf: CsrfProtection;
   storage: StorageAdapter;
   panels?: PanelProvider;
+  gdpr?: GdprService;
   production?: boolean;
 }
 
@@ -210,6 +211,19 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       const { status, code } = mapError(error);
       return c.json({ error: { code, message: code } }, status);
     }
+  });
+
+  // --- GDPR data-subject operations ---
+  app.post("/admin/api/gdpr/export", requireSession, requireCsrf, async (c) => {
+    if (!deps.gdpr) return c.json({ error: { code: "not_found", message: "GDPR not enabled" } }, 404);
+    const { subjectRef } = await c.req.json<{ subjectRef: string }>();
+    return run(c, () => deps.gdpr!.export(caps(c), subjectRef));
+  });
+
+  app.post("/admin/api/gdpr/erase", requireSession, requireCsrf, async (c) => {
+    if (!deps.gdpr) return c.json({ error: { code: "not_found", message: "GDPR not enabled" } }, 404);
+    const { subjectRef } = await c.req.json<{ subjectRef: string }>();
+    return run(c, () => deps.gdpr!.erase(caps(c), subjectRef));
   });
 
   // --- plugin admin panels (iframe-sandboxed, ADR-005) ---

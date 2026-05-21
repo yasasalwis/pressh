@@ -8,7 +8,7 @@ import {
   createFileAuditLog,
   createFileSystemStorage,
 } from "@pressh/core";
-import { createContentService, createThemeService } from "@pressh/engine";
+import { createContentService, createGdprService, createThemeService } from "@pressh/engine";
 import { PluginHost } from "@pressh/runtime";
 import { createStudioApp } from "./app.js";
 import type { PanelProvider } from "./app.js";
@@ -37,6 +37,14 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const content = createContentService({ storage, audit });
   const media = createMediaService({ storage, audit, mediaRoot: opts.mediaRoot });
   const theme = createThemeService({ storage, audit });
+  const gdpr = createGdprService({
+    storage,
+    audit,
+    scopes: [
+      { collection: "form_submissions", subjectField: "subjectRef", timestampField: "at" },
+      { collection: "media", subjectField: "ownerRef" },
+    ],
+  });
   const csrfSecret = opts.csrfSecret
     ? Buffer.from(opts.csrfSecret)
     : randomBytes(32);
@@ -65,6 +73,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     csrf,
     storage,
     panels,
+    gdpr,
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
 

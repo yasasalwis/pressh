@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { PressError } from "@pressh/core";
-import type { QueryResolver, ThemeService } from "@pressh/engine";
+import type { GdprService, QueryResolver, ThemeService } from "@pressh/engine";
 import type { RenderCache } from "./cache.js";
 import { escapeHtml, renderBlocks, renderNotFound, renderPage } from "./render.js";
 
@@ -16,6 +16,7 @@ export interface SiteAppDeps {
   pluginHost: SitePluginHost;
   cache: RenderCache;
   themeService?: ThemeService;
+  gdpr?: GdprService;
   listPublishedPaths?: () => Promise<string[]>;
   baseUrl?: string;
   production?: boolean;
@@ -94,6 +95,19 @@ export function createSiteApp(deps: SiteAppDeps): Hono {
       const { status, code } = mapError(error);
       return c.json({ error: { code, message: code } }, status);
     }
+  });
+
+  // Public consent capture (Art. 6/7). Anonymous, no auth — the data subject acts.
+  app.post("/api/consent", async (c) => {
+    if (!deps.gdpr) return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
+    const body = await c.req
+      .json<{ subjectRef?: string; scope?: string; granted?: boolean }>()
+      .catch(() => ({}) as { subjectRef?: string; scope?: string; granted?: boolean });
+    if (typeof body.subjectRef !== "string" || typeof body.scope !== "string") {
+      return c.json({ error: { code: "validation", message: "subjectRef and scope required" } }, 400);
+    }
+    await deps.gdpr.recordConsent(body.subjectRef, body.scope, body.granted === true);
+    return c.json({ ok: true });
   });
 
   // Front controller — resolve any URL at request time (FR-030).
