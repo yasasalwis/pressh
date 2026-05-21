@@ -5,6 +5,7 @@ import { CapabilityGate, PressError } from "@pressh/core";
 import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
 import type { ContentService, ContentStatus, GdprService, ThemeService } from "@pressh/engine";
 import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
+import type { CveService } from "@pressh/runtime";
 import type { MediaService } from "./media.js";
 import { ADMIN_HTML } from "./admin-html.js";
 
@@ -25,6 +26,7 @@ export interface StudioAppDeps {
   storage: StorageAdapter;
   panels?: PanelProvider;
   gdpr?: GdprService;
+  cve?: CveService;
   production?: boolean;
 }
 
@@ -224,6 +226,14 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     if (!deps.gdpr) return c.json({ error: { code: "not_found", message: "GDPR not enabled" } }, 404);
     const { subjectRef } = await c.req.json<{ subjectRef: string }>();
     return run(c, () => deps.gdpr!.erase(caps(c), subjectRef));
+  });
+
+  // --- plugin CVE status (supply-chain visibility, baseline #11) ---
+  app.get("/admin/api/plugins/cve", requireSession, async (c) => {
+    if (!gate.check(caps(c), "content.read")) {
+      return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+    }
+    return c.json({ items: deps.cve ? await deps.cve.list() : [] });
   });
 
   // --- plugin admin panels (iframe-sandboxed, ADR-005) ---

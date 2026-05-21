@@ -22,3 +22,6 @@ export type {
   PanelMessageEvent,
   PanelRequest,
 } from "./iframe-shim/index.js";
+
+export { createCveService } from "./cve.js";
+export type { CveChecker, CveEntry, CveFeedSource, CveService, CveServiceOptions } from "./cve.js";

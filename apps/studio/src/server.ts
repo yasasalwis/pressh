@@ -15,7 +15,8 @@ import {
   createGdprService,
   createThemeService,
 } from "@pressh/engine";
-import { PluginHost } from "@pressh/runtime";
+import { PluginHost, createCveService } from "@pressh/runtime";
+import type { CveFeedSource } from "@pressh/runtime";
 import { createStudioApp } from "./app.js";
 import type { PanelProvider } from "./app.js";
 import { createMediaService } from "./media.js";
@@ -28,6 +29,8 @@ export interface StudioServerOptions {
   port?: number;
   production?: boolean;
   csrfSecret?: string;
+  /** Source of plugin CVE advisories (v1 default: empty/operator-supplied). */
+  cveFeed?: CveFeedSource;
 }
 
 /**
@@ -64,8 +67,18 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     : randomBytes(32);
   const csrf = createCsrf(csrfSecret);
 
+  const cve = createCveService({
+    storage,
+    audit,
+    source: opts.cveFeed ?? { fetch: async () => [] },
+  });
+  scheduler.register("cve.sync", async () => {
+    await cve.sync();
+  });
+  await scheduler.schedule({ type: "cve.sync" }); // initial sync on boot
+
   // The Studio boots its own PluginHost (separate trust boundary, ADR-002).
-  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production });
+  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve });
   if (opts.pluginsDir) {
     const entries = await readdir(opts.pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -88,6 +101,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     storage,
     panels,
     gdpr,
+    cve,
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
 

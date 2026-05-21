@@ -7,7 +7,7 @@ import {
   createQueryResolver,
   createThemeService,
 } from "@pressh/engine";
-import { PluginHost } from "@pressh/runtime";
+import { PluginHost, createCveService } from "@pressh/runtime";
 import { createSiteApp } from "./app.js";
 import { createRenderCache } from "./cache.js";
 
@@ -40,7 +40,9 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     audit,
     scopes: [{ collection: "form_submissions", subjectField: "subjectRef", timestampField: "at" }],
   });
-  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production });
+  // Shares the CVE store the Studio syncs; the Site's host refuses flagged plugins too.
+  const cve = createCveService({ storage, audit, source: { fetch: async () => [] } });
+  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve });
   const cache = createRenderCache();
 
   const listPublishedPaths = async (): Promise<string[]> => {

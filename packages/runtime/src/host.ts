@@ -11,6 +11,7 @@ import type {
   RpcError,
   WorkerToHost,
 } from "@pressh/sdk";
+import type { CveChecker } from "./cve.js";
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 5000;
 const MANIFEST_FILE = "pressh.plugin.json";
@@ -27,6 +28,8 @@ export interface PluginHostOptions {
   /** Override the compiled worker script (used in tests running from src). */
   workerScript?: string;
   maxMemoryMb?: number;
+  /** When set, plugins flagged by the CVE feed are refused at load (baseline #11). */
+  cve?: CveChecker;
 }
 
 export interface LoadedEndpoint {
@@ -179,6 +182,12 @@ export class PluginHost {
   async load(pluginDir: string): Promise<PluginManifest> {
     const manifest = await this.#readManifest(pluginDir);
     await this.#verifySignature(pluginDir, manifest);
+    if (this.#opts.cve && (await this.#opts.cve.isFlagged(manifest.name, manifest.version))) {
+      throw new PressError(
+        "forbidden",
+        `Plugin "${manifest.name}@${manifest.version}" has a known vulnerability and was refused`,
+      );
+    }
     const instance = await this.#spawn(pluginDir, manifest);
     this.#registry.set(manifest.name, { dir: pluginDir, manifest, instance });
     return manifest;
