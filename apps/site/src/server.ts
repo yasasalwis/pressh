@@ -70,7 +70,18 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
 
   return {
     start: () => {
-      serve({ fetch: app.fetch, port: opts.port ?? 3000 });
+      const port = opts.port ?? 3000;
+      const server = serve({ fetch: app.fetch, port });
+      server.on("error", (e: NodeJS.ErrnoException) => {
+        if (e.code === "EADDRINUSE") {
+          process.stderr.write(
+            `\nPressh Site: port ${port} is already in use — is the Site already running?\n` +
+              `Stop it (macOS/Linux: lsof -ti:${port} | xargs kill) or set PRESSH_SITE_PORT to a free port.\n`,
+          );
+          process.exit(1);
+        }
+        throw e;
+      });
     },
     cache,
   };
@@ -90,5 +101,8 @@ async function runFromEnv(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void runFromEnv();
+  runFromEnv().catch((e: unknown) => {
+    process.stderr.write(`Pressh Site failed to start: ${e instanceof Error ? e.message : String(e)}\n`);
+    process.exit(1);
+  });
 }

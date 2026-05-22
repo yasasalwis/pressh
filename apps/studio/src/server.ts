@@ -108,7 +108,18 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
 
   return {
     start: () => {
-      serve({ fetch: app.fetch, port: opts.port ?? 4000 });
+      const port = opts.port ?? 4000;
+      const server = serve({ fetch: app.fetch, port });
+      server.on("error", (e: NodeJS.ErrnoException) => {
+        if (e.code === "EADDRINUSE") {
+          process.stderr.write(
+            `\nPressh Studio: port ${port} is already in use — is the Studio already running?\n` +
+              `Stop it (macOS/Linux: lsof -ti:${port} | xargs kill) or set PRESSH_STUDIO_PORT to a free port.\n`,
+          );
+          process.exit(1);
+        }
+        throw e;
+      });
     },
   };
 }
@@ -129,5 +140,8 @@ async function runFromEnv(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void runFromEnv();
+  runFromEnv().catch((e: unknown) => {
+    process.stderr.write(`Pressh Studio failed to start: ${e instanceof Error ? e.message : String(e)}\n`);
+    process.exit(1);
+  });
 }
