@@ -32,6 +32,8 @@ interface StoredGeneralSettings extends StoredDoc {
   defaultLocale: string;
   timezone: string;
   smtp: SmtpSettings | null;
+  headerNav?: string[];
+  connectedSources?: string[];
 }
 
 /** Public view: adds whether an SMTP password is on file, never the value. */
@@ -42,6 +44,10 @@ export interface GeneralSettings {
   smtp: (SmtpSettings & { hasPassword: boolean }) | null;
   /** False when no secrets backend is configured (PRESSH_MASTER_KEY unset). */
   smtpAvailable: boolean;
+  /** Page IDs that appear in the site header navigation, in order. */
+  headerNav: string[];
+  /** Content-type slugs enabled as collection data sources for the site. */
+  connectedSources: string[];
 }
 
 export interface UpdateSettingsInput {
@@ -52,6 +58,10 @@ export interface UpdateSettingsInput {
   smtp?: SmtpSettings | null;
   /** Plaintext SMTP password; sealed into the vault, never persisted in the doc. */
   smtpPassword?: string;
+  /** Page IDs to show in the site header navigation, in order. */
+  headerNav?: string[];
+  /** Content-type slugs to enable as collection data sources. */
+  connectedSources?: string[];
 }
 
 export interface SettingsService {
@@ -72,6 +82,8 @@ const DEFAULTS = {
   defaultLocale: "en",
   timezone: "UTC",
   smtp: null as SmtpSettings | null,
+  headerNav: [] as string[],
+  connectedSources: [] as string[],
 };
 
 function isValidTimezone(tz: string): boolean {
@@ -115,6 +127,8 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
       timezone: doc.timezone,
       smtp,
       smtpAvailable,
+      headerNav: doc.headerNav ?? [],
+      connectedSources: doc.connectedSources ?? [],
     };
   }
 
@@ -156,6 +170,18 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
           validateSmtp(partial.smtp);
           doc.smtp = partial.smtp;
         }
+      }
+      if (partial.headerNav !== undefined) {
+        if (!Array.isArray(partial.headerNav))
+          throw new PressError("validation", "headerNav must be an array");
+        doc.headerNav = partial.headerNav.filter((id) => typeof id === "string" && id.trim() !== "");
+      }
+      if (partial.connectedSources !== undefined) {
+        if (!Array.isArray(partial.connectedSources))
+          throw new PressError("validation", "connectedSources must be an array");
+        doc.connectedSources = partial.connectedSources.filter(
+          (s) => typeof s === "string" && s.trim() !== "",
+        );
       }
       if (partial.smtpPassword !== undefined && partial.smtpPassword !== "") {
         if (!opts.secrets) {

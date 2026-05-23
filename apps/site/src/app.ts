@@ -318,7 +318,12 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
         const ctx = makeSiteContext(deps.resolver, deps.storage);
         const rendered = await renderTree(layoutNodes, ctx);
         bodyHtml = rendered.html;
-        componentStyles = rendered.css;
+        // Designer pages are full-page compositions, not prose: release the
+        // theme's max-width <main> so sections can span full-bleed (their inner
+        // `container` primitives re-center content). Deterministic → CSP-hash stable.
+        componentStyles =
+          "main{max-width:none!important;margin:0!important;padding:0!important;width:100%!important}" +
+          rendered.css;
       } else {
         bodyHtml = renderToString(createElement(Blocks, { blocks }));
       }

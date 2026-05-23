@@ -187,6 +187,26 @@ table.tbl .actions{display:flex;gap:.35rem;justify-content:flex-end}
   color:var(--muted);font-size:.84rem;cursor:pointer;transition:border-color .15s,background .15s}
 .dropzone.dragover{border-color:var(--brand);background:rgba(109,40,217,.06)}
 
+/* ─── Header-nav toggle switch ──────────────────────────────── */
+.sw{position:relative;display:inline-flex;align-items:center;cursor:pointer;flex-shrink:0;vertical-align:middle}
+.sw input{opacity:0;position:absolute;width:0;height:0;margin:0}
+.sw-track{display:block;width:34px;height:19px;background:var(--field-border);border-radius:999px;transition:background .2s;position:relative}
+.sw-track::after{content:'';position:absolute;width:15px;height:15px;background:#fff;border-radius:50%;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw input:checked+.sw-track{background:var(--brand)}
+.sw input:checked+.sw-track::after{transform:translateX(15px)}
+.nav-lbl{font-size:.72rem;color:var(--muted);font-weight:600;margin-left:.25rem;white-space:nowrap}
+/* ─── Appearance search + data sources ──────────────────────── */
+.srch-bar{position:relative}
+.srch-bar::before{content:'\1F50D';position:absolute;left:.72rem;top:50%;transform:translateY(-50%);font-size:.7rem;pointer-events:none;opacity:.45}
+.srch-bar input{padding-left:2rem;font-size:.82rem}
+.src-item{display:flex;align-items:center;gap:.65rem;padding:.5rem 0;border-top:1px solid var(--card-border);font-size:.85rem}
+.src-item:first-child{border-top:0}
+.src-item input[type=checkbox]{width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--brand)}
+.src-item .src-name{font-weight:600}
+.src-item .src-slug{font-size:.72rem;color:var(--muted)}
+/* ─── Generic checkbox label row ─────────────────────────────── */
+.dp-check-row{display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.82rem;font-weight:600;padding:.25rem 0}
+.dp-check-row input{width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--brand)}
 .audit-row{font-size:.8rem;padding:.5rem .15rem;border-top:1px solid var(--card-border);display:flex;gap:.7rem;align-items:baseline}
 .audit-row:first-child{border-top:0}
 .audit-row .a-time{color:var(--muted);font-size:.72rem;white-space:nowrap;flex:0 0 auto;width:140px}

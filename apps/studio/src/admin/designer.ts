@@ -100,6 +100,16 @@ export const DESIGNER_STYLES = String.raw`
 .dp-label{font-size:.73rem;font-weight:700;color:var(--text)}
 .dp-in{font-size:.82rem;padding:.48rem .65rem;border-radius:8px;width:100%}
 textarea.dp-in{min-height:64px;resize:vertical}
+.dp-tabs{display:flex;gap:.3rem;padding:.6rem .9rem .2rem}
+.dp-tab{flex:1;font-size:.74rem;font-weight:700;padding:.42rem .3rem;border:1px solid var(--card-border);border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;transition:border-color .12s,color .12s}
+.dp-tab:hover{color:var(--text)}
+.dp-tab.active{border-color:var(--brand);color:var(--brand);background:rgba(109,40,217,.07)}
+.dp-group{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.55rem 0 .05rem;opacity:.85}
+.dp-color-row{display:flex;gap:.4rem;align-items:center}
+.dp-color-row input[type=color]{width:34px;height:30px;padding:1px;border:1px solid var(--card-border);border-radius:6px;cursor:pointer;flex-shrink:0;background:var(--field)}
+.dp-color-row .dp-in{flex:1}
+.dp-box4{display:grid;grid-template-columns:repeat(4,1fr);gap:.3rem}
+.dp-box-in{text-align:center;padding-left:.2rem !important;padding-right:.2rem !important}
 .dp-check{flex-direction:row;align-items:center}
 .dp-check label{display:flex;align-items:center;gap:.5rem;font-size:.8rem;font-weight:600;color:var(--text);cursor:pointer}
 .dp-check input{width:15px;height:15px}
@@ -107,6 +117,34 @@ textarea.dp-in{min-height:64px;resize:vertical}
 .dp-actions{padding:.65rem .9rem;border-top:1px solid var(--panel-border);background:var(--panel-bg);display:flex;flex-direction:column;gap:.4rem}
 .dp-act-row{display:flex;gap:.4rem}
 .dp-actions .ghost{width:100%;text-align:center;justify-content:center}
+
+/* ── Right panel split: Layers / Properties ── */
+.ds-right{display:flex;flex-direction:column;overflow:hidden;background:var(--panel-bg);border-left:1px solid var(--panel-border)}
+.ds-rp-collapse{margin-left:auto;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:.72rem;padding:.1rem .3rem;border-radius:5px;line-height:1}
+.ds-rp-collapse:hover{color:var(--brand)}
+.ds-rp-layers{display:flex;flex-direction:column;overflow:hidden;height:240px;min-height:33px;flex-shrink:0}
+.ds-rp-layers.collapsed{height:auto !important}
+.ds-rp-layers.collapsed .ds-layers-scroll{display:none}
+.ds-rp-divider{height:7px;flex-shrink:0;cursor:row-resize;background:var(--panel-bg);border-top:1px solid var(--panel-border);border-bottom:1px solid var(--panel-border);position:relative}
+.ds-rp-divider::before{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:34px;height:3px;border-radius:3px;background:var(--card-border)}
+.ds-rp-divider:hover::before{background:var(--brand)}
+.ds-rp-divider.hide{display:none}
+.ds-rp-props{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:33px}
+.ds-rp-props.collapsed{flex:0 0 auto}
+.ds-rp-props.collapsed .ds-props-scroll,.ds-rp-props.collapsed #ds-props-footer{display:none}
+.ds-layers-scroll{flex:1;overflow-y:auto;padding:.3rem .25rem .6rem}
+.ds-layers-empty{color:var(--muted);font-size:.78rem;padding:.6rem .5rem}
+.ds-lr{display:flex;align-items:center;gap:.35rem;padding:.28rem .4rem;border-radius:6px;cursor:pointer;font-size:.76rem;white-space:nowrap;overflow:hidden;user-select:none}
+.ds-lr:hover{background:rgba(109,40,217,.06)}
+.ds-lr.sel{background:rgba(109,40,217,.14);color:var(--brand);font-weight:700}
+.ds-lr-caret{width:14px;flex-shrink:0;text-align:center;color:var(--muted);font-size:.65rem}
+.ds-lr-spacer{visibility:hidden}
+.ds-lr-ic{flex-shrink:0;font-size:.82rem;width:16px;text-align:center}
+.ds-lr-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ds-lr-del{flex-shrink:0;opacity:0;color:#e11d48;font-size:.72rem;padding:0 .25rem;border-radius:4px;transition:opacity .12s}
+.ds-lr:hover .ds-lr-del{opacity:.65}
+.ds-lr-del:hover{opacity:1;background:rgba(225,29,72,.12)}
+.ds-lr.ds-lr-over{box-shadow:inset 0 0 0 2px var(--brand)}
 `;
 
 export const DESIGNER_MARKUP = String.raw`
@@ -146,18 +184,29 @@ export const DESIGNER_MARKUP = String.raw`
       </div>
     </div>
     <div class="ds-right" id="ds-right">
-      <div class="ds-panel-head">
-        <span class="ds-panel-title">Properties</span>
-        <span style="font-size:.7rem;color:var(--muted)" id="ds-sel-name"></span>
-      </div>
-      <div class="ds-props-scroll" id="ds-props-scroll">
-        <div class="dp-empty">
-          <div class="dp-empty-icon">&#9965;</div>
-          <p class="dp-empty-title">Nothing selected</p>
-          <p class="dp-empty-sub">Click an element on the canvas to edit its content.</p>
+      <div class="ds-rp-layers" id="ds-rp-layers">
+        <div class="ds-panel-head">
+          <span class="ds-panel-title">Layers</span>
+          <button class="ds-rp-collapse" data-collapse="layers" title="Collapse layers">&#9662;</button>
         </div>
+        <div class="ds-layers-scroll" id="ds-layers"><div class="ds-layers-empty">No elements yet</div></div>
       </div>
-      <div id="ds-props-footer"></div>
+      <div class="ds-rp-divider" id="ds-rp-divider" title="Drag to resize"></div>
+      <div class="ds-rp-props" id="ds-rp-props">
+        <div class="ds-panel-head">
+          <span class="ds-panel-title">Properties</span>
+          <span style="font-size:.7rem;color:var(--muted)" id="ds-sel-name"></span>
+          <button class="ds-rp-collapse" data-collapse="props" title="Collapse properties">&#9662;</button>
+        </div>
+        <div class="ds-props-scroll" id="ds-props-scroll">
+          <div class="dp-empty">
+            <div class="dp-empty-icon">&#9965;</div>
+            <p class="dp-empty-title">Nothing selected</p>
+            <p class="dp-empty-sub">Click an element on the canvas or in Layers to edit it.</p>
+          </div>
+        </div>
+        <div id="ds-props-footer"></div>
+      </div>
     </div>
   </div>
 </section>
@@ -301,6 +350,27 @@ function setDropTarget(node){
   if(node) node.classList.add("ds-drop-target");
   else { var c=el("ds-canvas"); if(c) c.classList.add("ds-dragover"); }
 }
+// Moving EXISTING nodes (reorganize). Guard against dropping a node into itself
+// or one of its own descendants.
+function isDescendant(ancestorId,childId){
+  var f=findNode(ancestorId); if(!f||!f.node.children) return false;
+  function has(nodes){ for(var i=0;i<nodes.length;i++){ if(nodes[i].id===childId) return true; if(nodes[i].children&&has(nodes[i].children)) return true; } return false; }
+  return has(f.node.children);
+}
+function moveInto(dragId,containerId){
+  if(dragId===containerId||(containerId&&isDescendant(dragId,containerId))) return;
+  var df=findNode(dragId); if(!df) return;
+  var node=df.arr.splice(df.index,1)[0];
+  var arr=containerId?childrenOf(containerId):D.layout; arr.push(node);
+  D.selected=node.id; pushHist(); renderCanvas(); renderProps();
+}
+function moveAfter(dragId,targetId){
+  if(dragId===targetId||isDescendant(dragId,targetId)) return;
+  var df=findNode(dragId); if(!df) return;
+  var node=df.arr.splice(df.index,1)[0];
+  var tf=findNode(targetId); if(!tf) D.layout.push(node); else tf.arr.splice(tf.index+1,0,node);
+  D.selected=node.id; pushHist(); renderCanvas(); renderProps();
+}
 
 // ─── mutate ────────────────────────────────────────
 function addFromPalette(kind,id,targetNid,fromDrop){
@@ -319,7 +389,7 @@ function addFromPalette(kind,id,targetNid,fromDrop){
   for(var k=0;k<nodes.length;k++) arr.push(nodes[k]);
   D.selected=nodes[0].id; pushHist(); renderCanvas(); renderProps();
 }
-function moveNode(id,dir){ var f=findNode(id); if(!f) return; var j=f.index+dir; if(j<0||j>=f.arr.length) return; var t=f.arr[f.index]; f.arr[f.index]=f.arr[j]; f.arr[j]=t; pushHist(); renderCanvas(); }
+function moveNode(id,dir){ var f=findNode(id); if(!f) return; var j=f.index+dir; if(j<0||j>=f.arr.length) return; var t=f.arr[f.index]; f.arr[f.index]=f.arr[j]; f.arr[j]=t; pushHist(); renderCanvas(); renderLayers(); }
 function duplicateNode(id){ var f=findNode(id); if(!f) return; var clone=cloneTree([f.node])[0]; f.arr.splice(f.index+1,0,clone); D.selected=clone.id; pushHist(); renderCanvas(); renderProps(); }
 function removeNode(id){ var f=findNode(id); if(!f) return; f.arr.splice(f.index,1); if(D.selected===id) D.selected=f.parent?f.parent.id:null; pushHist(); renderCanvas(); renderProps(); }
 function selectNode(id){ D.selected=id; highlightSelected(); renderProps(); }
@@ -384,28 +454,135 @@ function fieldHtml(fld,value){
   else inp='<input class="dp-in" type="text" data-prop="'+escAttr(fld.k)+'" value="'+escAttr(v)+'">';
   return '<div class="dp-field"><label class="dp-label">'+esc(fld.l)+'</label>'+inp+'</div>';
 }
+// ─── style controls (edit node.styles.base.default) ───
+function styleVal(node,key){ var s=node.styles&&node.styles.base&&node.styles.base.default; return s?s[key]:undefined; }
+function setStyleVal(node,key,val){
+  node.styles=node.styles||{}; node.styles.base=node.styles.base||{}; node.styles.base.default=node.styles.base.default||{};
+  if(val===""||val==null) delete node.styles.base.default[key]; else node.styles.base.default[key]=val;
+}
+function grp(t){ return '<div class="dp-group">'+esc(t)+'</div>'; }
+function sField(node,label,key,type,opts){
+  var v=styleVal(node,key); v=(v==null?"":v);
+  if(type==="color"){
+    var hex=(typeof v==="string"&&/^#[0-9a-fA-F]{3,8}$/.test(v))?v:"#888888";
+    return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><div class="dp-color-row">'+
+      '<input type="color" data-stylecolor="'+escAttr(key)+'" value="'+escAttr(hex)+'">'+
+      '<input class="dp-in" type="text" data-style="'+escAttr(key)+'" value="'+escAttr(v)+'" placeholder="'+escAttr((opts&&opts.ph)||"#hex / token:colorPrimary")+'"></div></div>';
+  }
+  if(type==="select"){
+    var o=(opts&&opts.o)||[]; var s='<select class="dp-in" data-style="'+escAttr(key)+'"><option value="">default</option>';
+    for(var i=0;i<o.length;i++) s+='<option value="'+escAttr(o[i])+'"'+(String(v)===o[i]?" selected":"")+'>'+esc(o[i])+'</option>';
+    return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label>'+s+'</select></div>';
+  }
+  return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><input class="dp-in" type="text" data-style="'+escAttr(key)+'" value="'+escAttr(v)+'" placeholder="'+escAttr((opts&&opts.ph)||"")+'"></div>';
+}
+function boxField(node,label,prefix){
+  var keys=[prefix+"Top",prefix+"Right",prefix+"Bottom",prefix+"Left"], labs=["T","R","B","L"];
+  var h='<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><div class="dp-box4">';
+  for(var i=0;i<4;i++){ var v=styleVal(node,keys[i]); h+='<input class="dp-in dp-box-in" type="text" data-style="'+keys[i]+'" value="'+escAttr(v==null?"":v)+'" placeholder="'+labs[i]+'" title="'+labs[i]+'">'; }
+  return h+'</div></div>';
+}
+function buildContentTab(node){
+  var html="", fields=contentFields(node);
+  for(var i=0;i<fields.length;i++){ var fld=fields[i]; html+=fieldHtml(fld,node.props?node.props[fld.k]:undefined); }
+  html+=grp("Text")+
+    sField(node,"Text colour","color","color")+
+    sField(node,"Font size","fontSize","text",{ph:"e.g. 1.25rem"})+
+    sField(node,"Font weight","fontWeight","select",{o:["400","500","600","700","800","900"]})+
+    sField(node,"Text align","textAlign","select",{o:["left","center","right","justify"]})+
+    sField(node,"Line height","lineHeight","text",{ph:"e.g. 1.6"})+
+    sField(node,"Font family","fontFamily","text",{ph:"token:fontHeading"});
+  return html;
+}
+function buildLayoutTab(node){
+  var cont=isContainer(node.type), html="";
+  html+=grp("Size")+
+    sField(node,"Width","width","text",{ph:"auto / 100% / 320px"})+
+    sField(node,"Max width","maxWidth","text",{ph:"none = full width"})+
+    sField(node,"Min height","minHeight","text",{ph:"e.g. 320px"});
+  if(cont){
+    html+=grp("Layout");
+    if(node.type==="row"||node.type==="column"||node.type==="grid"||node.type==="form") html+=sField(node,"Direction","flexDirection","select",{o:["row","column"]});
+    html+=sField(node,"Justify","justifyContent","select",{o:["flex-start","center","flex-end","space-between","space-around","space-evenly"]})+
+      sField(node,"Align items","alignItems","select",{o:["stretch","flex-start","center","flex-end","baseline"]})+
+      sField(node,"Gap","gap","text",{ph:"e.g. 1rem"});
+  }
+  html+=grp("Spacing")+boxField(node,"Padding","padding")+boxField(node,"Margin","margin");
+  html+=grp("Background")+sField(node,"Background","background","color");
+  html+=grp("Border")+
+    sField(node,"Border width","borderWidth","text",{ph:"e.g. 1px"})+
+    sField(node,"Border style","borderStyle","select",{o:["solid","dashed","dotted","none"]})+
+    sField(node,"Border colour","borderColor","color")+
+    sField(node,"Radius","borderRadius","text",{ph:"e.g. 12px"});
+  return html;
+}
 function renderProps(){
+  renderLayers();
   var scroll=el("ds-props-scroll"), footer=el("ds-props-footer"); el("ds-sel-name").textContent="";
   if(!D.selected){ scroll.innerHTML=emptyPropsHtml(); footer.innerHTML=""; return; }
   var f=findNode(D.selected);
   if(!f){ D.selected=null; scroll.innerHTML=emptyPropsHtml(); footer.innerHTML=""; return; }
   var node=f.node, def=defFor(node.type), name=def?def.name:node.type, ic=def?def.icon:"◦";
-  el("ds-sel-name").textContent=name;
+  el("ds-sel-name").textContent=name; D.propTab=D.propTab||"content";
   var html='<div class="dp-comp-header"><div class="dp-comp-title"><span>'+esc(ic)+'</span>'+esc(name)+'</div>';
-  if(def&&def.description) html+='<div class="dp-comp-desc">'+esc(def.description)+'</div>';
   if(f.parent){ var pd=defFor(f.parent.type); html+='<button class="dp-parent" data-action="parent">&#8593; Select parent ('+esc(pd?pd.name:f.parent.type)+')</button>'; }
-  html+='</div><div class="dp-props-form">';
-  var fields=contentFields(node);
-  if(!fields.length) html+='<p class="dp-note">Layout element — drop primitives or components inside it. Spacing, colour, size &amp; responsive controls arrive in the Style panel (next phase).</p>';
-  for(var i=0;i<fields.length;i++){ var fld=fields[i]; var val=node.props?node.props[fld.k]:undefined; html+=fieldHtml(fld,val); }
-  html+='</div>'; scroll.innerHTML=html;
+  html+='</div>';
+  html+='<div class="dp-tabs"><button class="dp-tab'+(D.propTab==="content"?" active":"")+'" data-tab="content">Content</button>'+
+        '<button class="dp-tab'+(D.propTab==="layout"?" active":"")+'" data-tab="layout">Layout</button></div>';
+  html+='<div class="dp-props-form">'+(D.propTab==="layout"?buildLayoutTab(node):buildContentTab(node))+'</div>';
+  scroll.innerHTML=html;
   footer.innerHTML='<div class="dp-actions"><div class="dp-act-row">'+
     '<button class="ghost" data-action="up">&#8593; Up</button><button class="ghost" data-action="down">&#8595; Down</button></div>'+
     '<button class="ghost" data-action="dup">&#10070; Duplicate</button>'+
     '<button class="ghost danger" data-action="del">&#10005; Remove</button></div>';
 }
+// ─── layers tree (right panel, top) ────────────────
+function layerLabel(node){
+  var d=defFor(node.type), nm=d?d.name:node.type, extra="";
+  if(node.props){ var txt=node.props.text||node.props.label||node.props.heading||node.props.alt; if(txt) extra=" · "+String(txt).slice(0,20); }
+  return nm+extra;
+}
+function renderLayers(){
+  var box=el("ds-layers"); if(!box) return;
+  if(!D.layout.length){ box.innerHTML='<div class="ds-layers-empty">No elements yet</div>'; return; }
+  D.layersCollapsed=D.layersCollapsed||{};
+  var html="";
+  function walk(nodes,depth){
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i], d=defFor(n.type), ic=d?d.icon:"◦";
+      var hasKids=n.children&&n.children.length, coll=!!D.layersCollapsed[n.id];
+      var caret=hasKids?'<span class="ds-lr-caret" data-caret="'+escAttr(n.id)+'">'+(coll?"&#9656;":"&#9662;")+'</span>':'<span class="ds-lr-caret ds-lr-spacer">&#8226;</span>';
+      html+='<div class="ds-lr'+(D.selected===n.id?" sel":"")+'" draggable="true" data-lnid="'+escAttr(n.id)+'" style="padding-left:'+(depth*14+6)+'px">'+caret+'<span class="ds-lr-ic">'+esc(ic)+'</span><span class="ds-lr-nm">'+esc(layerLabel(n))+'</span><span class="ds-lr-del" data-del="'+escAttr(n.id)+'" title="Delete">&#10005;</span></div>';
+      if(hasKids&&!coll) walk(n.children,depth+1);
+    }
+  }
+  walk(D.layout,0);
+  box.innerHTML=html;
+}
+function toggleRpSection(which){
+  if(which==="layers"){ var s=el("ds-rp-layers"); s.classList.toggle("collapsed"); el("ds-rp-divider").classList.toggle("hide",s.classList.contains("collapsed")); }
+  else { el("ds-rp-props").classList.toggle("collapsed"); }
+  var lb=document.querySelector('[data-collapse="layers"]'); if(lb) lb.innerHTML=el("ds-rp-layers").classList.contains("collapsed")?"&#9656;":"&#9662;";
+  var pb=document.querySelector('[data-collapse="props"]'); if(pb) pb.innerHTML=el("ds-rp-props").classList.contains("collapsed")?"&#9656;":"&#9662;";
+}
+function initRpResize(){
+  var div=el("ds-rp-divider"), layers=el("ds-rp-layers"), right=el("ds-right"); if(!div) return;
+  var dragging=false, startY=0, startH=0;
+  div.addEventListener("pointerdown",function(e){ dragging=true; startY=e.clientY; startH=layers.getBoundingClientRect().height; try{ div.setPointerCapture(e.pointerId); }catch(ex){} e.preventDefault(); });
+  div.addEventListener("pointermove",function(e){ if(!dragging) return; var max=right.getBoundingClientRect().height-120; var h=Math.max(80,Math.min(startH+(e.clientY-startY),max)); layers.style.height=h+"px"; });
+  div.addEventListener("pointerup",function(e){ dragging=false; try{ div.releasePointerCapture(e.pointerId); }catch(ex){} });
+}
+
 function onPropInput(e){
-  var t=e.target, key=t.getAttribute("data-prop"); if(!key) return;
+  var t=e.target;
+  var skey=t.getAttribute("data-style")||t.getAttribute("data-stylecolor");
+  if(skey){
+    if(!D.selected) return; var sf=findNode(D.selected); if(!sf) return;
+    setStyleVal(sf.node,skey,t.value);
+    if(t.getAttribute("data-stylecolor")){ var pair=t.parentElement.querySelector('[data-style="'+skey+'"]'); if(pair) pair.value=t.value; }
+    D.dirty=true; scheduleRender(); scheduleHist(); return;
+  }
+  var key=t.getAttribute("data-prop"); if(!key) return;
   if(!D.selected) return; var f=findNode(D.selected); if(!f) return;
   f.node.props=f.node.props||{};
   var val; if(t.type==="checkbox") val=t.checked; else if(t.getAttribute("data-num")) val=Number(t.value); else val=t.value;
@@ -440,15 +617,34 @@ function wireDesigner(){
   pal.addEventListener("dragend",function(){ D.drag=null; clearDropTarget(); });
   var canvas=el("ds-canvas");
   canvas.addEventListener("click",function(e){ var t=e.target.closest("[data-nid]"); if(!t) return; e.preventDefault(); e.stopPropagation(); selectNode(t.getAttribute("data-nid")); });
-  canvas.addEventListener("dragover",function(e){ if(!D.drag) return; e.preventDefault(); setDropTarget(dropTargetFor(e.target)); });
+  canvas.addEventListener("dragstart",function(e){ var t=e.target.closest("[data-nid]"); if(!t) return; D.dragNode=t.getAttribute("data-nid"); D.drag=null; if(e.dataTransfer) e.dataTransfer.effectAllowed="move"; });
+  canvas.addEventListener("dragover",function(e){ if(!D.drag&&!D.dragNode) return; e.preventDefault(); setDropTarget(dropTargetFor(e.target)); });
   canvas.addEventListener("dragleave",function(e){ if(e.target===canvas) clearDropTarget(); });
-  canvas.addEventListener("drop",function(e){ if(!D.drag) return; e.preventDefault(); var tgt=dropTargetFor(e.target); var nid=tgt?tgt.getAttribute("data-nid"):null; clearDropTarget(); addFromPalette(D.drag.kind,D.drag.id,nid,true); D.drag=null; });
+  canvas.addEventListener("drop",function(e){ if(!D.drag&&!D.dragNode){ clearDropTarget(); return; } e.preventDefault(); var tgt=dropTargetFor(e.target); var nid=tgt?tgt.getAttribute("data-nid"):null; clearDropTarget(); if(D.dragNode){ moveInto(D.dragNode,nid); D.dragNode=null; } else if(D.drag){ addFromPalette(D.drag.kind,D.drag.id,nid,true); D.drag=null; } });
+  canvas.addEventListener("dragend",function(){ D.dragNode=null; clearDropTarget(); });
   var scroll=el("ds-props-scroll");
   scroll.addEventListener("input",onPropInput);
   scroll.addEventListener("change",onPropInput);
-  el("ds-right").addEventListener("click",function(e){ var b=e.target.closest("[data-action]"); if(!b||!D.selected) return; var a=b.getAttribute("data-action");
+  var lay=el("ds-layers");
+  lay.addEventListener("click",function(e){
+    var del=e.target.closest("[data-del]"); if(del){ e.stopPropagation(); removeNode(del.getAttribute("data-del")); return; }
+    var c=e.target.closest("[data-caret]");
+    if(c){ var id=c.getAttribute("data-caret"); D.layersCollapsed=D.layersCollapsed||{}; D.layersCollapsed[id]=!D.layersCollapsed[id]; renderLayers(); return; }
+    var r=e.target.closest("[data-lnid]"); if(r) selectNode(r.getAttribute("data-lnid"));
+  });
+  function clearLayerOver(){ var p=lay.querySelectorAll(".ds-lr-over"); for(var i=0;i<p.length;i++) p[i].classList.remove("ds-lr-over"); }
+  lay.addEventListener("dragstart",function(e){ var r=e.target.closest("[data-lnid]"); if(!r) return; D.dragNode=r.getAttribute("data-lnid"); if(e.dataTransfer) e.dataTransfer.effectAllowed="move"; });
+  lay.addEventListener("dragover",function(e){ if(!D.dragNode) return; var r=e.target.closest("[data-lnid]"); if(!r) return; e.preventDefault(); clearLayerOver(); r.classList.add("ds-lr-over"); });
+  lay.addEventListener("dragleave",function(e){ var r=e.target.closest("[data-lnid]"); if(r) r.classList.remove("ds-lr-over"); });
+  lay.addEventListener("drop",function(e){ if(!D.dragNode){ clearLayerOver(); return; } e.preventDefault(); var r=e.target.closest("[data-lnid]"); clearLayerOver(); if(r){ var tid=r.getAttribute("data-lnid"); var tf=findNode(tid); if(tf){ if(isContainer(tf.node.type)) moveInto(D.dragNode,tid); else moveAfter(D.dragNode,tid); } } D.dragNode=null; });
+  lay.addEventListener("dragend",function(){ D.dragNode=null; clearLayerOver(); });
+  el("ds-right").addEventListener("click",function(e){
+    var cb=e.target.closest("[data-collapse]"); if(cb){ toggleRpSection(cb.getAttribute("data-collapse")); return; }
+    var tb=e.target.closest("[data-tab]"); if(tb){ D.propTab=tb.getAttribute("data-tab"); renderProps(); return; }
+    var b=e.target.closest("[data-action]"); if(!b||!D.selected) return; var a=b.getAttribute("data-action");
     if(a==="up") moveNode(D.selected,-1); else if(a==="down") moveNode(D.selected,1);
     else if(a==="dup") duplicateNode(D.selected); else if(a==="del") removeNode(D.selected);
     else if(a==="parent") selectParent(D.selected); });
+  initRpResize();
 }
 `;

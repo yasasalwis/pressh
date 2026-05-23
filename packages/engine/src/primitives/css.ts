@@ -250,8 +250,8 @@ export function compileNodeCss(node: PrimitiveNode): string {
 const BASE_CSS: Partial<Record<PrimitiveType, string>> = {
   section: "display:block;width:100%",
   container: "width:100%;max-width:1100px;margin-left:auto;margin-right:auto;padding-left:1.5rem;padding-right:1.5rem",
-  row: "display:flex;flex-direction:row;gap:1rem",
-  column: "display:flex;flex-direction:column;gap:1rem",
+  row: "display:flex;flex-direction:row;gap:1rem;flex-wrap:wrap",
+  column: "display:flex;flex-direction:column;gap:1rem;min-width:0",
   grid: "display:grid;gap:1rem;grid-template-columns:repeat(3,1fr)",
   spacer: "display:block;height:2rem",
   divider: "border:0;border-top:1px solid currentColor;opacity:.15;margin:0",
@@ -272,6 +272,10 @@ const BASE_CSS: Partial<Record<PrimitiveType, string>> = {
 
 const VIDEO_FRAME_CSS = `.${TYPE_CLASS_PREFIX}video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}`;
 const FIELD_INPUT_CSS = `.${TYPE_CLASS_PREFIX}input input,.${TYPE_CLASS_PREFIX}textarea textarea{font:inherit;padding:.6rem .75rem;border:1px solid #d8dee9;border-radius:8px;width:100%}`;
+// A container holding only columns lays them side-by-side (set via the renderer
+// adding `ps-flow-row`); columns directly inside a row/flow-row share width.
+const FLOW_ROW_CSS = `.ps-flow-row{display:flex;flex-direction:row;flex-wrap:wrap;gap:1rem;align-items:stretch}`;
+const COLUMN_FLEX_CSS = `.${TYPE_CLASS_PREFIX}row>.${TYPE_CLASS_PREFIX}column,.ps-flow-row>.${TYPE_CLASS_PREFIX}column{flex:1 1 0}`;
 
 /** Collects every primitive type that appears in the tree, in stable order. */
 function collectTypes(nodes: PrimitiveNode[], seen: Set<PrimitiveType>): void {
@@ -307,6 +311,10 @@ export function compileTreeCss(nodes: PrimitiveNode[]): string {
     if (type === "video") base.push(VIDEO_FRAME_CSS);
   }
   if (types.has("input") || types.has("textarea")) base.push(FIELD_INPUT_CSS);
+  if (types.has("column")) {
+    base.push(FLOW_ROW_CSS);
+    base.push(COLUMN_FLEX_CSS);
+  }
 
   const perNode: string[] = [];
   collectNodeCss(nodes, perNode);

@@ -60,11 +60,27 @@ function inputType(value: unknown): string {
   return INPUT_TYPES.has(t) ? t : "text";
 }
 
+/**
+ * True when a container holds only columns (2+), so it should lay them out
+ * side-by-side. Mixed children (e.g. a heading + a grid) keep the default
+ * vertical stack, so presets are unaffected.
+ */
+function isColumnFlow(node: PrimitiveNode): boolean {
+  const kids = node.children;
+  if (!kids || kids.length < 2) return false;
+  let cols = 0;
+  for (const c of kids) if (c.type === "column") cols++;
+  return cols >= 2 && cols === kids.length;
+}
+
+const FLOW_PARENTS = new Set<string>(["section", "container", "column"]);
+
 function classAttr(node: PrimitiveNode, env: RenderEnv): string {
   const classes = [typeClass(node.type)];
   const nc = nodeClass(node.id);
   if (nc) classes.push(nc);
-  const nid = env.editor ? ` data-nid="${e(node.id)}"` : "";
+  if (FLOW_PARENTS.has(node.type) && isColumnFlow(node)) classes.push("ps-flow-row");
+  const nid = env.editor ? ` data-nid="${e(node.id)}" draggable="true"` : "";
   return `class="${classes.join(" ")}"${nid}`;
 }
 

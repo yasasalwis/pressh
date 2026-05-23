@@ -7,6 +7,10 @@ export const SECTIONS_JS = `
 var ROLES=["owner","admin","editor","author","viewer"];
 var TYPE_FIELD_TYPES=["text","richtext","number","boolean","date","select"];
 var LAST_USERS=[];
+var HEADER_NAV=[];
+var CONNECTED_SOURCES=[];
+var APP_SEARCH="";
+var APP_TYPES=[];
 
 function fmtDate(iso){ try{ return new Date(iso).toLocaleString(); }catch(e){ return iso; } }
 function confirmAction(title,msg,onYes){ _confirmYes=onYes; openModal('<h3>'+esc(title)+'</h3><p class="hint">'+esc(msg)+'</p><div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="btn-sm danger" onclick="confirmYes()">Confirm</button></div>'); }
@@ -47,9 +51,14 @@ function newPageFormHtml(){
 function toggleNewPage(){ var f=el("new-page-form"); if(f){ f.classList.toggle("hide"); if(!f.classList.contains("hide")) el("pg-title").focus(); } }
 function suggestSlug(){ var s=el("pg-slug"); if(!s||s.dataset.touched) return; s.value=el("pg-title").value.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); }
 async function renderPages(){
-  var r=await api("/admin/api/content");
+  var promises=[api("/admin/api/content")];
+  if(can("settings.manage")) promises.push(api("/admin/api/settings"));
+  var results=await Promise.all(promises);
+  var r=results[0]; var sr=results[1]||null;
   var items=r.body.items||[];
+  if(sr) HEADER_NAV=(sr.body.settings||{}).headerNav||[];
   el("nav-pages-count").textContent=items.length||"";
+  var canNav=can("settings.manage");
   var rows;
   if(!items.length){ rows='<div class="empty"><span class="ico">&#128196;</span>No pages yet. Create your first one.</div>'; }
   else {
@@ -60,9 +69,14 @@ async function renderPages(){
       var pubBtn=p.status==="published"
         ?'<button class="ghost" onclick="pageTransition(\\''+esc(p.id)+'\\',\\'draft\\')">Unpublish</button>'
         :'<button class="btn-sm btn-ok" onclick="pageTransition(\\''+esc(p.id)+'\\',\\'published\\')">Publish</button>';
+      var inNav=HEADER_NAV.indexOf(p.id)>=0;
+      var navToggle=canNav
+        ?'<label class="sw" title="Show in header navigation"><input type="checkbox"'+(inNav?' checked':'')+' onchange="toggleHeaderNav(\\''+esc(p.id)+'\\',this.checked)"><span class="sw-track"></span></label><span class="nav-lbl">Header</span>'
+        :'';
       return '<div class="list-row"><div class="grow"><div class="title">'+label+'</div>'+
         '<div class="meta">/'+esc(p.slug)+' &middot; rev '+(p.currentRevision||1)+'</div></div>'+
         '<span class="badge b-'+esc(p.status)+'">'+esc(p.status)+'</span>'+
+        navToggle+
         '<button class="iconbtn" title="Revision history" onclick="openRevisions(\\''+esc(p.id)+'\\',\\''+esc(p.slug)+'\\')">&#8635;</button>'+
         view+'<button class="btn-sm" onclick="navigate(\\'#/page/'+esc(p.id)+'\\')">&#9998; Edit</button>'+pubBtn+'</div>';
     }).join("");
@@ -70,6 +84,14 @@ async function renderPages(){
   var canCreate=can("types.manage")&&can("content.create");
   var newBtn=canCreate?'<button class="btn-sm" onclick="toggleNewPage()">+ New page</button>':'';
   el("view").innerHTML='<div class="row-head"><h2>Pages</h2>'+newBtn+'</div>'+(canCreate?newPageFormHtml():'')+'<div class="card">'+rows+'</div>';
+}
+async function toggleHeaderNav(id,on){
+  var idx=HEADER_NAV.indexOf(id);
+  if(on&&idx<0) HEADER_NAV.push(id);
+  else if(!on&&idx>=0) HEADER_NAV.splice(idx,1);
+  var r=await api("/admin/api/settings",{method:"PUT",body:JSON.stringify({headerNav:HEADER_NAV})});
+  if(r.status===200) toast(on?"Added to header navigation":"Removed from header navigation");
+  else{ toast("Could not update navigation",true); if(on&&idx<0)HEADER_NAV.pop(); else if(!on&&idx>=0)HEADER_NAV.splice(idx,0,id); }
 }
 async function createPage(publish){
   clearErr("pg-error");
@@ -287,41 +309,80 @@ async function revokeInvite(id){
 // ═══════════════ APPEARANCE (theme customizer) ═══════════════
 var THEMES=[]; var THEME_STATE=null; var _pvT;
 async function renderAppearance(){
-  var r=await api("/admin/api/theme");
+  var results=await Promise.all([api("/admin/api/theme"),api("/admin/api/settings"),api("/admin/api/types")]);
+  var r=results[0]; var sr=results[1]; var tr=results[2];
   var settings=r.body.settings||{ theme:"default", tokens:{}, siteName:"Pressh" };
   THEMES=r.body.themes||[];
   THEME_STATE={ theme:settings.theme, tokens:Object.assign({},settings.tokens||{}), siteName:settings.siteName||"Pressh" };
+  CONNECTED_SOURCES=(sr.body.settings||{}).connectedSources||[];
+  APP_TYPES=tr.body.items||[];
+  APP_SEARCH="";
   paintAppearance(); refreshPreview();
 }
 function curThemeDef(){ return THEMES.find(function(t){ return t.slug===THEME_STATE.theme; })||THEMES[0]||{ tokens:[] }; }
-function paintAppearance(){
-  var theme=curThemeDef(), groups={};
-  (theme.tokens||[]).forEach(function(tk){ (groups[tk.group]=groups[tk.group]||[]).push(tk); });
-  var controls="";
+function buildTkControls(groups,q){
+  var ql=(q||"").toLowerCase().trim();
+  var html="";
   Object.keys(groups).forEach(function(g){
-    controls+='<div class="tk-group"><h4>'+esc(g)+'</h4>';
-    groups[g].forEach(function(tk){
+    var tokens=groups[g];
+    if(ql){ tokens=tokens.filter(function(tk){ return tk.label.toLowerCase().indexOf(ql)>=0||tk.key.toLowerCase().indexOf(ql)>=0||g.toLowerCase().indexOf(ql)>=0; }); }
+    if(!tokens.length) return;
+    html+='<div class="tk-group"><h4>'+esc(g)+'</h4>';
+    tokens.forEach(function(tk){
       var val=THEME_STATE.tokens[tk.key]!=null?THEME_STATE.tokens[tk.key]:tk.default;
       if(tk.type==="color"){
-        controls+='<div class="color-row"><label>'+esc(tk.label)+'</label>'+
+        html+='<div class="color-row"><label>'+esc(tk.label)+'</label>'+
           '<input type="color" id="tkc-'+esc(tk.key)+'" value="'+escAttr(val)+'" oninput="tkColor(\\''+esc(tk.key)+'\\',this.value)">'+
           '<input type="text" id="tkt-'+esc(tk.key)+'" value="'+escAttr(val)+'" oninput="tkColor(\\''+esc(tk.key)+'\\',this.value)"></div>';
       } else {
-        controls+='<label>'+esc(tk.label)+'</label><input type="text" value="'+escAttr(val)+'" oninput="tkText(\\''+esc(tk.key)+'\\',this.value)">';
+        html+='<label>'+esc(tk.label)+'</label><input type="text" value="'+escAttr(val)+'" oninput="tkText(\\''+esc(tk.key)+'\\',this.value)">';
       }
     });
-    controls+='</div>';
+    html+='</div>';
   });
+  if(ql&&!html) return '<div class="empty" style="padding:.6rem 0">No tokens match your search.</div>';
+  return html;
+}
+function paintAppearance(){
+  var theme=curThemeDef(), groups={};
+  (theme.tokens||[]).forEach(function(tk){ (groups[tk.group]=groups[tk.group]||[]).push(tk); });
+  var controls=buildTkControls(groups,APP_SEARCH);
   var themeOpts=THEMES.map(function(t){ return '<option value="'+escAttr(t.slug)+'"'+(t.slug===THEME_STATE.theme?' selected':'')+'>'+esc(t.name)+'</option>'; }).join("");
+  var srcRows=APP_TYPES.length?APP_TYPES.map(function(t){
+    var on=CONNECTED_SOURCES.indexOf(t.slug)>=0;
+    return '<div class="src-item"><input type="checkbox"'+(on?' checked':'')+' onchange="toggleSource(\\''+esc(t.slug)+'\\',this.checked)">'+
+      '<div><div class="src-name">'+esc(t.name)+'</div><div class="src-slug">/'+esc(t.slug)+'</div></div></div>';
+  }).join(""):'<div class="empty" style="font-size:.82rem">No content types yet — create one under Content Types first.</div>';
   el("view").innerHTML='<div class="row-head"><h2>Appearance</h2><button class="btn-sm" onclick="saveTheme()">Save changes</button></div>'+
     '<div style="display:grid;grid-template-columns:340px 1fr;gap:1.1rem;align-items:start">'+
       '<div class="card"><h3>Theme</h3><label>Active theme</label><select onchange="switchTheme(this.value)">'+themeOpts+'</select>'+
         '<label>Site name</label><input value="'+escAttr(THEME_STATE.siteName)+'" oninput="thName(this.value)">'+
-        '<div style="margin-top:1rem">'+controls+'</div></div>'+
+        '<div class="srch-bar" style="margin-top:1rem"><input placeholder="Search tokens..." value="'+escAttr(APP_SEARCH)+'" oninput="appSearch(this.value)"></div>'+
+        '<div id="tk-controls">'+controls+'</div></div>'+
       '<div class="card"><h3>Live preview</h3><p class="hint">Sandboxed — exactly how the public site renders.</p>'+
-        '<iframe id="th-preview" sandbox="allow-same-origin" style="width:100%;height:520px;border:1px solid var(--card-border);border-radius:10px;background:#fff"></iframe></div></div>';
+        '<iframe id="th-preview" sandbox="allow-same-origin" style="width:100%;height:520px;border:1px solid var(--card-border);border-radius:10px;background:#fff"></iframe></div></div>'+
+    '<div class="card"><div class="row-head" style="margin:0 0 .75rem"><div>'+
+      '<h3 style="margin:0">Data Sources</h3>'+
+      '<p class="hint" style="margin:.2rem 0 0">Select which content types are connected as data sources for dynamic collection lists on your site.</p></div>'+
+      '<button class="btn-sm" onclick="saveDataSources()">Save sources</button></div>'+
+      srcRows+'</div>';
 }
-function switchTheme(slug){ THEME_STATE.theme=slug; paintAppearance(); refreshPreview(); }
+function appSearch(q){
+  APP_SEARCH=q;
+  var theme=curThemeDef(), groups={};
+  (theme.tokens||[]).forEach(function(tk){ (groups[tk.group]=groups[tk.group]||[]).push(tk); });
+  var ctrl=el("tk-controls"); if(ctrl) ctrl.innerHTML=buildTkControls(groups,q);
+}
+function toggleSource(slug,on){
+  var idx=CONNECTED_SOURCES.indexOf(slug);
+  if(on&&idx<0) CONNECTED_SOURCES.push(slug);
+  else if(!on&&idx>=0) CONNECTED_SOURCES.splice(idx,1);
+}
+async function saveDataSources(){
+  var r=await api("/admin/api/settings",{method:"PUT",body:JSON.stringify({connectedSources:CONNECTED_SOURCES})});
+  if(r.status===200) toast("Data sources saved"); else toast("Could not save data sources",true);
+}
+function switchTheme(slug){ THEME_STATE.theme=slug; APP_SEARCH=""; paintAppearance(); refreshPreview(); }
 function tkColor(key,val){ THEME_STATE.tokens[key]=val; var c=el("tkc-"+key),t=el("tkt-"+key); if(c&&c.value!==val)c.value=val; if(t&&t.value!==val)t.value=val; schedulePreview(); }
 function tkText(key,val){ THEME_STATE.tokens[key]=val; schedulePreview(); }
 function thName(val){ THEME_STATE.siteName=val; schedulePreview(); }
