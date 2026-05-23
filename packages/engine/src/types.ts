@@ -21,6 +21,13 @@ export interface ContentType extends StoredDoc {
   createdAt: string;
 }
 
+export const SYSTEM_SLUGS = {
+  header: "header",
+  footer: "footer",
+} as const;
+
+export type SystemSlug = (typeof SYSTEM_SLUGS)[keyof typeof SYSTEM_SLUGS];
+
 export interface ContentEntry extends StoredDoc {
   typeId: string;
   slug: string;
@@ -32,6 +39,8 @@ export interface ContentEntry extends StoredDoc {
   scheduledFor: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Marks built-in layout pages (header, footer) — cannot be archived or unpublished. */
+  system?: boolean;
 }
 
 export interface Revision extends StoredDoc {

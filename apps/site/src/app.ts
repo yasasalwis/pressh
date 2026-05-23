@@ -7,7 +7,7 @@ import { renderToString } from "react-dom/server";
 import { Hono } from "hono";
 import { PressError, createMetrics, requestId } from "@pressh/core";
 import type { Metrics, StorageAdapter } from "@pressh/core";
-import { DESIGNER_LAYOUT_BLOCK, renderTree } from "@pressh/engine";
+import { DESIGNER_LAYOUT_BLOCK, SYSTEM_SLUGS, renderTree } from "@pressh/engine";
 import type {
   BlockNode,
   ContentEntry,
@@ -157,6 +157,32 @@ function makeSiteContext(resolver: QueryResolver, storage?: StorageAdapter): Pri
   };
 }
 
+interface RenderedFragment {
+  html: string;
+  css: string;
+  revision: number;
+}
+
+/** Fetches and renders a system layout page (header/footer) by slug. Returns null when the page has no designer layout yet. */
+async function renderSystemFragment(
+  slug: string,
+  resolver: QueryResolver,
+  ctx: PrimitiveRenderContext,
+): Promise<RenderedFragment | null> {
+  try {
+    const content = await resolver.resolve({ slug, scope: "public" });
+    const layoutBlock = (content.blocks as Array<{ type: string; props?: Record<string, unknown> }>).find(
+      (b) => b.type === DESIGNER_LAYOUT_BLOCK,
+    );
+    const nodes = Array.isArray(layoutBlock?.props?.["nodes"]) ? layoutBlock!.props!["nodes"] as PrimitiveNode[] : [];
+    if (!nodes.length) return null;
+    const rendered = await renderTree(nodes, ctx);
+    return { html: rendered.html, css: rendered.css, revision: content.revision };
+  } catch {
+    return null;
+  }
+}
+
 export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   const app = new Hono<SiteEnv>();
   const metrics = deps.metrics ?? createMetrics();
@@ -284,11 +310,22 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   app.get("*", async (c) => {
     const path = c.req.path;
     try {
+      const ctx = makeSiteContext(deps.resolver, deps.storage);
+
+      // Fetch system layout pages. Done before cache check so their revision
+      // can be included in the version key — a header/footer save invalidates
+      // all cached pages automatically.
+      const isSystemSlug = (s: string) => s === SYSTEM_SLUGS.header || s === SYSTEM_SLUGS.footer;
+      const [headerFragment, footerFragment] = await Promise.all([
+        renderSystemFragment(SYSTEM_SLUGS.header, deps.resolver, ctx),
+        renderSystemFragment(SYSTEM_SLUGS.footer, deps.resolver, ctx),
+      ]);
+
       const resolved = await deps.resolver.resolvePath(path, { scope: "public" });
       // Serve cached HTML only while it matches the current content version.
       // Resolving is cheap (local reads); this lets a Studio publish go live on
       // the separate Site process without restart (see cache.ts).
-      const version = String(resolved.revision);
+      const version = `${resolved.revision}:h${headerFragment?.revision ?? 0}:f${footerFragment?.revision ?? 0}`;
       const cached = deps.cache.get(path);
       if (cached && cached.version === version) {
         c.header("X-Cache", "HIT");
@@ -315,7 +352,6 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       let bodyHtml: string;
       let componentStyles = "";
       if (layoutNodes.length) {
-        const ctx = makeSiteContext(deps.resolver, deps.storage);
         const rendered = await renderTree(layoutNodes, ctx);
         bodyHtml = rendered.html;
         // Designer pages are full-page compositions, not prose: release the
@@ -327,6 +363,15 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       } else {
         bodyHtml = renderToString(createElement(Blocks, { blocks }));
       }
+
+      // System pages viewed directly don't get header/footer injected (avoids recursion).
+      const skipLayout = isSystemSlug(resolved.slug);
+      const headerHtml = !skipLayout && headerFragment
+        ? `<style>${headerFragment.css}</style>${headerFragment.html}`
+        : undefined;
+      const footerHtml = !skipLayout && footerFragment
+        ? `<style>${footerFragment.css}</style>${footerFragment.html}`
+        : undefined;
 
       // Build the full HTML document.
       let html: string;
@@ -341,6 +386,8 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
           locale,
           cssVars: t.cssVars,
           siteName: t.siteName,
+          ...(headerHtml !== undefined ? { header: headerHtml } : {}),
+          ...(footerHtml !== undefined ? { footer: footerHtml } : {}),
         });
         html = injectAssetsIntoThemeHtml(themeHtml, blocks, title, locale);
       } else {

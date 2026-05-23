@@ -50,15 +50,39 @@ function newPageFormHtml(){
 }
 function toggleNewPage(){ var f=el("new-page-form"); if(f){ f.classList.toggle("hide"); if(!f.classList.contains("hide")) el("pg-title").focus(); } }
 function suggestSlug(){ var s=el("pg-slug"); if(!s||s.dataset.touched) return; s.value=el("pg-title").value.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); }
+var SYSTEM_SLUGS_SET=["header","footer"];
+function isSystemPage(p){ return !!p.system||SYSTEM_SLUGS_SET.indexOf(p.slug)>=0; }
+function systemPageLabel(slug){ return slug==="header"?"Header Layout":slug==="footer"?"Footer Layout":slug; }
+
 async function renderPages(){
   var promises=[api("/admin/api/content")];
   if(can("settings.manage")) promises.push(api("/admin/api/settings"));
   var results=await Promise.all(promises);
   var r=results[0]; var sr=results[1]||null;
-  var items=r.body.items||[];
+  var allItems=r.body.items||[];
   if(sr) HEADER_NAV=(sr.body.settings||{}).headerNav||[];
+
+  var systemItems=allItems.filter(isSystemPage);
+  var items=allItems.filter(function(p){ return !isSystemPage(p); });
   el("nav-pages-count").textContent=items.length||"";
   var canNav=can("settings.manage");
+
+  // System layout pages (header / footer) — always at the top, non-deletable.
+  var systemRows=systemItems.map(function(p){
+    var label=systemPageLabel(p.slug);
+    return '<div class="list-row">'+
+      '<span class="ico" style="font-size:1rem;margin-right:.4rem">&#128274;</span>'+
+      '<div class="grow"><div class="title">'+esc(label)+'</div>'+
+      '<div class="meta">/'+esc(p.slug)+' &middot; rev '+(p.currentRevision||1)+' &middot; system layout</div></div>'+
+      '<span class="badge b-published">published</span>'+
+      '<button class="btn-sm" onclick="navigate(\\'#/page/'+esc(p.id)+'\\')">&#9998; Edit</button></div>';
+  }).join("");
+  var systemSection=systemItems.length
+    ? '<div class="card" style="margin-bottom:.8rem"><div class="row-head" style="margin-bottom:.6rem"><h3 style="margin:0;font-size:.9rem">Layout pages</h3>'+
+      '<span class="meta" style="font-size:.78rem">Injected into every page &middot; always published</span></div>'+
+      systemRows+'</div>'
+    : '';
+
   var rows;
   if(!items.length){ rows='<div class="empty"><span class="ico">&#128196;</span>No pages yet. Create your first one.</div>'; }
   else {
@@ -83,7 +107,9 @@ async function renderPages(){
   }
   var canCreate=can("types.manage")&&can("content.create");
   var newBtn=canCreate?'<button class="btn-sm" onclick="toggleNewPage()">+ New page</button>':'';
-  el("view").innerHTML='<div class="row-head"><h2>Pages</h2>'+newBtn+'</div>'+(canCreate?newPageFormHtml():'')+'<div class="card">'+rows+'</div>';
+  el("view").innerHTML='<div class="row-head"><h2>Pages</h2>'+newBtn+'</div>'+(canCreate?newPageFormHtml():'')+
+    systemSection+
+    '<div class="card">'+rows+'</div>';
 }
 async function toggleHeaderNav(id,on){
   var idx=HEADER_NAV.indexOf(id);

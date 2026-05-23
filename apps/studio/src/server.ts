@@ -152,16 +152,18 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
 
   // Seed demo content on startup if the home page doesn't exist yet.
   // Runs silently — slug conflicts for already-existing pages are swallowed.
-  const homeEntry = await content.resolveBySlug("home").catch(() => null);
-  if (!homeEntry) {
-    const usersPage = await storage.query<{ id: string }>("users");
-    const authorId =
-      usersPage.ok && usersPage.value.items.length > 0
-        ? (usersPage.value.items[0]?.id ?? "system-seed")
-        : null;
-    if (authorId) {
+  const usersPage = await storage.query<{ id: string }>("users");
+  const authorId =
+    usersPage.ok && usersPage.value.items.length > 0
+      ? (usersPage.value.items[0]?.id ?? "system-seed")
+      : null;
+  if (authorId) {
+    const homeEntry = await content.resolveBySlug("home").catch(() => null);
+    if (!homeEntry) {
       await seedDemoContent(content, authorId, ["*"]).catch(() => {});
     }
+    // Always ensure header/footer system pages exist (idempotent).
+    await content.ensureSystemPages(authorId).catch(() => {});
   }
 
   return {

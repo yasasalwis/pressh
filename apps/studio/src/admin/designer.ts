@@ -460,27 +460,45 @@ function setStyleVal(node,key,val){
   node.styles=node.styles||{}; node.styles.base=node.styles.base||{}; node.styles.base.default=node.styles.base.default||{};
   if(val===""||val==null) delete node.styles.base.default[key]; else node.styles.base.default[key]=val;
 }
+// Preset values for combobox (<input list>) fields — pick a default or type a custom value.
+var SPACE_OPTS=["0","0.25rem","0.5rem","0.75rem","1rem","1.5rem","2rem","3rem","4rem","auto"];
+var COLOR_OPTS=["token:colorPrimary","token:colorText","token:colorBackground","#ffffff","#000000","transparent"];
+var STYLE_PRESETS={
+  width:["auto","100%","75%","50%","33%","320px","480px","640px"],
+  maxWidth:["none","1280px","1100px","960px","760px","640px","100%"],
+  minHeight:["0","120px","240px","360px","480px","100vh"],
+  height:["auto","120px","240px","360px","480px"],
+  fontSize:["0.75rem","0.875rem","1rem","1.125rem","1.25rem","1.5rem","2rem","2.5rem","3rem","3.5rem"],
+  lineHeight:["1","1.1","1.2","1.4","1.6","1.8"],
+  letterSpacing:["normal","-0.04em","-0.02em","0.02em","0.06em"],
+  fontFamily:["token:fontBody","token:fontHeading","system-ui, sans-serif","Georgia, serif","'Times New Roman', serif","'Courier New', monospace"],
+  gap:["0","0.25rem","0.5rem","0.75rem","1rem","1.5rem","2rem","3rem"],
+  borderWidth:["0","1px","2px","3px","4px"],
+  borderRadius:["0","4px","8px","12px","16px","24px","32px","999px"]
+};
+function dlist(id,opts){ var s='<datalist id="'+id+'">'; for(var i=0;i<opts.length;i++) s+='<option value="'+escAttr(opts[i])+'">'; return s+'</datalist>'; }
 function grp(t){ return '<div class="dp-group">'+esc(t)+'</div>'; }
 function sField(node,label,key,type,opts){
   var v=styleVal(node,key); v=(v==null?"":v);
   if(type==="color"){
-    var hex=(typeof v==="string"&&/^#[0-9a-fA-F]{3,8}$/.test(v))?v:"#888888";
+    var hex=(typeof v==="string"&&/^#[0-9a-fA-F]{3,8}$/.test(v))?v:"#888888", cid="dl-"+key;
     return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><div class="dp-color-row">'+
       '<input type="color" data-stylecolor="'+escAttr(key)+'" value="'+escAttr(hex)+'">'+
-      '<input class="dp-in" type="text" data-style="'+escAttr(key)+'" value="'+escAttr(v)+'" placeholder="'+escAttr((opts&&opts.ph)||"#hex / token:colorPrimary")+'"></div></div>';
+      '<input class="dp-in" type="text" list="'+cid+'" data-style="'+escAttr(key)+'" value="'+escAttr(v)+'" placeholder="'+escAttr((opts&&opts.ph)||"#hex / token:colorPrimary")+'"></div>'+dlist(cid,COLOR_OPTS)+'</div>';
   }
   if(type==="select"){
     var o=(opts&&opts.o)||[]; var s='<select class="dp-in" data-style="'+escAttr(key)+'"><option value="">default</option>';
     for(var i=0;i<o.length;i++) s+='<option value="'+escAttr(o[i])+'"'+(String(v)===o[i]?" selected":"")+'>'+esc(o[i])+'</option>';
     return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label>'+s+'</select></div>';
   }
-  return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><input class="dp-in" type="text" data-style="'+escAttr(key)+'" value="'+escAttr(v)+'" placeholder="'+escAttr((opts&&opts.ph)||"")+'"></div>';
+  var presets=STYLE_PRESETS[key], tid="dl-"+key, la=presets?(' list="'+tid+'"'):"", dl=presets?dlist(tid,presets):"";
+  return '<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><input class="dp-in" type="text"'+la+' data-style="'+escAttr(key)+'" value="'+escAttr(v)+'" placeholder="'+escAttr((opts&&opts.ph)||"")+'">'+dl+'</div>';
 }
 function boxField(node,label,prefix){
-  var keys=[prefix+"Top",prefix+"Right",prefix+"Bottom",prefix+"Left"], labs=["T","R","B","L"];
+  var keys=[prefix+"Top",prefix+"Right",prefix+"Bottom",prefix+"Left"], labs=["T","R","B","L"], did="dl-"+prefix;
   var h='<div class="dp-field"><label class="dp-label">'+esc(label)+'</label><div class="dp-box4">';
-  for(var i=0;i<4;i++){ var v=styleVal(node,keys[i]); h+='<input class="dp-in dp-box-in" type="text" data-style="'+keys[i]+'" value="'+escAttr(v==null?"":v)+'" placeholder="'+labs[i]+'" title="'+labs[i]+'">'; }
-  return h+'</div></div>';
+  for(var i=0;i<4;i++){ var v=styleVal(node,keys[i]); h+='<input class="dp-in dp-box-in" type="text" list="'+did+'" data-style="'+keys[i]+'" value="'+escAttr(v==null?"":v)+'" placeholder="'+labs[i]+'" title="'+labs[i]+'">'; }
+  return h+'</div>'+dlist(did,SPACE_OPTS)+'</div>';
 }
 function buildContentTab(node){
   var html="", fields=contentFields(node);

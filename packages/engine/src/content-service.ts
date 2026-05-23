@@ -6,6 +6,7 @@ import { sanitizeBlocks } from "./blocks/sanitize.js";
 import type { BlockRegistry } from "./blocks/types.js";
 import { validateFields } from "./schema.js";
 import { capabilityForTransition, isAllowedTransition } from "./state-machine.js";
+import { SYSTEM_SLUGS } from "./types.js";
 import type { ContentEntry, ContentStatus, ContentType, FieldDef, Revision } from "./types.js";
 
 const TYPES = "content_types";
@@ -81,6 +82,11 @@ export interface ContentService {
     locale?: string,
     opts?: { publicOnly?: boolean },
   ): Promise<ContentEntry | null>;
+  /**
+   * Idempotent: creates the built-in header and footer layout pages if they do
+   * not yet exist, then publishes them. Safe to call on every startup.
+   */
+  ensureSystemPages(ownerId: string): Promise<void>;
 }
 
 class ContentServiceImpl implements ContentService {
@@ -242,6 +248,9 @@ class ContentServiceImpl implements ContentService {
     opts: { scheduledFor?: string } = {},
   ): Promise<ContentEntry> {
     const entry = await this.#requireEntry(entryId);
+    if (entry.system && to !== "published") {
+      throw new PressError("conflict", "System layout pages cannot be unpublished or archived");
+    }
     if (!isAllowedTransition(entry.status, to)) {
       throw new PressError("conflict", `Illegal transition: ${entry.status} → ${to}`);
     }
@@ -329,6 +338,69 @@ class ContentServiceImpl implements ContentService {
     if (!entry) return null;
     if (opts.publicOnly && entry.status !== "published") return null;
     return entry;
+  }
+
+  async ensureSystemPages(ownerId: string): Promise<void> {
+    // Find or create a shared "page" content type for system pages.
+    const typesResult = must(await this.#storage.query<ContentType>(TYPES, { where: { slug: "page" } }));
+    let typeId: string;
+    if (typesResult.items.length > 0) {
+      typeId = typesResult.items[0]!.id;
+    } else {
+      const t: ContentType = {
+        id: randomUUID(),
+        name: "Page",
+        slug: "page",
+        fields: [{ id: "f0", name: "title", type: "text", required: true }],
+        createdAt: this.#iso(),
+      };
+      must(await this.#storage.put(TYPES, t));
+      typeId = t.id;
+    }
+
+    const systemPages: Array<{ slug: string; label: string }> = [
+      { slug: SYSTEM_SLUGS.header, label: "Header" },
+      { slug: SYSTEM_SLUGS.footer, label: "Footer" },
+    ];
+
+    for (const { slug, label } of systemPages) {
+      const existing = await this.resolveBySlug(slug, DEFAULT_LOCALE);
+      if (existing) continue;
+
+      const entryId = randomUUID();
+      const entry: ContentEntry = {
+        id: entryId,
+        typeId,
+        slug,
+        locale: DEFAULT_LOCALE,
+        status: "published",
+        authorId: ownerId,
+        currentRevision: 1,
+        publishedAt: this.#iso(),
+        scheduledFor: null,
+        system: true,
+        createdAt: this.#iso(),
+        updatedAt: this.#iso(),
+      };
+      must(await this.#storage.put(ENTRIES, entry));
+
+      const revision: Revision = {
+        id: revisionId(entryId, 1),
+        entryId,
+        version: 1,
+        fields: { title: label },
+        blocks: [],
+        editorId: ownerId,
+        createdAt: this.#iso(),
+      };
+      must(await this.#storage.put(REVISIONS, revision));
+
+      await this.#audit.append({
+        action: "content.system.ensure",
+        actorId: ownerId,
+        detail: { slug, entryId },
+      });
+    }
   }
 }
 

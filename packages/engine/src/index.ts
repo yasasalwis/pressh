@@ -113,6 +113,7 @@ export type {
   CreateTypeInput,
   SaveEntryInput,
 } from "./content-service.js";
+export { SYSTEM_SLUGS } from "./types.js";
 export type {
   ContentEntry,
   ContentStatus,
@@ -120,4 +121,5 @@ export type {
   FieldDef,
   FieldType,
   Revision,
+  SystemSlug,
 } from "./types.js";

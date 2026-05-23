@@ -227,6 +227,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
         path: "/",
       });
       await seedDemoContent(deps.content, user.id, deps.auth.capabilitiesFor(user)).catch(() => {});
+      await deps.content.ensureSystemPages(user.id).catch(() => {});
       return c.json({ user });
     } catch (error) {
       const { status, code } = mapError(error);

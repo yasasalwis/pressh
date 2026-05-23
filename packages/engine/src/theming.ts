@@ -23,6 +23,10 @@ export interface ThemeLayoutInput {
   locale: string;
   cssVars: string;
   siteName: string;
+  /** Custom header HTML (from the designer). When provided replaces the theme's built-in nav. */
+  header?: string;
+  /** Custom footer HTML (from the designer). When provided replaces the theme's built-in footer. */
+  footer?: string;
 }
 
 export interface ThemeDefinition {
@@ -65,8 +69,10 @@ export const defaultTheme: ThemeDefinition = {
     { key: "maxWidth", group: "layout", label: "Content width", type: "size", default: "760px" },
     { key: "spacing", group: "layout", label: "Spacing", type: "size", default: "1rem" },
   ],
-  layout: (input) =>
-    `<!DOCTYPE html>
+  layout: (input) => {
+    const headerHtml = input.header ?? "";
+    const footerHtml = input.footer ?? "";
+    return `<!DOCTYPE html>
 <html lang="${escapeHtml(input.locale)}">
 <head>
 <meta charset="utf-8">
@@ -95,7 +101,7 @@ body{
   font-size:1.0625rem;line-height:1.75;
   -webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column;
 }
-/* ── Navigation ── */
+/* ── Default navigation (used when no header layout page is configured) ── */
 nav{
   position:sticky;top:0;z-index:10;height:var(--nav-h);
   background:rgba(255,255,255,.82);
@@ -176,7 +182,7 @@ pre{
 }
 code{font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace;font-size:.875em;}
 img{max-width:100%;border-radius:12px;margin:2rem 0;display:block;}
-/* ── Footer ── */
+/* ── Default footer ── */
 footer{
   border-top:1px solid var(--border);padding:1.75rem 1.5rem;
   display:flex;align-items:center;justify-content:center;gap:.4rem;
@@ -197,24 +203,12 @@ footer a:hover{color:var(--colorText,var(--text));border-color:var(--border);}
 </style>
 </head>
 <body>
-<nav>
-  <div class="nav-inner">
-    <a class="nav-logo" href="/">
-      <div class="nav-mark">P</div>
-      ${escapeHtml(input.siteName)}
-    </a>
-    <ul class="nav-links">
-      <li><a href="/">Home</a></li>
-      <li><a href="/about">About</a></li>
-      <li><a href="/blog">Blog</a></li>
-      <li><a href="/contact">Contact</a></li>
-    </ul>
-  </div>
-</nav>
+${headerHtml}
 <main>${input.body}</main>
-<footer><a href="https://pressh.io" target="_blank" rel="noopener">Powered by Pressh</a></footer>
+${footerHtml}
 </body>
-</html>`,
+</html>`;
+  },
 };
 
 export interface ThemeRegistry {

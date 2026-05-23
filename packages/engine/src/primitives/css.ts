@@ -78,6 +78,13 @@ const vSize: Validator = (raw) => {
 const vSizeNoToken: Validator = (raw) =>
   raw === "0" || raw === "auto" || raw === "none" ? raw : SIZE_RE.test(raw) ? raw : null;
 
+// Strict fluid-type form: `clamp(<size>, calc(<n>vw +/- <size>), <size>)`. Only
+// the auto-responsive synthesizer below emits this; it stays inside the
+// type-validated CSS surface (no raw clamp from arbitrary input).
+const FLUID_FONT_RE =
+  /^clamp\(\s*-?\d+(\.\d+)?(px|rem|em),\s*calc\(\s*-?\d+(\.\d+)?vw\s*[+-]\s*\d+(\.\d+)?(px|rem|em)\s*\),\s*-?\d+(\.\d+)?(px|rem|em)\s*\)$/;
+const vFontSize: Validator = (raw) => (FLUID_FONT_RE.test(raw) ? raw : vSize(raw));
+
 const vInt: Validator = (raw) => (INT_RE.test(raw) ? raw : null);
 
 const vOpacity: Validator = (raw) => {
@@ -159,7 +166,7 @@ const STYLE_SPEC: Record<keyof StyleProps, Spec> = {
   height: { css: "height", validate: vSize },
   minHeight: { css: "min-height", validate: vSize },
 
-  fontSize: { css: "font-size", validate: vSize },
+  fontSize: { css: "font-size", validate: vFontSize },
   fontWeight: { css: "font-weight", validate: vFontWeight },
   lineHeight: { css: "line-height", validate: vLineHeight },
   letterSpacing: { css: "letter-spacing", validate: vSizeNoToken },
@@ -220,10 +227,104 @@ const BREAKPOINT_MEDIA: Record<Breakpoint, string | null> = {
   mobile: "(max-width:480px)",
 };
 
+// ── auto-responsive synthesis ────────────────────────────────────────────────
+// Make any layout adapt across desktop/tablet/mobile with zero manual work, while
+// a designer's explicit per-breakpoint value always wins (synthesis only fills
+// gaps; it never overrides a value the designer set for that property+breakpoint).
+
+/** The grid base default; equal-fraction grids collapse from this. */
+const DEFAULT_GRID_COLS = "repeat(3,1fr)";
+/** Below this size, type is left fixed — only larger headings scale fluidly. */
+const FLUID_MIN_PX = 24;
+
+/** Collapsed tablet/mobile column tracks for an equal-fraction grid. */
+function collapseGridCols(baseCols: string): { tablet?: string; mobile?: string } {
+  const s = baseCols.trim();
+  const m = /^repeat\((\d{1,3}),1fr\)$/.exec(s);
+  let equalCount = 0;
+  if (m) equalCount = Number(m[1]);
+  else {
+    const toks = s.split(/\s+/);
+    if (toks.length > 1 && toks.every((t) => t === "1fr")) equalCount = toks.length;
+    else if (toks.length > 1) return { mobile: "1fr" }; // arbitrary track list → stack on mobile
+    else return {};
+  }
+  if (equalCount <= 1) return {};
+  if (equalCount === 2) return { mobile: "1fr" };
+  return { tablet: "repeat(2,1fr)", mobile: "1fr" };
+}
+
+function parseToPx(raw: string): number | null {
+  const m = /^(-?\d+(?:\.\d+)?)(px|rem|em)$/.exec(raw.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  return m[2] === "px" ? n : n * 16;
+}
+
+const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+
+/**
+ * Fluid font-size as a `clamp()` that equals the set value on wide viewports and
+ * shrinks to a floor on narrow ones — so large headings never overflow on mobile.
+ * Returns null for small/unparseable sizes (left fixed).
+ */
+function fluidFontSize(raw: string): string | null {
+  const maxPx = parseToPx(raw);
+  if (maxPx == null || maxPx < FLUID_MIN_PX) return null;
+  const minPx = Math.max(18, Math.round(maxPx * 0.62));
+  if (minPx >= maxPx) return null;
+  const minVw = 320;
+  const maxVw = 1200;
+  const slope = (maxPx - minPx) / (maxVw - minVw);
+  const a = round3(slope * 100);
+  const bRem = round3((minPx - slope * minVw) / 16);
+  const minRem = round3(minPx / 16);
+  const maxRem = round3(maxPx / 16);
+  const mid = bRem < 0 ? `calc(${a}vw - ${Math.abs(bRem)}rem)` : `calc(${a}vw + ${bRem}rem)`;
+  return `clamp(${minRem}rem, ${mid}, ${maxRem}rem)`;
+}
+
+/**
+ * Returns the node's styles augmented with synthesized responsive defaults.
+ * Designer-set values are preserved verbatim; synthesis only adds what's missing.
+ */
+function synthesizeResponsive(node: PrimitiveNode): ResponsiveStyles | undefined {
+  const src = node.styles;
+  const isGrid = node.type === "grid" || node.type === "collectionList";
+  const gridAdds = isGrid
+    ? collapseGridCols(src?.base?.default?.gridTemplateColumns ?? DEFAULT_GRID_COLS)
+    : {};
+  const baseFont = src?.base?.default?.fontSize;
+  const designerScalesFont =
+    src?.tablet?.default?.fontSize != null || src?.mobile?.default?.fontSize != null;
+  const fluid = baseFont && !designerScalesFont ? fluidFontSize(baseFont) : null;
+
+  if (!src && !gridAdds.tablet && !gridAdds.mobile && !fluid) return undefined;
+
+  const out: ResponsiveStyles = {};
+  for (const bp of BREAKPOINT_ORDER) {
+    const st = src?.[bp];
+    if (!st) continue;
+    out[bp] = {};
+    if (st.default) out[bp]!.default = { ...st.default };
+    if (st.hover) out[bp]!.hover = { ...st.hover };
+  }
+  const ensureDefault = (bp: Breakpoint): StyleProps => {
+    const block = (out[bp] ??= {});
+    return (block.default ??= {});
+  };
+  if (gridAdds.tablet && src?.tablet?.default?.gridTemplateColumns == null)
+    ensureDefault("tablet").gridTemplateColumns = gridAdds.tablet;
+  if (gridAdds.mobile && src?.mobile?.default?.gridTemplateColumns == null)
+    ensureDefault("mobile").gridTemplateColumns = gridAdds.mobile;
+  if (fluid) ensureDefault("base").fontSize = fluid;
+  return out;
+}
+
 /** Per-node CSS across all breakpoints and states, keyed by the node's class. */
 export function compileNodeCss(node: PrimitiveNode): string {
   const cls = nodeClass(node.id);
-  const styles: ResponsiveStyles | undefined = node.styles;
+  const styles = synthesizeResponsive(node);
   if (!cls || !styles) return "";
   const out: string[] = [];
   for (const bp of BREAKPOINT_ORDER) {
@@ -274,8 +375,30 @@ const VIDEO_FRAME_CSS = `.${TYPE_CLASS_PREFIX}video iframe{position:absolute;ins
 const FIELD_INPUT_CSS = `.${TYPE_CLASS_PREFIX}input input,.${TYPE_CLASS_PREFIX}textarea textarea{font:inherit;padding:.6rem .75rem;border:1px solid #d8dee9;border-radius:8px;width:100%}`;
 // A container holding only columns lays them side-by-side (set via the renderer
 // adding `ps-flow-row`); columns directly inside a row/flow-row share width.
+// A non-zero flex-basis lets columns wrap intrinsically once the row gets too
+// narrow to fit them at a readable width — responsive with no breakpoint needed.
+const COL_FLEX_BASIS = "220px";
 const FLOW_ROW_CSS = `.ps-flow-row{display:flex;flex-direction:row;flex-wrap:wrap;gap:1rem;align-items:stretch}`;
-const COLUMN_FLEX_CSS = `.${TYPE_CLASS_PREFIX}row>.${TYPE_CLASS_PREFIX}column,.ps-flow-row>.${TYPE_CLASS_PREFIX}column{flex:1 1 0}`;
+const COLUMN_FLEX_CSS = `.${TYPE_CLASS_PREFIX}row>.${TYPE_CLASS_PREFIX}column,.ps-flow-row>.${TYPE_CLASS_PREFIX}column{flex:1 1 ${COL_FLEX_BASIS}}`;
+
+/**
+ * Shared auto-responsive rules emitted once for the whole tree. They sit in the
+ * base block (before per-node rules) so any explicit per-breakpoint override a
+ * designer sets — emitted later — wins on equal specificity.
+ */
+function responsiveBaseCss(types: Set<PrimitiveType>): string {
+  const C = TYPE_CLASS_PREFIX;
+  const mobile: string[] = [];
+  if (types.has("row")) mobile.push(`.${C}row{flex-direction:column}`);
+  if (types.has("column")) {
+    mobile.push(`.ps-flow-row{flex-direction:column}`);
+    // Stacked columns size to content instead of sharing space / forcing a min height.
+    mobile.push(`.ps-flow-row>.${C}column,.${C}row>.${C}column{flex-basis:auto}`);
+  }
+  if (types.has("container"))
+    mobile.push(`.${C}container{padding-left:1.1rem;padding-right:1.1rem}`);
+  return mobile.length ? `@media(max-width:480px){${mobile.join("")}}` : "";
+}
 
 /** Collects every primitive type that appears in the tree, in stable order. */
 function collectTypes(nodes: PrimitiveNode[], seen: Set<PrimitiveType>): void {
@@ -315,6 +438,8 @@ export function compileTreeCss(nodes: PrimitiveNode[]): string {
     base.push(FLOW_ROW_CSS);
     base.push(COLUMN_FLEX_CSS);
   }
+  const responsive = responsiveBaseCss(types);
+  if (responsive) base.push(responsive);
 
   const perNode: string[] = [];
   collectNodeCss(nodes, perNode);
