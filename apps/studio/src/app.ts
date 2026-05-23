@@ -1,16 +1,19 @@
+import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { CapabilityGate, PressError, createMetrics, requestId } from "@pressh/core";
-import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
-import type { ContentService, ContentStatus, FieldDef, GdprService, ThemeService } from "@pressh/engine";
-import {
-  collectStyles,
-  createComponentRegistry,
-  registerBuiltinComponents,
-  renderLayout,
+import type { AuditLog, AuthService, CsrfProtection, RoleName, StorageAdapter, User } from "@pressh/core";
+import type {
+  ContentService,
+  ContentStatus,
+  FieldDef,
+  GdprService,
+  SettingsService,
+  ThemeService,
 } from "@pressh/engine";
-import type { ComponentContext, LayoutNode } from "@pressh/engine";
+import { PRESETS, PRIMITIVE_DEFS, renderTree } from "@pressh/engine";
+import type { ContentEntry, PrimitiveNode, PrimitiveRenderContext } from "@pressh/engine";
 import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
 import type { CveService } from "@pressh/runtime";
 import type { MediaService } from "./media.js";
@@ -22,6 +25,13 @@ export interface PanelProvider {
   get(plugin: string): Promise<{ title: string; html: string } | null>;
 }
 
+/** Installed-plugin metadata for the Plugins screen (wired from the PluginHost). */
+export interface PluginInfoProvider {
+  list(): Promise<
+    { name: string; version: string; capabilities: string[]; endpoints: number; hasPanel: boolean }[]
+  >;
+}
+
 const SESSION_COOKIE = "pressh_session";
 
 export interface StudioAppDeps {
@@ -31,7 +41,10 @@ export interface StudioAppDeps {
   theme: ThemeService;
   csrf: CsrfProtection;
   storage: StorageAdapter;
+  audit: AuditLog;
+  settings: SettingsService;
   panels?: PanelProvider;
+  pluginInfo?: PluginInfoProvider;
   gdpr?: GdprService;
   cve?: CveService;
   production?: boolean;
@@ -167,6 +180,17 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   };
 
   const caps = (c: Context<Vars>): string[] => deps.auth.capabilitiesFor(c.get("user"));
+
+  /** Route-level capability guard. Use AFTER requireSession. */
+  const requireCap =
+    (capability: string) =>
+    async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
+      if (!gate.check(caps(c), capability)) {
+        return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
+      }
+      await next();
+      return undefined;
+    };
 
   async function run(c: Context<Vars>, fn: () => Promise<unknown>): Promise<Response> {
     try {
@@ -399,68 +423,58 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     return c.html(wrapPanelHtml({ title: panel.title, body: panel.html }));
   });
 
-  // --- page designer: component registry & preview ---
-  const componentRegistry = createComponentRegistry();
-  registerBuiltinComponents(componentRegistry);
-
-  function makeDesignerContext(): ComponentContext {
+  // --- page designer: primitive library & live render ---
+  // Resolves published entries' revision fields so CollectionList bindings
+  // (title, …) populate — entries themselves only carry slug/publishedAt.
+  function makeDesignerContext(): PrimitiveRenderContext {
     return {
-      async fetchContent(slug) {
-        const entry = await deps.content.resolveBySlug(slug, "en", { publicOnly: false });
-        if (!entry) return null;
-        const rev = await deps.content.getRevision(entry.id, entry.currentRevision);
-        return { ...rev?.fields, slug: entry.slug, publishedAt: entry.publishedAt };
-      },
-      async listPublished(limit = 10) {
-        const result = await deps.storage.query("content_entries", { where: { status: "published" } }, { limit });
+      async listPublished(query) {
+        const limit = Math.min(Math.max(1, query.limit ?? 10), 50);
+        const result = await deps.storage.query(
+          "content_entries",
+          { where: { status: "published" } },
+          { limit: 200 },
+        );
         if (!result.ok) return [];
-        return result.value.items as Record<string, unknown>[];
+        const entries = (result.value.items as ContentEntry[]).slice();
+        entries.sort((a, b) => {
+          const av = a.publishedAt ?? "";
+          const bv = b.publishedAt ?? "";
+          return query.order === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+        });
+        const items: Record<string, unknown>[] = [];
+        for (const entry of entries.slice(0, limit)) {
+          let fields: Record<string, unknown> = {};
+          try {
+            const rev = await deps.content.getRevision(entry.id, entry.currentRevision);
+            fields = rev?.fields ?? {};
+          } catch {
+            fields = {};
+          }
+          items.push({
+            ...fields,
+            title: fields["title"] ?? entry.slug,
+            slug: entry.slug,
+            publishedAt: entry.publishedAt ?? "",
+          });
+        }
+        return items;
       },
     };
   }
 
-  app.get("/admin/api/components", requireSession, (c) => {
-    const items = componentRegistry.list().map((def) => ({
-      id: def.id,
-      name: def.name,
-      category: def.category,
-      description: def.description,
-      icon: def.icon,
-      props: def.props,
-      defaultProps: def.defaultProps,
-      hasServerData: typeof def.serverData === "function",
-    }));
-    return c.json({ items });
-  });
+  // Palette: primitive defs + preset templates + theme tokens for the editor.
+  app.get("/admin/api/designer/library", requireSession, (c) =>
+    c.json({ primitives: PRIMITIVE_DEFS, presets: PRESETS, themes: deps.theme.listThemes() }),
+  );
 
-  app.post("/admin/api/preview/component", requireSession, async (c) => {
-    const body = await c.req.json<{ componentId: string; props: Record<string, unknown> }>();
-    const def = componentRegistry.get(body.componentId);
-    if (!def) return c.json({ error: { code: "not_found", message: "Unknown component" } }, 404);
-
-    let serverData: Record<string, unknown> = {};
-    if (def.serverData) {
-      try {
-        serverData = await def.serverData(body.props ?? {}, makeDesignerContext());
-      } catch {
-        serverData = {};
-      }
-    }
-
-    const html = def.render(body.props ?? {}, serverData);
-    const styles = def.styles ? `<style>${def.styles}</style>` : "";
-    const full = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${styles}<style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif}</style></head><body>${html}</body></html>`;
-    return c.json({ html: full });
-  });
-
-  app.post("/admin/api/preview/page", requireSession, async (c) => {
-    const body = await c.req.json<{ nodes: LayoutNode[] }>();
-    const nodes = body.nodes ?? [];
-    const ctx = makeDesignerContext();
-    const bodyHtml = await renderLayout(nodes, componentRegistry, ctx);
-    const styles = collectStyles(nodes, componentRegistry);
-    const full = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif}${styles}</style></head><body>${bodyHtml}</body></html>`;
-    return c.json({ html: full });
+  // Whole-tree live render for the canvas (editor mode → data-nid + placeholders).
+  // Read-only (no mutation) so no CSRF; output is sanitized by the renderer.
+  app.post("/admin/api/preview/render", requireSession, async (c) => {
+    const body = await c.req.json<{ nodes: PrimitiveNode[] }>();
+    const nodes = Array.isArray(body.nodes) ? body.nodes : [];
+    const { html, css } = await renderTree(nodes, makeDesignerContext(), { editor: true });
+    return c.json({ html, css });
   });
 
   // --- media upload (validated, stored outside web root) ---
@@ -476,6 +490,135 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     return run(c, () => deps.media.store(file.name, file.type, bytes, c.get("user").id));
   });
+
+  // --- media library: list, serve, delete ---
+  app.get("/admin/api/media", requireSession, requireCap("media.read"), async (c) =>
+    c.json({ items: await deps.media.list() }),
+  );
+
+  // Authenticated raw file serving. Files live OUTSIDE any web root; this is the
+  // only path that exposes them, and only to a capability-checked session.
+  app.get("/admin/api/media/:id/raw", requireSession, requireCap("media.read"), async (c) => {
+    const rec = await deps.media.get(c.req.param("id") ?? "");
+    if (!rec) return c.text("Not found", 404);
+    const buf = await readFile(rec.path);
+    c.header("Content-Type", rec.mime);
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Content-Disposition", "inline");
+    c.header("Cache-Control", "private, max-age=300");
+    return c.body(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+  });
+
+  app.delete("/admin/api/media/:id", requireSession, requireCsrf, requireCap("media.write"), (c) =>
+    run(c, () => deps.media.delete(c.req.param("id") ?? "", c.get("user").id).then(() => ({ ok: true }))),
+  );
+
+  // --- revisions (immutable history per page) ---
+  app.get("/admin/api/content/:id/revisions", requireSession, requireCap("content.read"), async (c) => {
+    const revisions = await deps.content.listRevisions(c.req.param("id") ?? "");
+    return c.json({ items: revisions });
+  });
+
+  app.post(
+    "/admin/api/content/:id/revisions/:version/restore",
+    requireSession,
+    requireCsrf,
+    async (c) =>
+      run(c, () =>
+        deps.content.restoreRevision(
+          caps(c),
+          c.req.param("id") ?? "",
+          Number(c.req.param("version")),
+          c.get("user").id,
+        ),
+      ),
+  );
+
+  // --- user & invite administration (gated by users.manage) ---
+  app.get("/admin/api/users", requireSession, requireCap("users.manage"), async (c) => {
+    const [users, invites] = await Promise.all([deps.auth.listUsers(), deps.auth.listInvites()]);
+    return c.json({ users, invites });
+  });
+
+  // Create a user with a generated temp password (the SMTP-less fallback). The
+  // plaintext is returned once for the admin to relay.
+  app.post("/admin/api/users", requireSession, requireCsrf, requireCap("users.manage"), async (c) => {
+    const body = await c.req.json<{ email: string; roles: RoleName[] }>();
+    return run(c, () =>
+      deps.auth.adminCreateUser({ email: body.email, roles: body.roles, actorId: c.get("user").id }),
+    );
+  });
+
+  app.put("/admin/api/users/:id", requireSession, requireCsrf, requireCap("users.manage"), async (c) => {
+    const body = await c.req.json<{ roles?: RoleName[]; status?: "active" | "disabled" }>();
+    return run(c, () => deps.auth.updateUser(c.req.param("id") ?? "", body, c.get("user").id));
+  });
+
+  // Invite a user (single-use, expiring token; they set their own password).
+  app.post("/admin/api/users/invite", requireSession, requireCsrf, requireCap("users.manage"), async (c) => {
+    const body = await c.req.json<{ email: string; roles: RoleName[] }>();
+    return run(c, () => deps.auth.createInvite({ email: body.email, roles: body.roles, actorId: c.get("user").id }));
+  });
+
+  app.delete("/admin/api/invites/:id", requireSession, requireCsrf, requireCap("users.manage"), (c) =>
+    run(c, () => deps.auth.revokeInvite(c.req.param("id") ?? "").then(() => ({ ok: true }))),
+  );
+
+  // Public: redeem an invitation. No session yet — the token IS the credential.
+  app.post("/admin/api/invite/accept", async (c) => {
+    const { token, password } = await c.req.json<{ token: string; password: string }>();
+    try {
+      const { token: session, user } = await deps.auth.acceptInvite({ token, password });
+      setCookie(c, SESSION_COOKIE, session, {
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: deps.production ?? false,
+        path: "/",
+      });
+      return c.json({ user });
+    } catch (error) {
+      const { status, code } = mapError(error);
+      return c.json({ error: { code, message: code } }, status);
+    }
+  });
+
+  // Self-service password change (any signed-in user; clears mustChangePassword).
+  app.post("/admin/api/me/password", requireSession, requireCsrf, async (c) => {
+    const { currentPassword, newPassword } = await c.req.json<{
+      currentPassword: string;
+      newPassword: string;
+    }>();
+    return run(c, () =>
+      deps.auth.changePassword(c.get("user").id, currentPassword, newPassword).then(() => ({ ok: true })),
+    );
+  });
+
+  // --- general settings (baseUrl, locale, timezone, SMTP) ---
+  app.get("/admin/api/settings", requireSession, requireCap("settings.manage"), async (c) =>
+    c.json({ settings: await deps.settings.getSettings() }),
+  );
+
+  app.put("/admin/api/settings", requireSession, requireCsrf, requireCap("settings.manage"), async (c) => {
+    const body = await c.req.json();
+    return run(c, () => deps.settings.updateSettings(caps(c), body));
+  });
+
+  // --- audit log viewer (append-only, hash-chained) ---
+  app.get("/admin/api/audit", requireSession, requireCap("audit.read"), async (c) => {
+    const action = c.req.query("action");
+    const limitRaw = Number(c.req.query("limit") ?? "200");
+    const filter: { action?: string; limit: number } = {
+      limit: Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 200,
+    };
+    if (action) filter.action = action;
+    const entries = await deps.audit.query(filter);
+    return c.json({ items: entries.reverse() }); // newest first
+  });
+
+  // --- installed plugins (capabilities + panel availability) ---
+  app.get("/admin/api/plugins", requireSession, requireCap("plugins.manage"), async (c) =>
+    c.json({ items: deps.pluginInfo ? await deps.pluginInfo.list() : [] }),
+  );
 
   return app;
 }

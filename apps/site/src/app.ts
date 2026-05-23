@@ -1,17 +1,27 @@
 import { createHash } from "node:crypto";
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { extname, join, resolve as resolvePath } from "node:path";
+import { Readable } from "node:stream";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { Hono } from "hono";
 import { PressError, createMetrics, requestId } from "@pressh/core";
 import type { Metrics, StorageAdapter } from "@pressh/core";
-import {
-  DESIGNER_LAYOUT_BLOCK,
-  collectStyles,
-  createComponentRegistry,
-  registerBuiltinComponents,
-  renderLayout,
+import { DESIGNER_LAYOUT_BLOCK, renderTree } from "@pressh/engine";
+import type {
+  BlockNode,
+  ContentEntry,
+  GdprService,
+  PrimitiveNode,
+  PrimitiveRenderContext,
+  QueryResolver,
+  ThemeService,
 } from "@pressh/engine";
-import type { ComponentContext, GdprService, LayoutNode, QueryResolver, ThemeService } from "@pressh/engine";
 import type { RenderCache } from "./cache.js";
-import { escapeHtml, renderBlocks, renderNotFound, renderPage } from "./render.js";
+import { escapeHtml, renderNotFound, renderPage } from "./render.js";
+import { Blocks } from "./components/Blocks.js";
+import { Page } from "./components/Page.js";
+import { getClientAssets } from "./manifest.js";
 
 /** Minimal structural view of the PluginHost the site needs. */
 export interface SitePluginHost {
@@ -29,6 +39,8 @@ export interface SiteAppDeps {
   storage?: StorageAdapter;
   metrics?: Metrics;
   listPublishedPaths?: () => Promise<string[]>;
+  /** Absolute path to dist/client/ for serving Vite-built assets at /assets/*. */
+  clientDir?: string;
   baseUrl?: string;
   production?: boolean;
 }
@@ -40,9 +52,6 @@ function mapError(error: unknown): { status: 400 | 403 | 404 | 500; code: string
   if (code === "validation") return { status: 400, code };
   return { status: 500, code };
 }
-
-const siteComponentRegistry = createComponentRegistry();
-registerBuiltinComponents(siteComponentRegistry);
 
 /** Per-request context vars. */
 type SiteEnv = { Variables: { styleCsp: string } };
@@ -65,21 +74,85 @@ function styleSrcDirective(html: string): string {
   return hashes.length ? `style-src 'self' ${hashes.join(" ")}` : "style-src 'self'";
 }
 
-function makeSiteContext(resolver: QueryResolver, storage?: StorageAdapter): ComponentContext {
+/**
+ * Injects Vite client assets and the hydration data payload into a themed
+ * HTML document string (which has <head> and <body> but was produced by the
+ * theme's layout function rather than React).
+ */
+function injectAssetsIntoThemeHtml(
+  html: string,
+  blocks: BlockNode[],
+  title: string,
+  locale: string,
+): string {
+  const assets = getClientAssets();
+  const serialised = JSON.stringify({ blocks, title, locale }).replace(/<\//g, "<\\/");
+
+  const linkTags = assets.styles
+    .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
+    .join("");
+  const dataTag = `<script type="application/json" id="pressh-data">${serialised}</script>`;
+  const scriptTag = assets.script
+    ? `<script type="module" src="${escapeHtml(assets.script)}"></script>`
+    : "";
+
+  return html
+    .replace("</head>", `${linkTags}</head>`)
+    .replace("</body>", `${dataTag}${scriptTag}</body>`);
+}
+
+const MIME_TYPES: Readonly<Record<string, string>> = {
+  ".js": "application/javascript",
+  ".css": "text/css",
+  ".map": "application/json",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+};
+
+/**
+ * Data access for data primitives (CollectionList). Published entries hold only
+ * slug/publishedAt; the displayable fields (title, …) live in the current
+ * revision, so each entry is resolved to flatten its fields for binding.
+ */
+function makeSiteContext(resolver: QueryResolver, storage?: StorageAdapter): PrimitiveRenderContext {
   return {
-    async fetchContent(slug) {
-      try {
-        const r = await resolver.resolve({ slug, scope: "public" });
-        return { ...r.fields, slug: r.slug, publishedAt: r.publishedAt };
-      } catch {
-        return null;
-      }
-    },
-    async listPublished(limit = 10) {
+    async listPublished(query) {
       if (!storage) return [];
-      const result = await storage.query("content_entries", { where: { status: "published" } }, { limit });
+      const limit = Math.min(Math.max(1, query.limit ?? 10), 50);
+      const result = await storage.query(
+        "content_entries",
+        { where: { status: "published" } },
+        { limit: 200 },
+      );
       if (!result.ok) return [];
-      return result.value.items as Record<string, unknown>[];
+
+      const entries = (result.value.items as ContentEntry[]).slice();
+      entries.sort((a, b) => {
+        const av = a.publishedAt ?? "";
+        const bv = b.publishedAt ?? "";
+        return query.order === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+
+      const items: Record<string, unknown>[] = [];
+      for (const entry of entries.slice(0, limit)) {
+        let fields: Record<string, unknown> = {};
+        try {
+          const r = await resolver.resolve({ slug: entry.slug, scope: "public" });
+          fields = r.fields;
+        } catch {
+          fields = {};
+        }
+        items.push({
+          ...fields,
+          title: fields["title"] ?? entry.slug,
+          slug: entry.slug,
+          publishedAt: entry.publishedAt ?? "",
+        });
+      }
+      return items;
     },
   };
 }
@@ -115,7 +188,7 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     const styleSrc = c.get("styleCsp") ?? "style-src 'self'";
     c.header(
       "Content-Security-Policy",
-      `default-src 'self'; ${styleSrc}; img-src 'self' https: data:; frame-src https:; object-src 'none'; base-uri 'self'`,
+      `default-src 'self'; script-src 'self'; ${styleSrc}; img-src 'self' https: data:; frame-src https:; object-src 'none'; base-uri 'self'`,
     );
     c.header("X-Content-Type-Options", "nosniff");
     c.header("X-Frame-Options", "DENY");
@@ -124,6 +197,26 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       c.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
     }
   });
+
+  // Vite-built client assets — immutable cache since filenames are content-hashed.
+  if (deps.clientDir) {
+    const safeRoot = resolvePath(deps.clientDir);
+    app.get("/assets/*", (c) => {
+      const rel = c.req.path.slice("/assets".length);
+      const abs = resolvePath(safeRoot, "assets", rel);
+      if (!abs.startsWith(safeRoot) || !existsSync(abs) || !statSync(abs).isFile()) {
+        return c.notFound();
+      }
+      const mime = MIME_TYPES[extname(abs)] ?? "application/octet-stream";
+      const stream = createReadStream(abs);
+      return new Response(Readable.toWeb(stream) as ReadableStream, {
+        headers: {
+          "content-type": mime,
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      });
+    });
+  }
 
   app.get("/robots.txt", (c) =>
     c.text(`User-agent: *\nAllow: /\nSitemap: ${deps.baseUrl ?? ""}/sitemap.xml\n`),
@@ -203,33 +296,65 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
         c.set("styleCsp", styleSrcDirective(cached.html));
         return c.html(cached.html);
       }
-      const title =
-        typeof resolved.fields["title"] === "string" ? (resolved.fields["title"] as string) : resolved.slug;
 
+      const title =
+        typeof resolved.fields["title"] === "string"
+          ? (resolved.fields["title"] as string)
+          : resolved.slug;
+      const blocks = resolved.blocks as BlockNode[];
+      const locale = resolved.locale;
+
+      // Render the body — either from the visual designer (renderTree) or React SSR.
       const layoutBlock = (resolved.blocks as Array<{ type: string; props?: Record<string, unknown> }>).find(
         (b) => b.type === DESIGNER_LAYOUT_BLOCK,
       );
-      const layoutNodes = Array.isArray(layoutBlock?.props?.["nodes"]) ? (layoutBlock!.props!["nodes"] as LayoutNode[]) : [];
-      let body: string;
+      const layoutNodes = Array.isArray(layoutBlock?.props?.["nodes"])
+        ? (layoutBlock!.props!["nodes"] as PrimitiveNode[])
+        : [];
+
+      let bodyHtml: string;
       let componentStyles = "";
       if (layoutNodes.length) {
         const ctx = makeSiteContext(deps.resolver, deps.storage);
-        body = await renderLayout(layoutNodes, siteComponentRegistry, ctx);
-        componentStyles = collectStyles(layoutNodes, siteComponentRegistry);
+        const rendered = await renderTree(layoutNodes, ctx);
+        bodyHtml = rendered.html;
+        componentStyles = rendered.css;
       } else {
-        body = renderBlocks(resolved.blocks);
+        bodyHtml = renderToString(createElement(Blocks, { blocks }));
       }
+
+      // Build the full HTML document.
       let html: string;
       if (deps.themeService) {
         const t = await deps.themeService.resolve();
-        const layoutWithStyles = componentStyles
-          ? body.replace("</head>", `<style>${componentStyles}</style></head>`)
-          : body;
-        const themeHtml = t.theme.layout({ title, body: layoutWithStyles, locale: resolved.locale, cssVars: t.cssVars, siteName: t.siteName });
-        html = componentStyles ? themeHtml.replace("</head>", `<style>${componentStyles}</style></head>`) : themeHtml;
+        const wrappedBody = componentStyles
+          ? `<style>${componentStyles}</style><div id="root">${bodyHtml}</div>`
+          : `<div id="root">${bodyHtml}</div>`;
+        const themeHtml = t.theme.layout({
+          title,
+          body: wrappedBody,
+          locale,
+          cssVars: t.cssVars,
+          siteName: t.siteName,
+        });
+        html = injectAssetsIntoThemeHtml(themeHtml, blocks, title, locale);
       } else {
-        html = renderPage({ title, body, locale: resolved.locale, extraStyles: componentStyles });
+        const assets = getClientAssets();
+        html =
+          "<!DOCTYPE html>" +
+          renderToString(
+            createElement(Page, {
+              title,
+              locale,
+              blocks,
+              bodyHtml,
+              ...(componentStyles ? { extraStyles: componentStyles } : {}),
+              ...(assets.script ? { clientScript: assets.script } : {}),
+              clientStyles: assets.styles,
+            }),
+          );
       }
+
       deps.cache.set(path, html, version, [`content:${resolved.id}`]);
       c.header("X-Cache", "MISS");
       c.header("Cache-Tag", `content:${resolved.id}`);

@@ -47,6 +47,14 @@ export type {
   ThemeTokenDef,
   ThemeTokenType,
 } from "./theming.js";
+export { createSettingsService } from "./settings.js";
+export type {
+  GeneralSettings,
+  SettingsService,
+  SettingsServiceOptions,
+  SmtpSettings,
+  UpdateSettingsInput,
+} from "./settings.js";
 export { createGdprService } from "./gdpr.js";
 export type {
   EncRef,
@@ -62,6 +70,42 @@ export type { ComponentDef, ComponentContext, ComponentPropDef, ComponentPropTyp
 export { DESIGNER_LAYOUT_BLOCK } from "./components/types.js";
 export { registerBuiltinComponents } from "./components/builtin/index.js";
 export { renderLayout, collectStyles } from "./components/render.js";
+export { renderTree } from "./primitives/render.js";
+export type { RenderOptions } from "./primitives/render.js";
+export {
+  compileTreeCss,
+  compileNodeCss,
+  compileDeclarations,
+  cssId,
+  nodeClass,
+  typeClass,
+} from "./primitives/css.js";
+export { renderIcon, hasIcon, ICON_NAMES } from "./primitives/icons.js";
+export { PRIMITIVE_DEFS, getPrimitiveDef } from "./primitives/defs.js";
+export type { PrimitiveDef, PrimitiveCategory } from "./primitives/defs.js";
+export {
+  PRESETS,
+  getPreset,
+  listPresets,
+  cloneWithNewIds,
+  instantiatePreset,
+} from "./primitives/presets.js";
+export type { PresetDef } from "./primitives/presets.js";
+export type {
+  DesignNode,
+  PrimitiveNode,
+  PrimitiveType,
+  StyleProps,
+  ResponsiveStyles,
+  StateStyles,
+  Breakpoint,
+  StyleState,
+  Binding,
+  CollectionItem,
+  CollectionQuery,
+  PrimitiveRenderContext,
+  RenderResult,
+} from "./primitives/types.js";
 export type {
   ContentService,
   ContentServiceOptions,

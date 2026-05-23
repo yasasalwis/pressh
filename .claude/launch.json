@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "presets-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8099", "--directory", "/tmp/presets-view"],
+      "port": 8099
+    },
+    {
+      "name": "studio",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "PRESSH_CONTENT_ROOT=/tmp/pressh-smoke/content PRESSH_MEDIA_ROOT=/tmp/pressh-smoke/media PRESSH_STUDIO_PORT=4123 PRESSH_MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef npx tsx apps/studio/src/server.ts"
+      ],
+      "port": 4123
+    }
+  ]
+}

@@ -10,7 +10,12 @@ import {
   createFileSystemStorage,
 } from "@pressh/core";
 import type { StorageAdapter } from "@pressh/core";
-import { createContentService, createGdprService, createThemeService } from "@pressh/engine";
+import {
+  createContentService,
+  createGdprService,
+  createSettingsService,
+  createThemeService,
+} from "@pressh/engine";
 import { createStudioApp } from "./app";
 import { createMediaService } from "./media";
 
@@ -47,7 +52,8 @@ beforeEach(async () => {
     audit,
     scopes: [{ collection: "form_submissions", subjectField: "subjectRef" }],
   });
-  app = createStudioApp({ auth, content, media, theme, gdpr, csrf: createCsrf(randomBytes(32)), storage });
+  const settings = createSettingsService({ storage, audit });
+  app = createStudioApp({ auth, content, media, theme, settings, gdpr, csrf: createCsrf(randomBytes(32)), storage, audit });
   await storage.put("form_submissions", { id: randomUUID(), subjectRef: "data@subject.com", message: "hi" });
 });
 

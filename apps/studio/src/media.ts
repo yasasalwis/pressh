@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PressError } from "@pressh/core";
 import type { AuditLog, StorageAdapter, StoredDoc } from "@pressh/core";
@@ -75,10 +75,20 @@ export interface MediaServiceOptions {
 
 export interface MediaService {
   store(filename: string, declaredMime: string, bytes: Uint8Array, actorId: string): Promise<MediaRecord>;
+  list(): Promise<MediaRecord[]>;
+  get(id: string): Promise<MediaRecord | null>;
+  delete(id: string, actorId: string): Promise<void>;
 }
 
 export function createMediaService(opts: MediaServiceOptions): MediaService {
   const now = opts.now ?? (() => Date.now());
+
+  async function get(id: string): Promise<MediaRecord | null> {
+    const result = await opts.storage.get<MediaRecord>("media", id);
+    if (!result.ok) throw result.error;
+    return result.value;
+  }
+
   return {
     async store(filename, declaredMime, bytes, actorId) {
       const { ext, mime } = validateUpload(filename, declaredMime, bytes);
@@ -103,6 +113,28 @@ export function createMediaService(opts: MediaServiceOptions): MediaService {
         detail: { mediaId: id, filename, mime, size: record.size },
       });
       return record;
+    },
+
+    get,
+
+    async list() {
+      const result = await opts.storage.query<MediaRecord>("media", {});
+      if (!result.ok) throw result.error;
+      return result.value.items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    },
+
+    async delete(id, actorId) {
+      const record = await get(id);
+      if (!record) throw new PressError("not_found", "Media not found");
+      // Remove the on-disk blob first; tolerate an already-missing file.
+      await rm(record.path, { force: true });
+      const result = await opts.storage.delete("media", id);
+      if (!result.ok) throw result.error;
+      await opts.audit.append({
+        action: "media.delete",
+        actorId,
+        detail: { mediaId: id, filename: record.filename },
+      });
     },
   };
 }

@@ -53,4 +53,26 @@ describe("MediaService", () => {
       code: "validation",
     });
   });
+
+  it("lists stored media newest-first and fetches by id", async () => {
+    const media = createMediaService({ storage, audit, mediaRoot: join(dir, "media") });
+    const first = await media.store("a.png", "image/png", PNG, "u1");
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await media.store("b.png", "image/png", PNG, "u1");
+    const list = await media.list();
+    expect(list.map((m) => m.id)).toEqual([second.id, first.id]);
+    expect((await media.get(first.id))?.filename).toBe("a.png");
+    expect(await media.get("nope")).toBeNull();
+  });
+
+  it("deletes media (file + record + audit)", async () => {
+    const media = createMediaService({ storage, audit, mediaRoot: join(dir, "media") });
+    const rec = await media.store("c.png", "image/png", PNG, "u1");
+    await media.delete(rec.id, "u1");
+    expect(await media.get(rec.id)).toBeNull();
+    const { readFile } = await import("node:fs/promises");
+    await expect(readFile(rec.path)).rejects.toBeDefined(); // blob gone
+    expect((await audit.query({ action: "media.delete" })).length).toBe(1);
+    await expect(media.delete("nope", "u1")).rejects.toMatchObject({ code: "not_found" });
+  });
 });

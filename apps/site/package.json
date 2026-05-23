@@ -20,6 +20,8 @@
     "@pressh/core": "*",
     "@pressh/engine": "*",
     "@pressh/runtime": "*",
-    "hono": "4.12.21"
+    "hono": "4.12.21",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   }
 }

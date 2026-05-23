@@ -10,7 +10,7 @@ import {
   createFileSystemStorage,
 } from "@pressh/core";
 import type { StorageAdapter } from "@pressh/core";
-import { createContentService, createThemeService } from "@pressh/engine";
+import { createContentService, createSettingsService, createThemeService } from "@pressh/engine";
 import { createStudioApp } from "./app";
 import type { PanelProvider } from "./app";
 import { createMediaService } from "./media";
@@ -44,7 +44,8 @@ beforeEach(async () => {
   const content = createContentService({ storage, audit });
   const media = createMediaService({ storage, audit, mediaRoot: join(dir, "media") });
   const theme = createThemeService({ storage, audit });
-  app = createStudioApp({ auth, content, media, theme, csrf: createCsrf(randomBytes(32)), storage, panels });
+  const settings = createSettingsService({ storage, audit });
+  app = createStudioApp({ auth, content, media, theme, settings, csrf: createCsrf(randomBytes(32)), storage, audit, panels });
 });
 
 afterEach(async () => {

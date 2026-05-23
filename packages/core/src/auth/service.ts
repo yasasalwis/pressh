@@ -9,9 +9,12 @@ import type { RoleName } from "./roles.js";
 
 const USERS = "users";
 const SESSIONS = "sessions";
+const INVITES = "invites";
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_MS = 15 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_PASSWORD_LENGTH = 8;
 
 interface UserRecord extends StoredDoc {
   email: string;
@@ -19,6 +22,7 @@ interface UserRecord extends StoredDoc {
   roles: RoleName[];
   mfaEnabled: boolean;
   status: "active" | "disabled";
+  mustChangePassword: boolean;
   failedAttempts: number;
   lockedUntil: number | null;
   createdAt: string;
@@ -31,6 +35,16 @@ interface SessionRecord extends StoredDoc {
   revoked: boolean;
 }
 
+interface InviteRecord extends StoredDoc {
+  email: string;
+  roles: RoleName[];
+  tokenHash: string;
+  invitedBy: string | null;
+  expiresAt: number;
+  consumedAt: string | null;
+  createdAt: string;
+}
+
 /** Public user shape — never includes the password hash or lockout counters. */
 export interface User {
   id: string;
@@ -38,6 +52,19 @@ export interface User {
   roles: RoleName[];
   mfaEnabled: boolean;
   status: "active" | "disabled";
+  /** When true, the user authenticated with an admin-set temp password and must rotate it. */
+  mustChangePassword: boolean;
+  createdAt: string;
+}
+
+/** Public invite shape — never includes the raw token or its hash. */
+export interface Invite {
+  id: string;
+  email: string;
+  roles: RoleName[];
+  invitedBy: string | null;
+  expiresAt: number;
+  consumedAt: string | null;
   createdAt: string;
 }
 
@@ -64,6 +91,48 @@ export interface AuthService {
   getUserByEmail(email: string): Promise<User | null>;
   /** True once at least one user exists — gates the first-run setup wizard. */
   hasAnyUser(): Promise<boolean>;
+
+  // --- user administration (gated by `users.manage` at the route layer) ---
+  /** All users, newest first. Never includes secrets. */
+  listUsers(): Promise<User[]>;
+  /** Single user by id. */
+  getUser(id: string): Promise<User | null>;
+  /**
+   * Change a user's roles and/or status. Refuses to remove or disable the LAST
+   * active owner so an install can never be locked out of administration.
+   */
+  updateUser(
+    userId: string,
+    changes: { roles?: RoleName[]; status?: "active" | "disabled" },
+    actorId?: string,
+  ): Promise<User>;
+  /**
+   * Create a user with a generated temporary password (the SMTP-less fallback).
+   * The plaintext temp password is returned ONCE for the admin to relay; the
+   * user is flagged `mustChangePassword` until they rotate it.
+   */
+  adminCreateUser(input: {
+    email: string;
+    roles: RoleName[];
+    actorId?: string;
+  }): Promise<{ user: User; temporaryPassword: string }>;
+  /** Verify the current password and set a new one; clears `mustChangePassword`. */
+  changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void>;
+
+  // --- invitations (single-use, expiring; the user sets their own password) ---
+  /** Create an invite and return its one-time token (shown/sent once). */
+  createInvite(input: {
+    email: string;
+    roles: RoleName[];
+    actorId?: string;
+    ttlMs?: number;
+  }): Promise<{ invite: Invite; token: string }>;
+  /** Pending (unconsumed) invites, newest first. */
+  listInvites(): Promise<Invite[]>;
+  /** Permanently revoke a pending invite. */
+  revokeInvite(id: string): Promise<void>;
+  /** Redeem an invite token: create the user, consume the invite, return a session. */
+  acceptInvite(input: { token: string; password: string }): Promise<LoginResult>;
 }
 
 function must<T>(result: Result<T>): T {
@@ -86,8 +155,26 @@ function toPublic(record: UserRecord): User {
     roles: record.roles,
     mfaEnabled: record.mfaEnabled,
     status: record.status,
+    mustChangePassword: record.mustChangePassword ?? false,
     createdAt: record.createdAt,
   };
+}
+
+function toPublicInvite(record: InviteRecord): Invite {
+  return {
+    id: record.id,
+    email: record.email,
+    roles: record.roles,
+    invitedBy: record.invitedBy,
+    expiresAt: record.expiresAt,
+    consumedAt: record.consumedAt,
+    createdAt: record.createdAt,
+  };
+}
+
+/** A cryptographically strong, human-relayable temporary password. */
+function generateTempPassword(): string {
+  return randomBytes(12).toString("base64url");
 }
 
 class AuthServiceImpl implements AuthService {
@@ -116,12 +203,20 @@ class AuthServiceImpl implements AuthService {
     return page.items[0] ?? null;
   }
 
-  async createUser(input: { email: string; password: string; roles: RoleName[] }): Promise<User> {
+  /** Shared user insertion: validates, hashes, persists, and audits. */
+  async #insertUser(input: {
+    email: string;
+    password: string;
+    roles: RoleName[];
+    mustChangePassword: boolean;
+    actorId: string | null;
+  }): Promise<UserRecord> {
     const email = normalizeEmail(input.email);
     if (!email.includes("@")) throw new PressError("validation", "A valid email is required");
-    if (input.password.length < 8) {
-      throw new PressError("validation", "Password must be at least 8 characters");
+    if (input.password.length < MIN_PASSWORD_LENGTH) {
+      throw new PressError("validation", `Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
     }
+    if (input.roles.length === 0) throw new PressError("validation", "At least one role is required");
     for (const role of input.roles) {
       if (!isRoleName(role)) throw new PressError("validation", `Unknown role: ${role}`);
     }
@@ -136,6 +231,7 @@ class AuthServiceImpl implements AuthService {
       roles: input.roles,
       mfaEnabled: false,
       status: "active",
+      mustChangePassword: input.mustChangePassword,
       failedAttempts: 0,
       lockedUntil: null,
       createdAt: new Date(this.#now()).toISOString(),
@@ -143,8 +239,19 @@ class AuthServiceImpl implements AuthService {
     must(await this.#storage.put(USERS, record));
     await this.#audit.append({
       action: "user.create",
-      actorId: null,
+      actorId: input.actorId,
       detail: { userId: record.id, email },
+    });
+    return record;
+  }
+
+  async createUser(input: { email: string; password: string; roles: RoleName[] }): Promise<User> {
+    const record = await this.#insertUser({
+      email: input.email,
+      password: input.password,
+      roles: input.roles,
+      mustChangePassword: false,
+      actorId: null,
     });
     return toPublic(record);
   }
@@ -242,6 +349,192 @@ class AuthServiceImpl implements AuthService {
   async hasAnyUser(): Promise<boolean> {
     const page = must(await this.#storage.query<UserRecord>(USERS, {}, { limit: 1 }));
     return page.items.length > 0;
+  }
+
+  async #allUserRecords(): Promise<UserRecord[]> {
+    const page = must(await this.#storage.query<UserRecord>(USERS, {}));
+    return page.items;
+  }
+
+  /** Active owners are the only accounts that can never all be removed. */
+  #isLastActiveOwner(records: UserRecord[], target: UserRecord): boolean {
+    const activeOwners = records.filter(
+      (r) => r.status === "active" && r.roles.includes("owner"),
+    );
+    return (
+      target.status === "active" &&
+      target.roles.includes("owner") &&
+      activeOwners.length <= 1
+    );
+  }
+
+  async listUsers(): Promise<User[]> {
+    const records = await this.#allUserRecords();
+    return records
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .map(toPublic);
+  }
+
+  async getUser(id: string): Promise<User | null> {
+    const record = must(await this.#storage.get<UserRecord>(USERS, id));
+    return record ? toPublic(record) : null;
+  }
+
+  async updateUser(
+    userId: string,
+    changes: { roles?: RoleName[]; status?: "active" | "disabled" },
+    actorId?: string,
+  ): Promise<User> {
+    const records = await this.#allUserRecords();
+    const record = records.find((r) => r.id === userId);
+    if (!record) throw new PressError("not_found", "User not found");
+
+    const nextRoles = changes.roles ?? record.roles;
+    const nextStatus = changes.status ?? record.status;
+    if (changes.roles) {
+      if (nextRoles.length === 0) throw new PressError("validation", "At least one role is required");
+      for (const role of nextRoles) {
+        if (!isRoleName(role)) throw new PressError("validation", `Unknown role: ${role}`);
+      }
+    }
+
+    // Last-owner guard: block any change that would leave zero active owners.
+    const losesOwnerStanding = !(nextStatus === "active" && nextRoles.includes("owner"));
+    if (losesOwnerStanding && this.#isLastActiveOwner(records, record)) {
+      throw new PressError("conflict", "Cannot remove or disable the last active owner");
+    }
+
+    record.roles = nextRoles;
+    record.status = nextStatus;
+    must(await this.#storage.put(USERS, record));
+    await this.#audit.append({
+      action: "user.update",
+      actorId: actorId ?? null,
+      detail: { userId: record.id, roles: record.roles, status: record.status },
+    });
+    return toPublic(record);
+  }
+
+  async adminCreateUser(input: {
+    email: string;
+    roles: RoleName[];
+    actorId?: string;
+  }): Promise<{ user: User; temporaryPassword: string }> {
+    const temporaryPassword = generateTempPassword();
+    const record = await this.#insertUser({
+      email: input.email,
+      password: temporaryPassword,
+      roles: input.roles,
+      mustChangePassword: true,
+      actorId: input.actorId ?? null,
+    });
+    return { user: toPublic(record), temporaryPassword };
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      throw new PressError("validation", `Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    }
+    const record = must(await this.#storage.get<UserRecord>(USERS, userId));
+    if (!record) throw new PressError("not_found", "User not found");
+    if (!(await verifyPassword(record.passwordHash, currentPassword))) {
+      throw new PressError("unauthorized", "Current password is incorrect");
+    }
+    record.passwordHash = await hashPassword(newPassword);
+    record.mustChangePassword = false;
+    must(await this.#storage.put(USERS, record));
+    await this.#audit.append({
+      action: "user.password.change",
+      actorId: userId,
+      detail: { userId },
+    });
+  }
+
+  async createInvite(input: {
+    email: string;
+    roles: RoleName[];
+    actorId?: string;
+    ttlMs?: number;
+  }): Promise<{ invite: Invite; token: string }> {
+    const email = normalizeEmail(input.email);
+    if (!email.includes("@")) throw new PressError("validation", "A valid email is required");
+    if (input.roles.length === 0) throw new PressError("validation", "At least one role is required");
+    for (const role of input.roles) {
+      if (!isRoleName(role)) throw new PressError("validation", `Unknown role: ${role}`);
+    }
+    if (await this.#findRecordByEmail(email)) {
+      throw new PressError("conflict", "A user with this email already exists");
+    }
+
+    const token = randomBytes(32).toString("base64url");
+    const now = this.#now();
+    const record: InviteRecord = {
+      id: randomUUID(),
+      email,
+      roles: input.roles,
+      tokenHash: tokenId(token),
+      invitedBy: input.actorId ?? null,
+      expiresAt: now + (input.ttlMs ?? DEFAULT_INVITE_TTL_MS),
+      consumedAt: null,
+      createdAt: new Date(now).toISOString(),
+    };
+    must(await this.#storage.put(INVITES, record));
+    await this.#audit.append({
+      action: "user.invite.create",
+      actorId: input.actorId ?? null,
+      detail: { inviteId: record.id, email },
+    });
+    return { invite: toPublicInvite(record), token };
+  }
+
+  async listInvites(): Promise<Invite[]> {
+    const page = must(await this.#storage.query<InviteRecord>(INVITES, {}));
+    return page.items
+      .filter((i) => i.consumedAt === null)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .map(toPublicInvite);
+  }
+
+  async revokeInvite(id: string): Promise<void> {
+    const record = must(await this.#storage.get<InviteRecord>(INVITES, id));
+    if (!record) return;
+    must(await this.#storage.delete(INVITES, id));
+    await this.#audit.append({
+      action: "user.invite.revoke",
+      actorId: null,
+      detail: { inviteId: id },
+    });
+  }
+
+  async acceptInvite(input: { token: string; password: string }): Promise<LoginResult> {
+    const page = must(
+      await this.#storage.query<InviteRecord>(INVITES, { where: { tokenHash: tokenId(input.token) } }),
+    );
+    const invite = page.items[0] ?? null;
+    if (!invite || invite.consumedAt !== null) {
+      throw new PressError("unauthorized", "Invalid or already-used invitation");
+    }
+    if (invite.expiresAt <= this.#now()) {
+      throw new PressError("unauthorized", "This invitation has expired");
+    }
+
+    const record = await this.#insertUser({
+      email: invite.email,
+      password: input.password,
+      roles: invite.roles,
+      mustChangePassword: false,
+      actorId: invite.invitedBy,
+    });
+
+    invite.consumedAt = new Date(this.#now()).toISOString();
+    must(await this.#storage.put(INVITES, invite));
+    await this.#audit.append({
+      action: "user.invite.accept",
+      actorId: record.id,
+      detail: { inviteId: invite.id, userId: record.id },
+    });
+
+    return this.authenticate({ email: invite.email, password: input.password });
   }
 }
 

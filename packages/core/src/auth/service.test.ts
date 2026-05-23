@@ -102,3 +102,112 @@ describe("AuthService", () => {
     expect(gate.check(auth.capabilitiesFor(user), "users.manage")).toBe(false);
   });
 });
+
+describe("AuthService — user administration", () => {
+  it("lists users newest-first without secrets", async () => {
+    await auth.createUser({ email: "owner@x.com", password: "ownerpass1", roles: ["owner"] });
+    clock += 1000;
+    await auth.createUser({ email: "ed@x.com", password: "editorpass1", roles: ["editor"] });
+    const users = await auth.listUsers();
+    expect(users).toHaveLength(2);
+    expect(users[0]?.email).toBe("ed@x.com"); // newest first
+    expect(users[0]).not.toHaveProperty("passwordHash");
+    expect(users[0]?.mustChangePassword).toBe(false);
+  });
+
+  it("updates roles and status", async () => {
+    await auth.createUser({ email: "owner@x.com", password: "ownerpass1", roles: ["owner"] });
+    const ed = await auth.createUser({ email: "ed@x.com", password: "editorpass1", roles: ["editor"] });
+    const updated = await auth.updateUser(ed.id, { roles: ["admin"], status: "disabled" });
+    expect(updated.roles).toEqual(["admin"]);
+    expect(updated.status).toBe("disabled");
+  });
+
+  it("refuses to remove or disable the last active owner", async () => {
+    const owner = await auth.createUser({ email: "owner@x.com", password: "ownerpass1", roles: ["owner"] });
+    await expect(auth.updateUser(owner.id, { status: "disabled" })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(auth.updateUser(owner.id, { roles: ["editor"] })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    // A SECOND owner makes demoting the first one allowed again.
+    await auth.createUser({ email: "owner2@x.com", password: "ownerpass2", roles: ["owner"] });
+    const demoted = await auth.updateUser(owner.id, { roles: ["editor"] });
+    expect(demoted.roles).toEqual(["editor"]);
+  });
+
+  it("creates a user with a temp password that must be changed", async () => {
+    await auth.createUser({ email: "owner@x.com", password: "ownerpass1", roles: ["owner"] });
+    const { user, temporaryPassword } = await auth.adminCreateUser({
+      email: "new@x.com",
+      roles: ["author"],
+    });
+    expect(user.mustChangePassword).toBe(true);
+    expect(temporaryPassword.length).toBeGreaterThanOrEqual(8);
+    // The temp password works for login.
+    const { user: loggedIn } = await auth.authenticate({ email: "new@x.com", password: temporaryPassword });
+    expect(loggedIn.mustChangePassword).toBe(true);
+  });
+
+  it("changes a password and clears the must-change flag", async () => {
+    const { user, temporaryPassword } = await auth.adminCreateUser({
+      email: "new@x.com",
+      roles: ["author"],
+    });
+    await expect(
+      auth.changePassword(user.id, "wrong-current", "brand-new-pass"),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+    await auth.changePassword(user.id, temporaryPassword, "brand-new-pass");
+    const after = await auth.getUser(user.id);
+    expect(after?.mustChangePassword).toBe(false);
+    const { token } = await auth.authenticate({ email: "new@x.com", password: "brand-new-pass" });
+    expect(token).toBeTruthy();
+  });
+});
+
+describe("AuthService — invitations", () => {
+  it("creates, lists, and accepts an invite", async () => {
+    const owner = await auth.createUser({ email: "owner@x.com", password: "ownerpass1", roles: ["owner"] });
+    const { invite, token } = await auth.createInvite({
+      email: "invitee@x.com",
+      roles: ["editor"],
+      actorId: owner.id,
+    });
+    expect(invite.email).toBe("invitee@x.com");
+    expect(invite).not.toHaveProperty("tokenHash");
+
+    const pending = await auth.listInvites();
+    expect(pending.some((i) => i.id === invite.id)).toBe(true);
+
+    const { token: session, user } = await auth.acceptInvite({ token, password: "inviteepass1" });
+    expect(session).toBeTruthy();
+    expect(user.email).toBe("invitee@x.com");
+    expect(user.roles).toEqual(["editor"]);
+    expect(user.mustChangePassword).toBe(false);
+
+    // Invite is consumed: no longer pending and not reusable.
+    expect((await auth.listInvites()).some((i) => i.id === invite.id)).toBe(false);
+    await expect(auth.acceptInvite({ token, password: "again12345" })).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("rejects an expired invite", async () => {
+    const { token } = await auth.createInvite({
+      email: "late@x.com",
+      roles: ["author"],
+      ttlMs: 1000,
+    });
+    clock += 2000;
+    await expect(auth.acceptInvite({ token, password: "latepass123" })).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("revokes a pending invite", async () => {
+    const { invite } = await auth.createInvite({ email: "x@x.com", roles: ["viewer"] });
+    await auth.revokeInvite(invite.id);
+    expect((await auth.listInvites()).some((i) => i.id === invite.id)).toBe(false);
+  });
+});

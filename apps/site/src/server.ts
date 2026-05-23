@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import { createFileAuditLog, createFileSystemStorage } from "@pressh/core";
 import {
@@ -56,6 +56,9 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     });
   };
 
+  // dist/client/ sits next to dist/server.js in the compiled output.
+  const clientDir = fileURLToPath(new URL("client", import.meta.url));
+
   const app = createSiteApp({
     resolver,
     pluginHost,
@@ -64,6 +67,7 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     gdpr,
     storage,
     listPublishedPaths,
+    clientDir,
     ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });

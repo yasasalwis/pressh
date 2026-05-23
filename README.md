@@ -95,19 +95,17 @@ git clone https://github.com/your-org/pressh.git
 cd pressh
 
 npm ci
-npm run build:packages
-npm test
+npm run build
+npm run tests
 ```
 
-Start both apps:
+Start both apps with a single command (Studio on port 4000, Site on port 3000):
 
 ```bash
-# Terminal 1 — Studio (admin, port 4000)
-npm run dev --workspace=apps/studio
-
-# Terminal 2 — Site (public, port 3000)
-npm run dev --workspace=apps/site
+npm start
 ```
+
+Need just one process? Use `npm run studio` or `npm run site` (build first with `npm run build`).
 
 Open Studio at `http://localhost:4000` to create your first content type.
 
@@ -211,7 +209,7 @@ Pressh ships with 14 security baselines enforced by `tests/security-baselines.te
 
 ```bash
 # All tests
-npm test
+npm run tests
 
 # Single package
 npm test --workspace=packages/engine

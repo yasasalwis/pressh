@@ -51,7 +51,7 @@ export type { CsrfProtection } from "./auth/csrf.js";
 export { createRateLimiter } from "./auth/rate-limit.js";
 export type { RateLimiter, RateLimiterOptions } from "./auth/rate-limit.js";
 export { createAuthService } from "./auth/service.js";
-export type { AuthService, AuthServiceOptions, LoginResult, User } from "./auth/service.js";
+export type { AuthService, AuthServiceOptions, Invite, LoginResult, User } from "./auth/service.js";
 
 export { createMetrics, requestId } from "./observability.js";
 export type { Labels, Metrics } from "./observability.js";

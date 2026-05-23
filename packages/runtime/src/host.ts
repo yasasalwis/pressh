@@ -207,6 +207,21 @@ export class PluginHost {
     return out;
   }
 
+  /** Installed plugins with their declared capabilities, for the Studio Plugins screen. */
+  plugins(): { name: string; version: string; capabilities: string[]; endpoints: number; hasPanel: boolean }[] {
+    const out: { name: string; version: string; capabilities: string[]; endpoints: number; hasPanel: boolean }[] = [];
+    for (const [, record] of this.#registry) {
+      out.push({
+        name: record.manifest.name,
+        version: record.manifest.version,
+        capabilities: record.manifest.capabilities ?? [],
+        endpoints: (record.manifest.endpoints ?? []).length,
+        hasPanel: Boolean(record.manifest.panel),
+      });
+    }
+    return out;
+  }
+
   /** Plugins that declare an admin panel, for the Studio panel list. */
   panels(): { plugin: string; title: string }[] {
     const out: { plugin: string; title: string }[] = [];
