@@ -3,7 +3,14 @@ import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { CapabilityGate, PressError, createMetrics, requestId } from "@pressh/core";
 import type { AuthService, CsrfProtection, StorageAdapter, User } from "@pressh/core";
-import type { ContentService, ContentStatus, GdprService, ThemeService } from "@pressh/engine";
+import type { ContentService, ContentStatus, FieldDef, GdprService, ThemeService } from "@pressh/engine";
+import {
+  collectStyles,
+  createComponentRegistry,
+  registerBuiltinComponents,
+  renderLayout,
+} from "@pressh/engine";
+import type { ComponentContext, LayoutNode } from "@pressh/engine";
 import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
 import type { CveService } from "@pressh/runtime";
 import type { MediaService } from "./media.js";
@@ -48,6 +55,71 @@ function mapError(error: unknown): { status: 400 | 401 | 403 | 404 | 409 | 500; 
       return { status: 409, code };
     default:
       return { status: 500, code };
+  }
+}
+
+export async function seedDemoContent(content: ContentService, ownerId: string, caps: string[]): Promise<void> {
+  const pageFields: FieldDef[] = [{ id: "f0", name: "title", type: "text", required: true }];
+  const pageType = await content.createType(caps, { name: "Page", slug: "page", fields: pageFields });
+
+  const pages: { slug: string; title: string; blocks: unknown[] }[] = [
+    {
+      slug: "home",
+      title: "Home",
+      blocks: [
+        { type: "heading", props: { level: 1 }, content: "Welcome to Pressh" },
+        { type: "paragraph", content: "The secure-first CMS built for the modern web. Publish content with confidence — no compromises." },
+        { type: "heading", props: { level: 2 }, content: "Built for security" },
+        { type: "paragraph", content: "Traditional CMS platforms bundle thousands of lines of third-party code you never audited. Pressh takes the opposite approach: a minimal, auditable core with plugins running in isolated sandboxes." },
+        { type: "heading", props: { level: 2 }, content: "Simple and powerful" },
+        { type: "paragraph", content: "No-code content modelling, workflow states, immutable revision history, and locale support — all included out of the box." },
+      ],
+    },
+    {
+      slug: "about",
+      title: "About",
+      blocks: [
+        { type: "heading", props: { level: 1 }, content: "About Pressh" },
+        { type: "paragraph", content: "Pressh is a content management system that puts security first without sacrificing simplicity. We believe the web deserves better than the legacy CMS status quo." },
+        { type: "heading", props: { level: 2 }, content: "Our values" },
+        { type: "paragraph", content: "Security by default. Minimal surface area. Transparent architecture. We build tools that developers can audit and organisations can trust." },
+        { type: "heading", props: { level: 2 }, content: "Open by design" },
+        { type: "paragraph", content: "Pressh is open-source. Every line of code is auditable, every decision is documented, and every plugin runs in a worker sandbox with explicit capability grants." },
+      ],
+    },
+    {
+      slug: "blog",
+      title: "Blog",
+      blocks: [
+        { type: "heading", props: { level: 1 }, content: "The Pressh Blog" },
+        { type: "paragraph", content: "Insights on content security, web performance, and the open web." },
+        { type: "heading", props: { level: 2 }, content: "Why we built Pressh" },
+        { type: "paragraph", content: "After watching yet another CMS get compromised by a vulnerable plugin, we decided enough was enough. The web needs a CMS that is secure by default, not as an afterthought." },
+        { type: "heading", props: { level: 2 }, content: "Getting started" },
+        { type: "paragraph", content: "Create your first content type, add some pages, and publish. The Studio walks you through every step with a clean, no-code interface." },
+      ],
+    },
+    {
+      slug: "contact",
+      title: "Contact",
+      blocks: [
+        { type: "heading", props: { level: 1 }, content: "Get in Touch" },
+        { type: "paragraph", content: "Have questions, feedback, or just want to say hello? We would love to hear from you." },
+        { type: "heading", props: { level: 2 }, content: "Contributing" },
+        { type: "paragraph", content: "Pressh is open-source. Bug reports, feature requests, and pull requests are all welcome on GitHub." },
+      ],
+    },
+  ];
+
+  for (const page of pages) {
+    const entry = await content.createEntry(caps, {
+      typeId: pageType.id,
+      slug: page.slug,
+      authorId: ownerId,
+      fields: { title: page.title },
+      blocks: page.blocks,
+    });
+    await content.transition(caps, entry.id, "published");
   }
 }
 
@@ -130,6 +202,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
         secure: deps.production ?? false,
         path: "/",
       });
+      await seedDemoContent(deps.content, user.id, deps.auth.capabilitiesFor(user)).catch(() => {});
       return c.json({ user });
     } catch (error) {
       const { status, code } = mapError(error);
@@ -324,6 +397,70 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     );
     c.header("X-Content-Type-Options", "nosniff");
     return c.html(wrapPanelHtml({ title: panel.title, body: panel.html }));
+  });
+
+  // --- page designer: component registry & preview ---
+  const componentRegistry = createComponentRegistry();
+  registerBuiltinComponents(componentRegistry);
+
+  function makeDesignerContext(): ComponentContext {
+    return {
+      async fetchContent(slug) {
+        const entry = await deps.content.resolveBySlug(slug, "en", { publicOnly: false });
+        if (!entry) return null;
+        const rev = await deps.content.getRevision(entry.id, entry.currentRevision);
+        return { ...rev?.fields, slug: entry.slug, publishedAt: entry.publishedAt };
+      },
+      async listPublished(limit = 10) {
+        const result = await deps.storage.query("content_entries", { where: { status: "published" } }, { limit });
+        if (!result.ok) return [];
+        return result.value.items as Record<string, unknown>[];
+      },
+    };
+  }
+
+  app.get("/admin/api/components", requireSession, (c) => {
+    const items = componentRegistry.list().map((def) => ({
+      id: def.id,
+      name: def.name,
+      category: def.category,
+      description: def.description,
+      icon: def.icon,
+      props: def.props,
+      defaultProps: def.defaultProps,
+      hasServerData: typeof def.serverData === "function",
+    }));
+    return c.json({ items });
+  });
+
+  app.post("/admin/api/preview/component", requireSession, async (c) => {
+    const body = await c.req.json<{ componentId: string; props: Record<string, unknown> }>();
+    const def = componentRegistry.get(body.componentId);
+    if (!def) return c.json({ error: { code: "not_found", message: "Unknown component" } }, 404);
+
+    let serverData: Record<string, unknown> = {};
+    if (def.serverData) {
+      try {
+        serverData = await def.serverData(body.props ?? {}, makeDesignerContext());
+      } catch {
+        serverData = {};
+      }
+    }
+
+    const html = def.render(body.props ?? {}, serverData);
+    const styles = def.styles ? `<style>${def.styles}</style>` : "";
+    const full = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${styles}<style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif}</style></head><body>${html}</body></html>`;
+    return c.json({ html: full });
+  });
+
+  app.post("/admin/api/preview/page", requireSession, async (c) => {
+    const body = await c.req.json<{ nodes: LayoutNode[] }>();
+    const nodes = body.nodes ?? [];
+    const ctx = makeDesignerContext();
+    const bodyHtml = await renderLayout(nodes, componentRegistry, ctx);
+    const styles = collectStyles(nodes, componentRegistry);
+    const full = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif}${styles}</style></head><body>${bodyHtml}</body></html>`;
+    return c.json({ html: full });
   });
 
   // --- media upload (validated, stored outside web root) ---

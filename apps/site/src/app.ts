@@ -1,7 +1,15 @@
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { PressError, createMetrics, requestId } from "@pressh/core";
 import type { Metrics, StorageAdapter } from "@pressh/core";
-import type { GdprService, QueryResolver, ThemeService } from "@pressh/engine";
+import {
+  DESIGNER_LAYOUT_BLOCK,
+  collectStyles,
+  createComponentRegistry,
+  registerBuiltinComponents,
+  renderLayout,
+} from "@pressh/engine";
+import type { ComponentContext, GdprService, LayoutNode, QueryResolver, ThemeService } from "@pressh/engine";
 import type { RenderCache } from "./cache.js";
 import { escapeHtml, renderBlocks, renderNotFound, renderPage } from "./render.js";
 
@@ -33,8 +41,51 @@ function mapError(error: unknown): { status: 400 | 403 | 404 | 500; code: string
   return { status: 500, code };
 }
 
-export function createSiteApp(deps: SiteAppDeps): Hono {
-  const app = new Hono();
+const siteComponentRegistry = createComponentRegistry();
+registerBuiltinComponents(siteComponentRegistry);
+
+/** Per-request context vars. */
+type SiteEnv = { Variables: { styleCsp: string } };
+
+/**
+ * Builds the `style-src` CSP directive for a server-rendered HTML document by
+ * hashing every inline `<style>` block it contains. This keeps the strict CSP
+ * (no `'unsafe-inline'`) while letting the theme + component styles apply.
+ * Hashes are derived from the (deterministic) markup, so they stay valid for
+ * cached pages — unlike a per-request nonce, which would break on cache hits.
+ */
+function styleSrcDirective(html: string): string {
+  const re = /<style[^>]*>([\s\S]*?)<\/style>/g;
+  const hashes: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) !== null) {
+    const digest = createHash("sha256").update(match[1] ?? "", "utf8").digest("base64");
+    hashes.push(`'sha256-${digest}'`);
+  }
+  return hashes.length ? `style-src 'self' ${hashes.join(" ")}` : "style-src 'self'";
+}
+
+function makeSiteContext(resolver: QueryResolver, storage?: StorageAdapter): ComponentContext {
+  return {
+    async fetchContent(slug) {
+      try {
+        const r = await resolver.resolve({ slug, scope: "public" });
+        return { ...r.fields, slug: r.slug, publishedAt: r.publishedAt };
+      } catch {
+        return null;
+      }
+    },
+    async listPublished(limit = 10) {
+      if (!storage) return [];
+      const result = await storage.query("content_entries", { where: { status: "published" } }, { limit });
+      if (!result.ok) return [];
+      return result.value.items as Record<string, unknown>[];
+    },
+  };
+}
+
+export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
+  const app = new Hono<SiteEnv>();
   const metrics = deps.metrics ?? createMetrics();
 
   // Request-id correlation + request metrics (TDD §9).
@@ -56,12 +107,15 @@ export function createSiteApp(deps: SiteAppDeps): Hono {
   });
   app.get("/metrics", (c) => c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" }));
 
-  // Strict security headers on every response (baseline #9/#10).
+  // Strict security headers on every response (baseline #9/#10). The HTML
+  // handlers set `styleCsp` to a hashed `style-src` so the SSR'd theme/component
+  // styles apply without ever allowing `'unsafe-inline'`.
   app.use("*", async (c, next) => {
     await next();
+    const styleSrc = c.get("styleCsp") ?? "style-src 'self'";
     c.header(
       "Content-Security-Policy",
-      "default-src 'self'; img-src 'self' https: data:; frame-src https:; object-src 'none'; base-uri 'self'",
+      `default-src 'self'; ${styleSrc}; img-src 'self' https: data:; frame-src https:; object-src 'none'; base-uri 'self'`,
     );
     c.header("X-Content-Type-Options", "nosniff");
     c.header("X-Frame-Options", "DENY");
@@ -136,32 +190,60 @@ export function createSiteApp(deps: SiteAppDeps): Hono {
   // Front controller — resolve any URL at request time (FR-030).
   app.get("*", async (c) => {
     const path = c.req.path;
-    const cached = deps.cache.get(path);
-    if (cached !== undefined) {
-      c.header("X-Cache", "HIT");
-      return c.html(cached);
-    }
     try {
       const resolved = await deps.resolver.resolvePath(path, { scope: "public" });
+      // Serve cached HTML only while it matches the current content version.
+      // Resolving is cheap (local reads); this lets a Studio publish go live on
+      // the separate Site process without restart (see cache.ts).
+      const version = String(resolved.revision);
+      const cached = deps.cache.get(path);
+      if (cached && cached.version === version) {
+        c.header("X-Cache", "HIT");
+        c.header("Cache-Tag", `content:${resolved.id}`);
+        c.set("styleCsp", styleSrcDirective(cached.html));
+        return c.html(cached.html);
+      }
       const title =
         typeof resolved.fields["title"] === "string" ? (resolved.fields["title"] as string) : resolved.slug;
-      const body = renderBlocks(resolved.blocks);
+
+      const layoutBlock = (resolved.blocks as Array<{ type: string; props?: Record<string, unknown> }>).find(
+        (b) => b.type === DESIGNER_LAYOUT_BLOCK,
+      );
+      const layoutNodes = Array.isArray(layoutBlock?.props?.["nodes"]) ? (layoutBlock!.props!["nodes"] as LayoutNode[]) : [];
+      let body: string;
+      let componentStyles = "";
+      if (layoutNodes.length) {
+        const ctx = makeSiteContext(deps.resolver, deps.storage);
+        body = await renderLayout(layoutNodes, siteComponentRegistry, ctx);
+        componentStyles = collectStyles(layoutNodes, siteComponentRegistry);
+      } else {
+        body = renderBlocks(resolved.blocks);
+      }
       let html: string;
       if (deps.themeService) {
         const t = await deps.themeService.resolve();
-        html = t.theme.layout({ title, body, locale: resolved.locale, cssVars: t.cssVars, siteName: t.siteName });
+        const layoutWithStyles = componentStyles
+          ? body.replace("</head>", `<style>${componentStyles}</style></head>`)
+          : body;
+        const themeHtml = t.theme.layout({ title, body: layoutWithStyles, locale: resolved.locale, cssVars: t.cssVars, siteName: t.siteName });
+        html = componentStyles ? themeHtml.replace("</head>", `<style>${componentStyles}</style></head>`) : themeHtml;
       } else {
-        html = renderPage({ title, body, locale: resolved.locale });
+        html = renderPage({ title, body, locale: resolved.locale, extraStyles: componentStyles });
       }
-      deps.cache.set(path, html, [`content:${resolved.id}`]);
+      deps.cache.set(path, html, version, [`content:${resolved.id}`]);
       c.header("X-Cache", "MISS");
       c.header("Cache-Tag", `content:${resolved.id}`);
+      c.set("styleCsp", styleSrcDirective(html));
       return c.html(html);
     } catch (error) {
       if (error instanceof PressError && error.code === "not_found") {
-        return c.html(renderNotFound(), 404);
+        const notFound = renderNotFound();
+        c.set("styleCsp", styleSrcDirective(notFound));
+        return c.html(notFound, 404);
       }
-      return c.html(renderPage({ title: "Error", body: "<h1>500 — Server error</h1>" }), 500);
+      const errorPage = renderPage({ title: "Error", body: "<h1>500 — Server error</h1>" });
+      c.set("styleCsp", styleSrcDirective(errorPage));
+      return c.html(errorPage, 500);
     }
   });
 

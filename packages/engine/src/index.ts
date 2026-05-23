@@ -9,6 +9,7 @@
 export const PRESSH_ENGINE_VERSION = "0.0.0";
 
 export { buildSchema, validateFields } from "./schema.js";
+export { safeUrl } from "./url.js";
 export { builtinBlocks, createBlockRegistry } from "./blocks/registry.js";
 export { sanitizeBlocks, FALLBACK_BLOCK_TYPE } from "./blocks/sanitize.js";
 export type { BlockDefinition, BlockNode, BlockRegistry } from "./blocks/types.js";
@@ -55,6 +56,12 @@ export type {
   SubjectScope,
 } from "./gdpr.js";
 export { createContentService, PUBLISH_JOB_TYPE } from "./content-service.js";
+export { createComponentRegistry } from "./components/registry.js";
+export type { ComponentRegistry } from "./components/registry.js";
+export type { ComponentDef, ComponentContext, ComponentPropDef, ComponentPropType, LayoutNode } from "./components/types.js";
+export { DESIGNER_LAYOUT_BLOCK } from "./components/types.js";
+export { registerBuiltinComponents } from "./components/builtin/index.js";
+export { renderLayout, collectStyles } from "./components/render.js";
 export type {
   ContentService,
   ContentServiceOptions,

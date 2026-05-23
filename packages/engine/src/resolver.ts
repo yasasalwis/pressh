@@ -60,6 +60,8 @@ export interface ResolvedContent {
   authorId: string | null;
   publishedAt: string | null;
   updatedAt: string;
+  /** Monotonic revision number — bumps on every save; used as a cache version. */
+  revision: number;
 }
 
 export interface QueryResolver {
@@ -110,6 +112,7 @@ export function createQueryResolver(opts: QueryResolverOptions): QueryResolver {
       authorId: o.scope === "admin" ? entry.authorId : null,
       publishedAt: entry.publishedAt,
       updatedAt: entry.updatedAt,
+      revision: entry.currentRevision,
     };
   }
 

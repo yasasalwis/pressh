@@ -18,7 +18,7 @@ import {
 } from "@pressh/engine";
 import { PluginHost, createCveService } from "@pressh/runtime";
 import type { CveFeedSource } from "@pressh/runtime";
-import { createStudioApp } from "./app.js";
+import { createStudioApp, seedDemoContent } from "./app.js";
 import type { PanelProvider } from "./app.js";
 import { createMediaService } from "./media.js";
 
@@ -105,6 +105,20 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     cve,
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
+
+  // Seed demo content on startup if the home page doesn't exist yet.
+  // Runs silently — slug conflicts for already-existing pages are swallowed.
+  const homeEntry = await content.resolveBySlug("home").catch(() => null);
+  if (!homeEntry) {
+    const usersPage = await storage.query<{ id: string }>("users");
+    const authorId =
+      usersPage.ok && usersPage.value.items.length > 0
+        ? (usersPage.value.items[0]?.id ?? "system-seed")
+        : null;
+    if (authorId) {
+      await seedDemoContent(content, authorId, ["*"]).catch(() => {});
+    }
+  }
 
   return {
     start: () => {

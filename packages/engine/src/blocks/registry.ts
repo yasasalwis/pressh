@@ -1,5 +1,6 @@
 import sanitizeHtml from "sanitize-html";
 import type { BlockDefinition, BlockNode, BlockRegistry } from "./types.js";
+import { safeUrl } from "../url.js";
 
 const INLINE_TAGS = ["b", "i", "em", "strong", "u", "s", "a", "br", "span", "code"];
 
@@ -48,11 +49,6 @@ function textOnly(value: unknown): string {
   return sanitizeHtml(String(value ?? ""), { allowedTags: [], allowedAttributes: {} });
 }
 
-function safeUrl(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return /^https?:\/\//i.test(value) || value.startsWith("/") ? value : "";
-}
-
 function clampLevel(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return 2;
@@ -99,6 +95,13 @@ export function builtinBlocks(): BlockDefinition[] {
       type: "html",
       requiredCapability: "content.rawhtml",
       sanitize: (b) => ({ type: "html", content: sanitizeHtml(String(b.content ?? ""), RICH) }),
+    },
+    {
+      type: "designer-layout",
+      sanitize: (b) => ({
+        type: "designer-layout",
+        props: { nodes: Array.isArray(b.props?.["nodes"]) ? b.props["nodes"] : [] },
+      }),
     },
   ];
 }

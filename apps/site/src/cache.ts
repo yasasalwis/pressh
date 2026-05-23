@@ -1,26 +1,39 @@
 /**
  * Content-tag render cache (ADR-012). Pages cache indefinitely and are purged
- * by tag the instant their content changes — so editors get instant-live and
- * visitors get cache speed. (Cross-process invalidation is wired in Phase 14;
- * here it is a single-process in-memory cache.)
+ * the instant their content changes — so editors get instant-live and visitors
+ * get cache speed.
+ *
+ * Because the Studio and Site run as separate processes (ADR-002), an in-memory
+ * tag purge in the Studio cannot reach the Site's cache. Instead each cached
+ * entry carries a `version` stamp (the content's `updatedAt`); the front
+ * controller resolves the entry on every request and serves the cached HTML
+ * only while the version still matches. A publish/save bumps `updatedAt`, so the
+ * next request re-renders. This keeps the expensive render skip while staying
+ * correct across processes.
  */
+export interface CachedPage {
+  html: string;
+  version: string;
+}
+
 export interface RenderCache {
-  get(key: string): string | undefined;
-  set(key: string, html: string, tags: string[]): void;
+  get(key: string): CachedPage | undefined;
+  set(key: string, html: string, version: string, tags: string[]): void;
   invalidateTag(tag: string): void;
   clear(): void;
 }
 
 export function createRenderCache(): RenderCache {
-  const entries = new Map<string, { html: string; tags: string[] }>();
+  const entries = new Map<string, { html: string; version: string; tags: string[] }>();
   const tagToKeys = new Map<string, Set<string>>();
 
   return {
     get(key) {
-      return entries.get(key)?.html;
+      const entry = entries.get(key);
+      return entry ? { html: entry.html, version: entry.version } : undefined;
     },
-    set(key, html, tags) {
-      entries.set(key, { html, tags });
+    set(key, html, version, tags) {
+      entries.set(key, { html, version, tags });
       for (const tag of tags) {
         const keys = tagToKeys.get(tag) ?? new Set<string>();
         keys.add(key);

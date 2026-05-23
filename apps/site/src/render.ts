@@ -51,15 +51,17 @@ export function renderBlocks(blocks: BlockNode[]): string {
     .join("\n");
 }
 
-export function renderPage(opts: { title: string; body: string; locale?: string }): string {
+export function renderPage(opts: { title: string; body: string; locale?: string; extraStyles?: string }): string {
+  const styles = opts.extraStyles ? `<style>${opts.extraStyles}</style>` : "";
   return `<!DOCTYPE html>
 <html lang="${escapeHtml(opts.locale ?? "en")}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(opts.title)}</title>
-</head>
-<body><main>${opts.body}</main></body>
+<style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif}</style>
+${styles}</head>
+<body>${opts.body}</body>
 </html>`;
 }
 

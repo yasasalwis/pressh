@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,13 +26,14 @@ const stubHost: SitePluginHost = {
 let dir: string;
 let storage: StorageAdapter;
 let app: ReturnType<typeof createSiteApp>;
+let content: ReturnType<typeof createContentService>;
 let aboutId: string;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "pressh-site-"));
   storage = createFileSystemStorage({ root: join(dir, "content") });
   const audit = await createFileAuditLog({ path: join(dir, "audit.log") });
-  const content = createContentService({ storage, audit });
+  content = createContentService({ storage, audit });
   const resolver = createQueryResolver({ content });
 
   const type = await content.createType(ADMIN, {
@@ -85,6 +87,45 @@ describe("front controller", () => {
   it("caches on the second request", async () => {
     expect((await app.request("/about")).headers.get("x-cache")).toBe("MISS");
     expect((await app.request("/about")).headers.get("x-cache")).toBe("HIT");
+  });
+
+  it("allows every inline <style> via CSP hashes, without 'unsafe-inline'", async () => {
+    const res = await app.request("/about");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    const styleSrc = (csp.match(/style-src[^;]*/) ?? [""])[0];
+    const html = await res.text();
+
+    // The page must contain inline styles, and each must be hash-allowlisted.
+    const blocks = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1] ?? "");
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const css of blocks) {
+      const hash = `'sha256-${createHash("sha256").update(css, "utf8").digest("base64")}'`;
+      expect(styleSrc).toContain(hash);
+    }
+    expect(styleSrc).not.toContain("unsafe-inline");
+  });
+
+  it("serves fresh content after an edit (cache busts on a new revision)", async () => {
+    // Prime the cache with the original content.
+    const first = await app.request("/about");
+    expect(first.headers.get("x-cache")).toBe("MISS");
+    expect(await first.text()).toContain("<p>hello</p>");
+    expect((await app.request("/about")).headers.get("x-cache")).toBe("HIT");
+
+    // An editor saves a new revision — this is what a Studio publish does.
+    // The Site runs in a separate process, so the only signal is the bumped
+    // revision number; the stale cache entry must not be served.
+    await content.saveEntry(EDITOR, aboutId, {
+      fields: { title: "About Us" },
+      blocks: [{ type: "paragraph", content: "brand new copy" }],
+      editorId: "u1",
+    });
+
+    const after = await app.request("/about");
+    expect(after.headers.get("x-cache")).toBe("MISS");
+    const body = await after.text();
+    expect(body).toContain("<p>brand new copy</p>");
+    expect(body).not.toContain("<p>hello</p>");
   });
 
   it("returns 404 for a draft (published-only public scope)", async () => {
