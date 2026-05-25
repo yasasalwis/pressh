@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { renderTree } from "./render.js";
-import type { PrimitiveNode, PrimitiveRenderContext } from "./types.js";
+import {describe, expect, it} from "vitest";
+import {renderTree} from "./render.js";
+import type {PrimitiveNode, PrimitiveRenderContext} from "./types.js";
 
 const emptyCtx: PrimitiveRenderContext = { listPublished: async () => [] };
 
@@ -177,4 +177,79 @@ describe("renderTree — collection list + bindings", () => {
     );
     expect(html).toContain("No posts yet");
   });
+
+    it("passes a `source` prop through to the render context query", async () => {
+        let seen: { source?: string } | null = null;
+        const ctx: PrimitiveRenderContext = {
+            listPublished: async (q) => {
+                seen = q;
+                return [];
+            },
+        };
+        await renderTree(
+            [{id: "cl4", type: "collectionList", props: {source: "inventory:products", limit: 4}, children: []}],
+            ctx,
+        );
+        expect(seen?.source).toBe("inventory:products");
+    });
+});
+
+describe("renderTree — commerce primitives", () => {
+    it("renders an add-to-cart button with the product id bound from the item scope", async () => {
+        const ctx: PrimitiveRenderContext = {
+            listPublished: async () => [{id: "prod-1", name: "Mug", priceLabel: "$9.50"}],
+        };
+        const tree: PrimitiveNode[] = [
+            {
+                id: "cl",
+                type: "collectionList",
+                props: {source: "inventory:products"},
+                children: [
+                    {
+                        id: "card",
+                        type: "column",
+                        children: [
+                            {
+                                id: "atc",
+                                type: "addToCart",
+                                props: {label: "Add to cart"},
+                                bindings: {productId: {field: "id"}}
+                            },
+                        ],
+                    },
+                ],
+            },
+        ];
+        const {html} = await renderTree(tree, ctx);
+        expect(html).toContain('data-ps-add="prod-1"');
+        expect(html).toContain('type="button"');
+        expect(html).toContain("Add to cart");
+        expect(html).not.toMatch(/\son[a-z]+=/i); // no event handlers
+        expect(html).not.toMatch(/\sstyle=/);
+    });
+
+    it("renders cart, cart-button and checkout commerce placeholders", async () => {
+        const {html} = await renderTree(
+            [
+                {id: "cart", type: "commerce", props: {view: "cart"}},
+                {id: "btn", type: "commerce", props: {view: "cartButton", label: "Bag"}},
+                {id: "co", type: "commerce", props: {view: "checkout"}},
+            ],
+            emptyCtx,
+        );
+        expect(html).toContain('data-ps-commerce="cart"');
+        expect(html).toContain('data-ps-commerce="cartButton"');
+        expect(html).toContain('data-ps-commerce="checkout"');
+        expect(html).toContain("data-ps-cart-count");
+        expect(html).toContain("Bag");
+    });
+
+    it("escapes a malicious product id in the add-to-cart attribute", async () => {
+        const {html} = await renderTree(
+            [{id: "atc", type: "addToCart", props: {label: "x", productId: '"><img src=x onerror=alert(1)>'}}],
+            emptyCtx,
+        );
+        expect(html).not.toContain("<img src=x");
+        expect(html).toContain("&quot;&gt;&lt;img");
+    });
 });

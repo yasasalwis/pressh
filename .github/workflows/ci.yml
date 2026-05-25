@@ -40,8 +40,9 @@ jobs:
           path: sbom.json
         if: always()
       # Lightweight secret scan — fail if obvious secrets are committed.
+      # The aws key uses a [k] character class so this pattern does not match its own definition.
       - name: Secret scan
         run: |
-          if git grep -nE 'BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|aws_secret_access_key' -- ':!*.test.ts' ':!docs/**'; then
+          if git grep -nE 'BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|aws_secret_access_[k]ey' -- ':!*.test.ts' ':!docs/**'; then
             echo "Potential secret detected"; exit 1;
           fi

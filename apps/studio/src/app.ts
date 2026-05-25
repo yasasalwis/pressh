@@ -43,6 +43,9 @@ export interface PluginControlProvider {
   /** Handler names a plugin's panel is allowed to invoke (default-deny). */
   panelActions(name: string): string[];
   invoke(name: string, action: string, payload: unknown): Promise<unknown>;
+
+  /** Designer presets contributed by enabled plugins (merged into the palette). */
+  designerPresets?(): { plugin: string; presets: unknown[] }[];
 }
 
 const SESSION_COOKIE = "pressh_session";
@@ -567,9 +570,17 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   }
 
   // Palette: primitive defs + preset templates + theme tokens for the editor.
-  app.get("/admin/api/designer/library", requireSession, (c) =>
-    c.json({ primitives: PRIMITIVE_DEFS, presets: PRESETS, themes: deps.theme.listThemes() }),
-  );
+  // Presets from ENABLED plugins are merged in, so plugin-contributed widgets
+  // (e.g. the inventory store blocks) appear only while their plugin is on.
+  app.get("/admin/api/designer/library", requireSession, (c) => {
+    const contributed = deps.pluginControl?.designerPresets?.() ?? [];
+    const pluginPresets = contributed.flatMap((p) => p.presets);
+    return c.json({
+      primitives: PRIMITIVE_DEFS,
+      presets: [...PRESETS, ...pluginPresets],
+      themes: deps.theme.listThemes(),
+    });
+  });
 
   // Whole-tree live render for the canvas (editor mode → data-nid + placeholders).
   // Read-only (no mutation) so no CSRF; output is sanitized by the renderer.

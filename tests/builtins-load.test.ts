@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createFileAuditLog, createFileSystemStorage } from "@pressh/core";
-import type { AuditLog, StorageAdapter } from "@pressh/core";
-import { PluginHost, createPluginStateStore } from "@pressh/runtime";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdtemp, readdir, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {fileURLToPath} from "node:url";
+import type {AuditLog, StorageAdapter} from "@pressh/core";
+import {createFileAuditLog, createFileSystemStorage} from "@pressh/core";
+import {createPluginStateStore, PluginHost} from "@pressh/runtime";
 
 // Exercises the REAL shipped builtins/ folder through an actual worker thread —
 // proving the manifests parse, the .mjs modules load, and the enable/disable
@@ -83,4 +83,29 @@ describe("shipped built-in plugins", () => {
     expect(host.has("inventory")).toBe(false);
     await host.stopAll();
   });
+
+    it("contributes designer presets only while the plugin is enabled", async () => {
+        const host = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: true,
+            workerScript: WORKER,
+            state: createPluginStateStore(storage),
+        });
+        await registerAll(host);
+
+        // Disabled by default → no presets surface to the studio palette.
+        expect(host.designerPresets()).toEqual([]);
+
+        await host.enable("inventory");
+        const contributed = host.designerPresets();
+        const inventory = contributed.find((p) => p.plugin === "inventory");
+        expect(inventory).toBeTruthy();
+        // ids are namespaced to the plugin to avoid clashing with built-ins.
+        expect(inventory!.presets.some((p) => p.id === "inventory:product-grid")).toBe(true);
+
+        await host.disable("inventory");
+        expect(host.designerPresets()).toEqual([]);
+        await host.stopAll();
+    });
 });

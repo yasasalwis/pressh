@@ -180,6 +180,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     disable: (name) => pluginHost.disable(name),
     panelActions: (name) => pluginHost.panelActions(name),
     invoke: (name, action, payload) => pluginHost.invoke(name, action, payload),
+    designerPresets: () => pluginHost.designerPresets(),
   };
 
   const migrationLock = createMigrationLock();
