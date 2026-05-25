@@ -1,6 +1,8 @@
+import {mkdirSync} from "node:fs";
+import {dirname} from "node:path";
 import Database from "better-sqlite3";
-import { PressError } from "@pressh/core";
-import type { Cursor, Filter, Page, Result, StorageAdapter, StoredDoc } from "@pressh/core";
+import type {Cursor, Filter, Page, Result, StorageAdapter, StoredDoc} from "@pressh/core";
+import {PressError} from "@pressh/core";
 
 /**
  * SQLite StorageAdapter — SQLite is the canonical store (not just an index).
@@ -34,6 +36,11 @@ class SqliteStorageAdapter implements StorageAdapter {
   readonly #db: DB;
 
   constructor(opts: SqliteStorageOptions) {
+      // Create the containing directory so a nested path (e.g. "db/pressh.sqlite")
+      // works; better-sqlite3 will not create missing parent directories itself.
+      if (opts.path !== ":memory:") {
+          mkdirSync(dirname(opts.path), {recursive: true});
+      }
     this.#db = new Database(opts.path);
     this.#db.pragma("busy_timeout = 5000");
     try {

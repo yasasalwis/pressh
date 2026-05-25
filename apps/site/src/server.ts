@@ -1,28 +1,30 @@
-import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { readdir } from "node:fs/promises";
-import { serve } from "@hono/node-server";
+import {dirname, join} from "node:path";
+import {fileURLToPath, pathToFileURL} from "node:url";
+import {readdir} from "node:fs/promises";
+import {serve} from "@hono/node-server";
+import type {SecretsBackend} from "@pressh/core";
 import {
-  MASTER_KEY_BYTES,
   createFileAuditLog,
   createFileSecretsBackend,
   deriveMasterKey,
   loadStorageConfig,
+  MASTER_KEY_BYTES,
   watchStorageConfig,
 } from "@pressh/core";
-import type { SecretsBackend } from "@pressh/core";
-import {
-  createContentService,
-  createGdprService,
-  createQueryResolver,
-  createThemeService,
-} from "@pressh/engine";
-import { PluginHost, createCveService, createPluginStateStore } from "@pressh/runtime";
-import { createSiteApp } from "./app.js";
-import { createRenderCache } from "./cache.js";
-import { buildStorage } from "./storage.js";
+import {createContentService, createGdprService, createQueryResolver, createThemeService,} from "@pressh/engine";
+import {createCveService, createPluginStateStore, PluginHost} from "@pressh/runtime";
+import {createSiteApp} from "./app.js";
+import {createRenderCache} from "./cache.js";
+import {buildStorage} from "./storage.js";
 
 const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
+
+/**
+ * Exit code used after a Database-Manager cutover so a supervisor restarts the
+ * Site on the new backend. `scripts/run.mjs` treats this code as "respawn me".
+ * Keep in sync with `apps/studio/src/server.ts` and `scripts/run.mjs`.
+ */
+const STORAGE_RESTART_EXIT_CODE = 75;
 
 /** Parse the operator master key (hex/base64/passphrase). Mirrors the Studio. */
 function parseMasterKey(raw: string | undefined): Buffer | null {
@@ -86,8 +88,11 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     });
   }
   const storageConfigPath = opts.storageConfigPath ?? join(opts.contentRoot, "..", "storage.json");
+    // Relative backend file paths resolve against the data directory (not cwd) so
+    // the Site opens the exact same sqlite file the Studio migrated into.
+    const dataDir = dirname(storageConfigPath);
   const persistedStorage = await loadStorageConfig(storageConfigPath);
-  const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets);
+    const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets, dataDir);
 
   const audit = await createFileAuditLog({
     path: opts.auditPath ?? join(opts.contentRoot, "..", "audit.log"),
@@ -168,8 +173,8 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
       // supervisor restarts the Site on the new backend (same as the Studio).
       watchStorageConfig(storageConfigPath, () => {
         process.stdout.write("Pressh Site: storage config changed — restarting to apply the new database.\n");
-        void server.close(() => process.exit(0));
-        setTimeout(() => process.exit(0), 3000).unref();
+          void server.close(() => process.exit(STORAGE_RESTART_EXIT_CODE));
+          setTimeout(() => process.exit(STORAGE_RESTART_EXIT_CODE), 3000).unref();
       });
     },
     cache,

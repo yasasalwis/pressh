@@ -1,5 +1,5 @@
 import {mkdir, readFile, rename, stat, writeFile} from "node:fs/promises";
-import {dirname} from "node:path";
+import {dirname, isAbsolute, join} from "node:path";
 import {PressError} from "../errors.js";
 import type {SecretsBackend} from "../secrets.js";
 import {createFileSystemStorage} from "./fs-adapter.js";
@@ -32,6 +32,19 @@ export interface PersistedStorageConfig {
 
 function isBackend(value: unknown): value is StorageBackend {
   return typeof value === "string" && (STORAGE_BACKENDS as readonly string[]).includes(value);
+}
+
+/**
+ * Resolves a backend's filesystem path against the data directory so it is
+ * identical across processes and restarts. A relative path (e.g. "db.sqlite")
+ * would otherwise resolve against each process's `cwd` — the Studio and Site run
+ * as separate processes and a supervisor may restart them from a different
+ * directory, so a relative path could silently point at different (empty) files.
+ * Absolute paths and the in-memory marker ":memory:" pass through unchanged.
+ */
+export function resolveStoragePath(baseDir: string | undefined, path: string): string {
+  if (path === ":memory:" || isAbsolute(path) || !baseDir) return path;
+  return join(baseDir, path);
 }
 
 /** Reads and validates the persisted config. Returns null when the file is absent. */
@@ -89,6 +102,8 @@ export interface ResolveStorageArgs {
   secrets?: SecretsBackend | undefined;
   /** Backend → adapter factory map (supplied by the app, which owns the drivers). */
   factories: Record<string, StorageFactory>;
+  /** Directory that relative backend file paths (e.g. sqlite `path`) resolve against. */
+  baseDir?: string | undefined;
 }
 
 /**
@@ -112,7 +127,7 @@ export async function resolveStorage(args: ResolveStorageArgs): Promise<StorageA
     }
     config["credential"] = await args.secrets.getSecret(p.credentialSecret);
   }
-  return createStorageFromConfig(config, args.factories);
+  return createStorageFromConfig(config, args.factories, args.baseDir);
 }
 
 /**

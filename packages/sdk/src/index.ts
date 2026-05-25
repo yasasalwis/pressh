@@ -33,6 +33,24 @@ export interface PluginManifest {
    * exports. Omit (or leave empty) for a display-only panel.
    */
   panelActions?: string[];
+    /**
+     * Relative path (inside the plugin folder) to a JSON file of designer presets
+     * the plugin contributes to the studio page builder. They appear in the
+     * palette ONLY while the plugin is enabled. Each preset is a
+     * `{ id, name, icon, category, description, template }` of primitive nodes.
+     */
+    designerPresets?: string;
+}
+
+/** A designer preset (component) a plugin contributes to the studio palette. */
+export interface DesignerPreset {
+    id: string;
+    name: string;
+    icon: string;
+    category: string;
+    description: string;
+    /** Tree of primitive nodes (rendered/validated by the engine). */
+    template: unknown[];
 }
 
 /** The capability-gated services a plugin handler may use. */

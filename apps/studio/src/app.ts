@@ -714,6 +714,18 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   const dbUnavailable = (c: Context<Vars>): Response =>
       c.json({error: {code: "not_found", message: "Database manager not enabled"}}, 404);
 
+  // Unlike the generic `run`, this surfaces the actual error message (not just the
+  // code) so the operator sees WHY a connection/migration failed. Safe here: the
+  // db-manager only throws curated, operator-facing PressError messages.
+  const runDb = async (c: Context<Vars>, fn: () => Promise<unknown>): Promise<Response> => {
+    try {
+      return c.json({ok: true, data: await fn()});
+    } catch (error) {
+      const {status, code} = mapError(error);
+      return c.json({error: {code, message: error instanceof PressError ? error.message : code}}, status);
+    }
+  };
+
   app.get("/admin/api/db/status", requireSession, requireCap("db.manage"), async (c) =>
       deps.dbManager ? run(c, () => deps.dbManager!.status()) : dbUnavailable(c),
   );
@@ -727,7 +739,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     const body = await c.req
         .json<{ backend?: unknown; values?: unknown }>()
         .catch(() => ({}) as { backend?: unknown; values?: unknown });
-    return run(c, () =>
+    return runDb(c, () =>
         deps.dbManager!.testConnection({
           backend: body.backend as StartMigrationInput["backend"],
           values: (body.values as Record<string, string>) ?? {},
@@ -740,7 +752,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     const body = await c.req
         .json<Partial<StartMigrationInput>>()
         .catch(() => ({}) as Partial<StartMigrationInput>);
-    return run(c, async () =>
+    return runDb(c, async () =>
         deps.dbManager!.startMigration(c.get("user").id, {
           backend: body.backend as StartMigrationInput["backend"],
           values: body.values ?? {},
@@ -752,7 +764,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.post("/admin/api/db/cleanup", requireSession, requireCsrf, requireCap("db.manage"), async (c) => {
     if (!deps.dbManager) return dbUnavailable(c);
     const body = await c.req.json<{ keep?: boolean }>().catch(() => ({}) as { keep?: boolean });
-    return run(c, () => deps.dbManager!.cleanup(c.get("user").id, {keep: body.keep === true}));
+    return runDb(c, () => deps.dbManager!.cleanup(c.get("user").id, {keep: body.keep === true}));
   });
 
   // --- audit log viewer (append-only, hash-chained) ---

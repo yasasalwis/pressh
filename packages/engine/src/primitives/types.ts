@@ -99,6 +99,9 @@ export type PrimitiveType =
   | "listItem"
   // data
   | "collectionList"
+    // commerce (contributed via a plugin's designer presets; not in the base palette)
+    | "addToCart"
+    | "commerce"
   // forms
   | "form"
   | "input"
@@ -131,6 +134,12 @@ export type CollectionItem = Record<string, unknown>;
 
 export interface CollectionQuery {
   typeSlug?: string;
+    /**
+     * Selects a non-content data source (e.g. `"inventory:products"`). The host's
+     * PrimitiveRenderContext decides what a source means; when unset, the source is
+     * the engine's published content entries.
+     */
+    source?: string;
   limit?: number;
   sortBy?: string;
   order?: "asc" | "desc";

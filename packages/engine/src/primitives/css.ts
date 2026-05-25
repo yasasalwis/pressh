@@ -8,15 +8,8 @@
  * deterministic stylesheet so the Site's hashed `style-src` CSP stays valid
  * across cache hits (no inline `style=""` attributes are ever emitted).
  */
-import { safeUrl } from "../url.js";
-import type {
-  Breakpoint,
-  PrimitiveNode,
-  PrimitiveType,
-  ResponsiveStyles,
-  StyleProps,
-  StyleState,
-} from "./types.js";
+import {safeUrl} from "../url.js";
+import type {Breakpoint, PrimitiveNode, PrimitiveType, ResponsiveStyles, StyleProps, StyleState,} from "./types.js";
 
 export const TYPE_CLASS_PREFIX = "pst-";
 export const NODE_CLASS_PREFIX = "psn-";
@@ -423,6 +416,8 @@ const BASE_CSS: Partial<Record<PrimitiveType, string>> = {
   list: "margin:0;padding-left:1.25rem;line-height:1.7",
   listItem: "margin:0",
   collectionList: "display:grid;gap:1.25rem;grid-template-columns:repeat(3,1fr)",
+  addToCart: "display:inline-flex;align-items:center;justify-content:center;gap:.4rem;padding:.7rem 1.4rem;border:0;border-radius:8px;font-weight:600;cursor:pointer",
+  commerce: "display:block;width:100%",
   form: "display:flex;flex-direction:column;gap:1rem",
   input: "display:flex;flex-direction:column;gap:.35rem",
   textarea: "display:flex;flex-direction:column;gap:.35rem",

@@ -1,18 +1,13 @@
-import { Worker } from "node:worker_threads";
-import { readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { join, resolve as resolvePath, sep } from "node:path";
-import { CapabilityGate, PressError } from "@pressh/core";
-import type { AuditLog, Logger, Result, SecretsBackend, StorageAdapter } from "@pressh/core";
-import type {
-  HostToWorker,
-  PluginManifest,
-  RpcError,
-  WorkerToHost,
-} from "@pressh/sdk";
-import type { CveChecker } from "./cve.js";
-import type { PluginStateStore } from "./plugin-state.js";
+import {Worker} from "node:worker_threads";
+import {readFile} from "node:fs/promises";
+import {createHash} from "node:crypto";
+import {fileURLToPath} from "node:url";
+import {join, resolve as resolvePath, sep} from "node:path";
+import type {AuditLog, Logger, Result, SecretsBackend, StorageAdapter} from "@pressh/core";
+import {CapabilityGate, PressError} from "@pressh/core";
+import type {DesignerPreset, HostToWorker, PluginManifest, RpcError, WorkerToHost,} from "@pressh/sdk";
+import type {CveChecker} from "./cve.js";
+import type {PluginStateStore} from "./plugin-state.js";
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 5000;
 const MANIFEST_FILE = "pressh.plugin.json";
@@ -90,6 +85,34 @@ type ServiceHandler = (manifest: PluginManifest, msg: ServiceCallMessage) => Pro
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw result.error;
   return result.value;
+}
+
+/**
+ * Validates plugin-supplied designer presets. Only the top-level shape is
+ * checked here and ids are namespaced to the plugin; the `template` nodes are
+ * validated/escaped downstream by the engine renderer (no inline style/script
+ * can survive), so a malformed node renders inert rather than dangerous.
+ */
+function sanitizePresets(plugin: string, parsed: unknown): DesignerPreset[] {
+  if (!Array.isArray(parsed)) return [];
+  const out: DesignerPreset[] = [];
+  for (const p of parsed.slice(0, 100)) {
+    if (!p || typeof p !== "object") continue;
+    const r = p as Record<string, unknown>;
+    const id = typeof r["id"] === "string" ? r["id"] : "";
+    const name = typeof r["name"] === "string" ? r["name"] : "";
+    const template = Array.isArray(r["template"]) ? r["template"] : null;
+    if (!id || !name || !template) continue;
+    out.push({
+      id: `${plugin}:${id}`,
+      name: name.slice(0, 80),
+      icon: typeof r["icon"] === "string" ? (r["icon"] as string).slice(0, 8) : "🧩",
+      category: typeof r["category"] === "string" && r["category"] ? (r["category"] as string).slice(0, 40) : "Plugin",
+      description: typeof r["description"] === "string" ? (r["description"] as string).slice(0, 200) : "",
+      template,
+    });
+  }
+  return out;
 }
 
 function isTimeout(error: unknown): boolean {
@@ -215,6 +238,8 @@ interface PluginRecord {
   builtin: boolean;
   /** Non-null only while a worker is running (i.e. the plugin is enabled). */
   instance: PluginInstance | null;
+  /** Designer presets the plugin contributes (loaded at register; may be empty). */
+  presets: DesignerPreset[];
 }
 
 export class PluginHost {
@@ -245,7 +270,13 @@ export class PluginHost {
         `Plugin "${manifest.name}@${manifest.version}" has a known vulnerability and was refused`,
       );
     }
-    const record: PluginRecord = { dir: pluginDir, manifest, builtin: opts.builtin ?? false, instance: null };
+    const record: PluginRecord = {
+      dir: pluginDir,
+      manifest,
+      builtin: opts.builtin ?? false,
+      instance: null,
+      presets: await this.#loadPresets(pluginDir, manifest),
+    };
     this.#registry.set(manifest.name, record);
     if (this.#opts.state && (await this.#opts.state.isEnabled(manifest.name))) {
       record.instance = await this.#spawn(record.dir, record.manifest);
@@ -324,6 +355,21 @@ export class PluginHost {
     return out;
   }
 
+  /**
+   * Designer presets contributed by ENABLED plugins, for the studio palette.
+   * Disabled plugins contribute nothing, so commerce/widget components appear
+   * only once their plugin is turned on.
+   */
+  designerPresets(): { plugin: string; presets: DesignerPreset[] }[] {
+    const out: { plugin: string; presets: DesignerPreset[] }[] = [];
+    for (const [, record] of this.#registry) {
+      if (record.instance && record.presets.length) {
+        out.push({ plugin: record.manifest.name, presets: record.presets });
+      }
+    }
+    return out;
+  }
+
   /** Enabled plugins that declare an admin panel, for the Studio panel list. */
   panels(): { plugin: string; title: string }[] {
     const out: { plugin: string; title: string }[] = [];
@@ -385,6 +431,17 @@ export class PluginHost {
     );
     await instance.start(resolveWithin(pluginDir, manifest.main));
     return instance;
+  }
+
+  /** Loads + sanitises a plugin's contributed designer presets (if any). */
+  async #loadPresets(dir: string, manifest: PluginManifest): Promise<DesignerPreset[]> {
+    if (!manifest.designerPresets) return [];
+    try {
+      const raw = await readFile(resolveWithin(dir, manifest.designerPresets), "utf8");
+      return sanitizePresets(manifest.name, JSON.parse(raw));
+    } catch {
+      return []; // a missing/invalid presets file must not break plugin load
+    }
   }
 
   async #readManifest(dir: string): Promise<PluginManifest> {

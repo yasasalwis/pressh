@@ -6,7 +6,13 @@ import {PressError} from "../errors.js";
 import type {SecretsBackend} from "../secrets.js";
 import type {StorageConfig, StorageFactory} from "./migrate.js";
 import type {StorageAdapter} from "./types.js";
-import {loadStorageConfig, resolveStorage, saveStorageConfig, watchStorageConfig,} from "./storage-config.js";
+import {
+    loadStorageConfig,
+    resolveStorage,
+    resolveStoragePath,
+    saveStorageConfig,
+    watchStorageConfig,
+} from "./storage-config.js";
 
 const stubAdapter = (): StorageAdapter =>
   ({
@@ -65,6 +71,34 @@ describe("storage-config", () => {
     expect(cols.ok).toBe(true);
     adapter.close();
   });
+
+    it("anchors a relative backend path to the data dir, leaving absolute/:memory: alone", () => {
+        expect(resolveStoragePath("/var/data", "db.sqlite")).toBe(join("/var/data", "db.sqlite"));
+        expect(resolveStoragePath("/var/data", "nested/db.sqlite")).toBe(join("/var/data", "nested/db.sqlite"));
+        expect(resolveStoragePath("/var/data", "/abs/db.sqlite")).toBe("/abs/db.sqlite");
+        expect(resolveStoragePath("/var/data", ":memory:")).toBe(":memory:");
+        // No baseDir → unchanged (caller opted out of anchoring).
+        expect(resolveStoragePath(undefined, "db.sqlite")).toBe("db.sqlite");
+    });
+
+    it("forwards baseDir into the factory so a relative sqlite path can be anchored", async () => {
+        let received: StorageConfig | null = null;
+        const factories: Record<string, StorageFactory> = {
+            sqlite: (c) => {
+                received = c;
+                return stubAdapter();
+            },
+        };
+        await resolveStorage({
+            persisted: {backend: "sqlite", options: {path: "db.sqlite"}},
+            contentRoot: dir,
+            baseDir: "/var/data",
+            factories,
+        });
+        expect(received).not.toBeNull();
+        expect((received as unknown as StorageConfig)["path"]).toBe("db.sqlite");
+        expect((received as unknown as StorageConfig)["baseDir"]).toBe("/var/data");
+    });
 
   it("passes non-secret options to a DB factory", async () => {
     let received: StorageConfig | null = null;

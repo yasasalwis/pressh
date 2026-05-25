@@ -1,4 +1,4 @@
-import {join} from "node:path";
+import {dirname, join} from "node:path";
 import {pathToFileURL} from "node:url";
 import {readdir} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
@@ -49,6 +49,14 @@ async function registerPluginsFrom(host: PluginHost, dir: string, builtin: boole
 }
 
 const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
+
+/**
+ * Exit code used after a Database-Manager cutover so the process supervisor
+ * restarts us on the new backend. `scripts/run.mjs` treats this code as
+ * "respawn me" rather than "tear the whole app down". Keep in sync with the
+ * matching constant in `apps/site/src/server.ts` and `scripts/run.mjs`.
+ */
+const STORAGE_RESTART_EXIT_CODE = 75;
 
 /**
  * Parse the operator master key. A 32-byte key encoded as hex (64 chars) or
@@ -105,8 +113,11 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   // Manager on cutover). Absent → the filesystem default, so a fresh install
   // needs zero configuration.
   const storageConfigPath = opts.storageConfigPath ?? join(opts.contentRoot, "..", "storage.json");
+  // Relative backend file paths (e.g. sqlite `path`) resolve against the data
+  // directory — never the process cwd — so both processes open the same file.
+  const dataDir = dirname(storageConfigPath);
   const persistedStorage = await loadStorageConfig(storageConfigPath);
-  const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets);
+  const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets, dataDir);
 
   const auditPath = opts.auditPath ?? join(opts.contentRoot, "..", "audit.log");
   const audit = await createFileAuditLog({path: auditPath});
@@ -238,8 +249,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
       // process supervisor (Docker/systemd/pm2) restarts us on the new backend.
       watchStorageConfig(storageConfigPath, () => {
         process.stdout.write("Pressh Studio: storage config changed — restarting to apply the new database.\n");
-        void server.close(() => process.exit(0));
-        setTimeout(() => process.exit(0), 3000).unref();
+        void server.close(() => process.exit(STORAGE_RESTART_EXIT_CODE));
+        setTimeout(() => process.exit(STORAGE_RESTART_EXIT_CODE), 3000).unref();
       });
     },
   };

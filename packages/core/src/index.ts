@@ -35,6 +35,7 @@ export {
   STORAGE_BACKENDS,
   loadStorageConfig,
   resolveStorage,
+    resolveStoragePath,
   saveStorageConfig,
   watchStorageConfig,
 } from "./storage/storage-config.js";

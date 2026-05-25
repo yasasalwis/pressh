@@ -10,16 +10,10 @@
  * clicks/drops to nodes) and empty containers/images get a visible placeholder.
  * Editor mode is never used by the public Site.
  */
-import { safeUrl } from "../url.js";
-import { compileTreeCss, nodeClass, typeClass } from "./css.js";
-import { renderIcon } from "./icons.js";
-import type {
-  CollectionItem,
-  CollectionQuery,
-  PrimitiveNode,
-  PrimitiveRenderContext,
-  RenderResult,
-} from "./types.js";
+import {safeUrl} from "../url.js";
+import {compileTreeCss, nodeClass, typeClass} from "./css.js";
+import {renderIcon} from "./icons.js";
+import type {CollectionItem, CollectionQuery, PrimitiveNode, PrimitiveRenderContext, RenderResult,} from "./types.js";
 
 export interface RenderOptions {
   editor?: boolean;
@@ -103,6 +97,22 @@ function emptyPlaceholder(label: string): string {
 
 const NO_CTX: PrimitiveRenderContext = { listPublished: async () => [] };
 
+/**
+ * Static fallback markup for a commerce widget. The storefront client (served
+ * from the site origin, CSP-safe) progressively enhances the `data-ps-commerce`
+ * element; with no JS the visitor still sees a sensible empty state.
+ */
+function commerceInner(view: string, node: PrimitiveNode): string {
+    if (view === "cartButton") {
+        const label = str(node.props?.["label"]) || "Cart";
+        return `<span data-ps-cart-label>${e(label)}</span> <span data-ps-cart-count>0</span>`;
+    }
+    if (view === "checkout") {
+        return `<div data-ps-checkout><p class="ps-empty">Your cart is empty.</p></div>`;
+    }
+    return `<div data-ps-cart><p class="ps-empty">Your cart is empty.</p></div>`;
+}
+
 async function renderChildren(
   node: PrimitiveNode,
   env: RenderEnv,
@@ -134,6 +144,7 @@ async function renderCollection(node: PrimitiveNode, env: RenderEnv): Promise<st
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.floor(limitRaw)), 50) : 6;
   const query: CollectionQuery = { limit };
   if (typeof props["typeSlug"] === "string" && props["typeSlug"]) query.typeSlug = props["typeSlug"];
+    if (typeof props["source"] === "string" && props["source"]) query.source = props["source"];
   if (typeof props["sortBy"] === "string" && props["sortBy"]) query.sortBy = props["sortBy"];
   if (props["order"] === "asc" || props["order"] === "desc") query.order = props["order"];
 
@@ -234,6 +245,20 @@ async function renderNode(
 
     case "collectionList":
       return renderCollection(node, env);
+
+      case "addToCart": {
+          const productId = resolveValue(node, "productId", scope);
+          const variantId = resolveValue(node, "variantId", scope);
+          const label = resolveValue(node, "label", scope) || "Add to cart";
+          const qtyRaw = Number(node.props?.["qty"] ?? 1);
+          const qty = Number.isFinite(qtyRaw) ? Math.min(Math.max(1, Math.floor(qtyRaw)), 99) : 1;
+          return `<button ${cls} type="button" data-ps-add="${e(productId)}" data-ps-variant="${e(variantId)}" data-ps-qty="${qty}">${e(label)}</button>`;
+      }
+      case "commerce": {
+          const raw = str(node.props?.["view"]);
+          const view = raw === "cartButton" || raw === "checkout" ? raw : "cart";
+          return `<div ${cls} data-ps-commerce="${view}">${commerceInner(view, node)}</div>`;
+      }
 
     case "form": {
       const action = safeUrl(resolveValue(node, "action", scope)) || "#";

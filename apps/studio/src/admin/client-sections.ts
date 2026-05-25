@@ -584,7 +584,7 @@ function dbConnectorCard(c,active){
   var blockedByVault=c.requiresVault && !DB_VAULT;
   var action='';
   if(isActive){ action='<span class="meta">In use</span>'; }
-  else if(c.backend==="fs"){ action='<span class="meta">Default store</span>'; }
+  else if(c.backend==="fs"){ action='<button class="btn-sm" onclick="dbOpenMigrate(\\'fs\\')">Switch to File</button>'; }
   else if(blockedByVault){ action='<button class="btn-sm" disabled title="Set PRESSH_MASTER_KEY first">Vault required</button>'; }
   else { action='<button class="btn-sm" onclick="dbOpenMigrate(\\''+esc(c.backend)+'\\')">Switch to this</button>'; }
   return '<div class="db-card'+(isActive?' active':'')+'">'+
@@ -721,7 +721,13 @@ async function dbCleanup(keep){
   busy("db-clean-btn",true,"Working\\u2026");
   var r=await api("/admin/api/db/cleanup",{method:"POST",body:JSON.stringify({keep:!!keep})});
   busy("db-clean-btn",false);
-  if(r.status===200){ toast(keep?"Previous store kept":"Previous store removed"); renderDatabase(); }
-  else toast("Could not complete cleanup",true);
+  if(r.status!==200){ return toast("Could not complete cleanup",true); }
+  var d=r.body.data||{};
+  if(keep){ toast("Previous store kept"); return renderDatabase(); }
+  if(d.removed){ toast("Previous store removed"); return renderDatabase(); }
+  // Refused as a safeguard (the new store could not be verified). Keep the
+  // prompt and explain why instead of silently reporting success.
+  var m=el("db-clean-msg");
+  if(m){ m.textContent=d.reason||"The previous store was kept as a safeguard."; m.style.color="#e11d48"; }
 }
 `;

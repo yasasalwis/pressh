@@ -3,7 +3,7 @@ import {access, mkdtemp, rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import type {AuditLog, StorageAdapter} from "@pressh/core";
-import {createFileAuditLog, createFileSystemStorage, loadStorageConfig} from "@pressh/core";
+import {createFileAuditLog, createFileSystemStorage, loadStorageConfig, saveStorageConfig} from "@pressh/core";
 import {createSqliteStorage} from "@pressh/adapter-sqlite";
 import type {DbManagerService} from "./db-manager";
 import {createDbManager} from "./db-manager";
@@ -123,9 +123,96 @@ describe("DbManager migration (fs → sqlite)", () => {
         expect(await loadStorageConfig(storageConfigPath)).toBeNull();
     });
 
-    it("rejects an invalid target", async () => {
+    it("rejects switching to the backend already in use", async () => {
+        // The source is the fs backend (no storage.json), so a revert to fs is a no-op.
         const mgr = makeManager();
-        expect(() => mgr.startMigration("admin", {backend: "fs", values: {}})).toThrow();
+        mgr.startMigration("admin", {backend: "fs", values: {}});
+        await mgr.whenSettled();
+        const status = mgr.migrationStatus();
+        expect(status?.phase).toBe("failed");
+        expect(status?.error).toMatch(/already using/i);
+        // Nothing changed: still on fs, content intact.
+        expect(await loadStorageConfig(storageConfigPath)).toBeNull();
+        expect(await exists(join(dir, "content"))).toBe(true);
+    });
+
+    it("anchors a relative sqlite path to the data dir (cwd-independent)", async () => {
+        const mgr = makeManager();
+        mgr.startMigration("admin", {backend: "sqlite", values: {path: "rel.sqlite"}});
+        await mgr.whenSettled();
+        expect(mgr.migrationStatus()?.phase).toBe("awaiting-restart");
+
+        // storage.json keeps the path as entered (relative), and the file was
+        // created under the data dir — NOT the process cwd.
+        const cfg = await loadStorageConfig(storageConfigPath);
+        expect(cfg?.options?.["path"]).toBe("rel.sqlite");
+        expect(await exists(join(dir, "rel.sqlite"))).toBe(true);
+
+        // A fresh adapter resolving that relative path against the data dir reads
+        // the migrated data back — the symptom that was failing before the fix.
+        const target = createSqliteStorage({path: join(dir, "rel.sqlite")});
+        const entries = await target.query("content_entries");
+        expect(entries.ok && entries.value.items.length).toBe(3);
+        target.close();
+    });
+
+    it("refuses to remove the old store when the active store is missing data", async () => {
+        const mgr = makeManager();
+        mgr.startMigration("admin", {backend: "sqlite", values: {path: join(dir, "v.sqlite")}});
+        await mgr.whenSettled();
+
+        // Simulate a botched cutover where the now-active store came up empty.
+        for (const col of ["content_entries", "users", "settings"]) {
+            const page = await source.query(col);
+            if (page.ok) for (const it of page.value.items) await source.delete(col, it.id);
+        }
+        const res = await mgr.cleanup("admin");
+        expect(res.removed).toBe(false);
+        expect(res.reason).toMatch(/expected records/i);
+        // The old store is preserved as the only surviving copy.
+        expect(await exists(join(dir, "content"))).toBe(true);
+    });
+
+    it("reverts from sqlite back to the File backend", async () => {
+        // Build a sqlite-backed install with data, then revert it to File.
+        const sqlitePath = join(dir, "live.sqlite");
+        const sqliteSource = createSqliteStorage({path: sqlitePath});
+        for (let i = 0; i < 4; i++) await sqliteSource.put("content_entries", {id: `e${i}`, slug: `p${i}`});
+        await sqliteSource.put("users", {id: "u1", email: "a@b.c"});
+        await saveStorageConfig(storageConfigPath, {backend: "sqlite", options: {path: sqlitePath}});
+
+        const revertRoot = join(dir, "reverted");
+        const mgr = createDbManager({
+            factories: STORAGE_FACTORIES,
+            storage: sqliteSource,
+            audit,
+            migrationLock: lock,
+            contentRoot: revertRoot,
+            mediaRoot: join(dir, "media"),
+            auditPath: join(dir, "audit.log"),
+            vaultPath: join(dir, "vault.json"),
+            storageConfigPath,
+            backupsDir: join(dir, "backups"),
+            maintenancePropagationMs: 0,
+        });
+
+        mgr.startMigration("admin", {backend: "fs", values: {}});
+        await mgr.whenSettled();
+        const status = mgr.migrationStatus();
+        expect(status?.phase).toBe("awaiting-restart");
+        expect(status?.error).toBeNull();
+
+        // storage.json now points at fs, and the data landed in the content root.
+        const cfg = await loadStorageConfig(storageConfigPath);
+        expect(cfg?.backend).toBe("fs");
+        const reverted = createFileSystemStorage({root: revertRoot});
+        const entries = await reverted.query("content_entries");
+        expect(entries.ok && entries.value.items.length).toBe(4);
+        reverted.close();
+
+        // The previous sqlite store is retained for rollback.
+        expect((await mgr.status()).pendingCleanup?.backend).toBe("sqlite");
+        sqliteSource.close();
     });
 
     it("tests a connection without migrating", async () => {

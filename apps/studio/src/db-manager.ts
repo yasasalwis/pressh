@@ -1,5 +1,5 @@
 import {copyFile, mkdir, readFile, rm, writeFile} from "node:fs/promises";
-import {join} from "node:path";
+import {dirname, join, resolve} from "node:path";
 import type {
   AuditLog,
   Page,
@@ -13,10 +13,12 @@ import type {
 } from "@pressh/core";
 import {
   createBackup,
+  createFileSystemStorage,
   createStorageFromConfig,
   loadStorageConfig,
   migrateStorage,
   PressError,
+  resolveStoragePath,
   saveStorageConfig,
 } from "@pressh/core";
 import type {MigrationLock} from "./migration-lock.js";
@@ -64,7 +66,7 @@ export const CONNECTORS: ConnectorInfo[] = [
       {
         key: "path",
         label: "Database file path",
-        placeholder: "/data/pressh.sqlite",
+        placeholder: "pressh.sqlite (relative paths are stored in the data directory)",
         secret: false,
         required: true,
         target: "option",
@@ -135,6 +137,20 @@ function connector(backend: StorageBackend): ConnectorInfo {
   return found;
 }
 
+/** Turns a raw driver open/connect failure into an actionable operator message. */
+function connectionErrorMessage(backend: StorageBackend, resolvedPath: string | null, cause: unknown): string {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  if (backend === "sqlite") {
+    return (
+        `Could not open the SQLite database${resolvedPath ? ` at "${resolvedPath}"` : ""}. ` +
+        `Make sure the location is writable — a relative path like "pressh.sqlite" is saved inside the data directory, ` +
+        `while a path like "/pressh.sqlite" points at the filesystem root, which is usually not writable. (${reason})`
+    );
+  }
+  const label = CONNECTORS.find((c) => c.backend === backend)?.label ?? backend;
+  return `Could not connect to ${label}. Check the connection details and that the server is reachable. (${reason})`;
+}
+
 export type MigrationPhase =
   | "idle"
   | "testing"
@@ -166,6 +182,9 @@ interface PreviousStoreMarker {
   backupPath: string | null;
   autoRemove: boolean;
   completedAt: string;
+  /** Records copied during the migration; cleanup verifies the new store holds at
+   *  least this many before destroying the old one. */
+  expectedRecords: number;
 }
 
 export interface DbStatus {
@@ -191,7 +210,7 @@ export interface DbManagerService {
   startMigration(actorId: string, input: StartMigrationInput): MigrationRunView;
   migrationStatus(): MigrationRunView | null;
 
-  cleanup(actorId: string, options?: { keep?: boolean }): Promise<{ removed: boolean }>;
+  cleanup(actorId: string, options?: { keep?: boolean }): Promise<{ removed: boolean; reason?: string }>;
   /** Resolves when the in-flight migration settles (test helper; no-op when idle). */
   whenSettled(): Promise<void>;
 }
@@ -280,6 +299,9 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
   const previousMarkerPath = `${opts.storageConfigPath}.previous`;
   const propagationMs = opts.maintenancePropagationMs ?? 3500;
   const now = opts.now ?? (() => Date.now());
+  // Relative backend file paths (sqlite `path`) resolve against the data dir, so
+  // the migration target and every later process boot open the SAME file.
+  const dataDir = dirname(opts.storageConfigPath);
 
   let current: MigrationRunView | null = null;
   let runPromise: Promise<void> = Promise.resolve();
@@ -296,7 +318,7 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
   };
 
   const build = (config: StorageConfig): Promise<StorageAdapter> =>
-    Promise.resolve(createStorageFromConfig(config, opts.factories));
+      Promise.resolve(createStorageFromConfig(config, opts.factories, dataDir));
 
   // Reads/writes the maintenance flag on a specific store (source before the
   // copy; target after, to clear the flag that copied across as `true`).
@@ -349,15 +371,40 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
     let target: StorageAdapter | null = null;
     let maintenanceEngaged = false;
     try {
+      if (from.backend === input.backend) {
+        throw new PressError("conflict", `Pressh is already using the ${input.backend} backend`);
+      }
       const { config, credential, options } = toStorageConfig(input.backend, input.values);
       const info = connector(input.backend);
       if (info.requiresVault && !opts.secrets) {
         throw new PressError("validation", "Secrets vault is not configured (set PRESSH_MASTER_KEY) to store database credentials");
       }
 
+      // Reverting to File: copy into the standard content root, or — if a
+      // previous file store was retained there — a fresh timestamped root, so the
+      // revert never clobbers existing files. The chosen root is persisted only
+      // when it differs from the server's default, as an absolute (cwd-safe) path.
+      let persistOptions: Record<string, unknown> = options;
+      if (input.backend === "fs") {
+        let fsRoot = opts.contentRoot;
+        const probe = createFileSystemStorage({root: fsRoot});
+        const probeCols = await probe.listCollections();
+        probe.close();
+        if (probeCols.ok && probeCols.value.length > 0) {
+          fsRoot = join(dataDir, `content-${now()}`);
+          persistOptions = {...options, root: resolve(fsRoot)};
+        }
+        config.root = fsRoot;
+      }
+
       // 1) Test the target + ensure it is empty (never clobber an in-use DB).
       setRun({ phase: "testing" });
-      target = await build(config);
+      try {
+        target = await build(config);
+      } catch (e) {
+        const resolved = input.backend === "sqlite" ? resolveStoragePath(dataDir, String(options["path"] ?? "")) : null;
+        throw new PressError("validation", connectionErrorMessage(input.backend, resolved, e));
+      }
       const existing = await target.listCollections();
       if (!existing.ok) throw existing.error;
       if (existing.value.length > 0) {
@@ -405,7 +452,7 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
       await setMaintenance(target, false);
       const newConfig: PersistedStorageConfig = {
         backend: input.backend,
-        ...(Object.keys(options).length ? { options } : {}),
+        ...(Object.keys(persistOptions).length ? {options: persistOptions} : {}),
         ...(credentialSecret ? { credentialSecret } : {}),
         updatedAt: new Date(now()).toISOString(),
       };
@@ -414,6 +461,7 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
         backupPath,
         autoRemove: removeOld,
         completedAt: new Date(now()).toISOString(),
+        expectedRecords: copied.value.records,
       };
       await writeFile(previousMarkerPath, JSON.stringify(marker, null, 2), { mode: 0o600 });
       target.close();
@@ -460,11 +508,17 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
       if (info.requiresVault && !opts.secrets) {
         throw new PressError("validation", "Secrets vault is not configured (set PRESSH_MASTER_KEY) to store database credentials");
       }
-      const { config } = toStorageConfig(input.backend, input.values);
-      const adapter = await build(config);
+      const {config, options} = toStorageConfig(input.backend, input.values);
+      const resolved = input.backend === "sqlite" ? resolveStoragePath(dataDir, String(options["path"] ?? "")) : null;
+      let adapter: StorageAdapter;
+      try {
+        adapter = await build(config);
+      } catch (e) {
+        throw new PressError("validation", connectionErrorMessage(input.backend, resolved, e));
+      }
       try {
         const probe = await adapter.listCollections();
-        if (!probe.ok) throw probe.error;
+        if (!probe.ok) throw new PressError("validation", connectionErrorMessage(input.backend, resolved, probe.error));
         return { ok: true };
       } finally {
         adapter.close();
@@ -475,12 +529,9 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
       if (current && (current.phase !== "done" && current.phase !== "failed" && current.phase !== "awaiting-restart")) {
         throw new PressError("conflict", "A migration is already in progress");
       }
-      // Validates the backend exists; migrating back to the file store is out of
-      // scope (its target root would collide with the source content dir).
+      // Validate the backend exists. Same-backend rejection and (for File) the
+      // empty-target check happen in the async run once `from` is resolved.
       connector(input.backend);
-      if (input.backend === "fs") {
-        throw new PressError("validation", "Switching back to the file backend is not supported");
-      }
       current = {
         id: `mig-${now()}`,
         from: "fs",
@@ -510,6 +561,27 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
       if (options?.keep) {
         await rm(previousMarkerPath, {force: true});
         return {removed: false};
+      }
+      // Never destroy the old store until the now-active store is proven to hold
+      // the migrated data. `opts.storage` is the backend this (post-restart)
+      // process booted on — i.e. the new one. A botched cutover (e.g. the new
+      // store came up empty) must not delete the only surviving copy.
+      const expected = marker.expectedRecords ?? 0;
+      if (expected > 0) {
+        let liveTotal = 0;
+        try {
+          for (const n of (await countByCollection(opts.storage)).values()) liveTotal += n;
+        } catch {
+          liveTotal = 0;
+        }
+        if (liveTotal < expected) {
+          return {
+            removed: false,
+            reason:
+                `The active database holds ${liveTotal} of ${expected} expected records — keeping the previous store as a safeguard. ` +
+                `Make sure Pressh has restarted on the new backend, then try removing it again.`,
+          };
+        }
       }
       const from = marker.config;
       if (from.backend === "fs") {

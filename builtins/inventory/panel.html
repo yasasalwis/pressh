@@ -1,102 +1,1462 @@
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; color: #1f2937; background: #fff; }
-  @media (prefers-color-scheme: dark) { body { color: #e5e7eb; background: #0b1220; } th,td { border-color:#1f2a44 !important; } input,textarea { background:#0b1220; color:#e5e7eb; border-color:#1f2a44; } }
-  h2 { font-size: 16px; margin: 0 0 12px; }
-  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
-  label { display: block; font-size: 12px; color: #6b7280; margin: 8px 0 2px; }
-  input, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; color: inherit; background: #fff; }
-  .grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 8px; }
+    :root {
+        color-scheme: light dark;
+        --bd: #e5e7eb;
+        --mut: #6b7280;
+        --pri: #2563eb;
+        --bg: #fff;
+        --fg: #1f2937;
+        --soft: #f8fafc;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bd: #1f2a44;
+            --mut: #94a3b8;
+            --bg: #0b1220;
+            --fg: #e5e7eb;
+            --soft: #0f1730;
+        }
+
+        input, textarea, select {
+            background: #0b1220 !important;
+            color: #e5e7eb !important;
+        }
+    }
+
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        font: 14px/1.5 system-ui, sans-serif;
+        margin: 0;
+        padding: 0;
+        color: var(--fg);
+        background: var(--bg);
+    }
+
+    .wrap {
+        padding: 16px;
+        max-width: 1100px;
+        margin: 0 auto;
+    }
+
+    h2 {
+        font-size: 17px;
+        margin: 0 0 4px;
+    }
+
+    h3 {
+        font-size: 14px;
+        margin: 0 0 10px;
+    }
+
+    .sub {
+        color: var(--mut);
+        margin: 0 0 16px;
+        font-size: 12.5px;
+    }
+
+    .tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--bd);
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+    }
+
+    .tab {
+        padding: 8px 14px;
+        border: none;
+        background: none;
+        color: var(--mut);
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+    }
+
+    .tab.active {
+        color: var(--pri);
+        border-bottom-color: var(--pri);
+    }
+
+    .card {
+        border: 1px solid var(--bd);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: var(--bg);
+    }
+
+    label {
+        display: block;
+        font-size: 12px;
+        color: var(--mut);
+        margin: 10px 0 2px;
+        font-weight: 600;
+    }
+
+    input, textarea, select {
+        width: 100%;
+        font: inherit;
+        padding: 7px 9px;
+        border: 1px solid var(--bd);
+        border-radius: 7px;
+        color: inherit;
+        background: var(--bg);
+    }
+
+    input[type=checkbox] {
+        width: auto;
+    }
+
+    .grid {
+        display: grid;
+        gap: 10px;
+    }
+
+    .g2 {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .g3 {
+        grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .g4 {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    @media (max-width: 640px) {
+        .g2, .g3, .g4 {
+            grid-template-columns: 1fr;
+        }
+    }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; background: #f8fafc; color: inherit; cursor: pointer; }
-  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
-  button.danger { color: #dc2626; }
+
+    .between {
+        justify-content: space-between;
+    }
+
+    button.btn {
+        font: inherit;
+        padding: 7px 13px;
+        border-radius: 7px;
+        border: 1px solid var(--bd);
+        background: var(--soft);
+        color: inherit;
+        cursor: pointer;
+        font-weight: 600;
+    }
+
+    button.btn:hover {
+        border-color: var(--pri);
+    }
+
+    button.primary {
+        background: var(--pri);
+        color: #fff;
+        border-color: var(--pri);
+    }
+
+    button.danger {
+        color: #dc2626;
+        border-color: #dc262633;
+    }
+
+    button.link {
+        background: none;
+        border: none;
+        color: var(--pri);
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        padding: 4px;
+    }
+
+    button.mini {
+        padding: 3px 8px;
+        font-size: 12px;
+    }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
-  .muted { color: #6b7280; }
+
+    th, td {
+        text-align: left;
+        padding: 7px 8px;
+        border-bottom: 1px solid var(--bd);
+        vertical-align: middle;
+    }
+
+    th {
+        color: var(--mut);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .num {
+        text-align: right;
+    }
+
+    .muted {
+        color: var(--mut);
+    }
   .err { color: #dc2626; }
-  .tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #16a34a22; color: #16a34a; }
+
+    .ok {
+        color: #16a34a;
+    }
+
+    .tag {
+        font-size: 11px;
+        padding: 1px 7px;
+        border-radius: 10px;
+        background: #16a34a22;
+        color: #16a34a;
+        font-weight: 600;
+    }
   .tag.off { background: #64748b22; color: #64748b; }
-  .num { text-align: right; }
+
+    .tag.low {
+        background: #f59e0b22;
+        color: #b45309;
+    }
+
+    .pill {
+        display: inline-block;
+        font-size: 11px;
+        padding: 1px 7px;
+        border: 1px solid var(--bd);
+        border-radius: 10px;
+        margin: 2px 2px 0 0;
+    }
+
+    .thumb {
+        width: 40px;
+        height: 40px;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid var(--bd);
+        background: var(--soft);
+    }
+
+    .hide {
+        display: none !important;
+    }
+
+    .right {
+        text-align: right;
+    }
+
+    .imgrow {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+
+    .msg {
+        font-size: 12.5px;
+        min-height: 18px;
+    }
+
+    .empty {
+        color: var(--mut);
+        padding: 24px;
+        text-align: center;
+        border: 1px dashed var(--bd);
+        border-radius: 10px;
+    }
 </style>
 
-<h2>Inventory</h2>
+<div class="wrap">
+    <h2>Inventory &amp; Store</h2>
+    <p class="sub">Manage your product catalog, variants, categories, stock and store settings.</p>
 
-<div class="card">
-  <strong id="formTitle">Add item</strong>
-  <input type="hidden" id="id">
-  <div class="grid">
-    <div><label>Name *</label><input id="name"></div>
-    <div><label>SKU</label><input id="sku"></div>
-    <div><label>Price</label><input id="price" type="number" min="0" step="0.01" value="0"></div>
-    <div><label>Stock</label><input id="stock" type="number" min="0" step="1" value="0"></div>
-  </div>
-  <label>Description</label><textarea id="description" rows="2"></textarea>
-  <label class="row" style="margin-top:8px"><input type="checkbox" id="published" style="width:auto"> Published (visible on the storefront)</label>
-  <div class="row" style="margin-top:10px">
-    <button class="primary" id="saveBtn" onclick="save()">Save item</button>
-    <button onclick="resetForm()">Clear</button>
-    <span id="msg" class="muted"></span>
-  </div>
+    <div class="tabs">
+        <button class="tab active" data-tab="dashboard">Dashboard</button>
+        <button class="tab" data-tab="products">Products</button>
+        <button class="tab" data-tab="categories">Categories</button>
+        <button class="tab" data-tab="stock">Stock</button>
+        <button class="tab" data-tab="orders">Orders</button>
+        <button class="tab" data-tab="returns">Returns</button>
+        <button class="tab" data-tab="payments">Payments</button>
+        <button class="tab" data-tab="settings">Settings</button>
+    </div>
+
+    <!-- ── Dashboard ────────────────────────────────────────────────────── -->
+    <section id="tab-dashboard">
+        <div id="dashBody"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- ── Products ─────────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-products">
+        <div id="prodList">
+            <div class="row between" style="margin-bottom:12px">
+                <strong>Products</strong>
+                <button class="btn primary" id="newProductBtn">+ New product</button>
+            </div>
+            <div id="prodTable"><p class="muted">Loading…</p></div>
+        </div>
+
+        <div class="hide" id="prodEditor">
+            <div class="row between" style="margin-bottom:12px">
+                <strong id="prodEditTitle">New product</strong>
+                <button class="btn" id="prodBack">← Back to list</button>
+            </div>
+            <div class="card">
+                <input id="p_id" type="hidden">
+                <div class="grid g2">
+                    <div><label>Name *</label><input id="p_name"></div>
+                    <div><label>Slug (URL)</label><input id="p_slug" placeholder="auto from name"></div>
+                </div>
+                <div class="grid g3">
+                    <div><label>SKU</label><input id="p_sku"></div>
+                    <div><label>Base price</label><input id="p_price" min="0" step="0.01" type="number" value="0"></div>
+                    <div><label>Compare-at price</label><input id="p_compare" min="0" placeholder="optional" step="0.01"
+                                                               type="number"></div>
+                </div>
+                <div class="grid g3">
+                    <div><label>Currency</label><input id="p_currency" maxlength="8"></div>
+                    <div><label>Category</label><select id="p_category"></select></div>
+                    <div><label>Default low-stock alert</label><input id="p_lowstock" min="0" placeholder="store default" step="1"
+                                                                      type="number"></div>
+                </div>
+                <label>Description</label><textarea id="p_description" rows="3"></textarea>
+                <label>Tags (comma separated)</label><input id="p_tags" placeholder="sale, featured">
+
+                <label>Images (https URLs)</label>
+                <div id="p_images"></div>
+                <button class="btn mini" id="addImageBtn" type="button">+ Add image URL</button>
+
+                <h3 style="margin-top:18px">Options &amp; variants</h3>
+                <p class="muted" style="font-size:12px;margin:0 0 8px">Add option axes (e.g. Size, Colour), then
+                    generate the variant combinations. Leave empty for a single-variant product.</p>
+                <div id="p_options"></div>
+                <div class="row" style="margin:6px 0 12px">
+                    <button class="btn mini" id="addOptionBtn" type="button">+ Add option</button>
+                    <button class="btn mini" id="genVariantsBtn" type="button">↻ Generate variants</button>
+                </div>
+                <div id="p_variants"></div>
+
+                <details style="margin-top:14px">
+                    <summary class="muted" style="cursor:pointer">SEO (optional)</summary>
+                    <label>SEO title</label><input id="p_seoTitle">
+                    <label>SEO description</label><textarea id="p_seoDescription" rows="2"></textarea>
+                </details>
+
+                <label class="row" style="margin-top:12px"><input id="p_published" type="checkbox"> &nbsp;Published
+                    (visible on the storefront)</label>
+
+                <div class="row" style="margin-top:14px">
+                    <button class="btn primary" id="saveProductBtn">Save product</button>
+                    <button class="btn danger hide" id="deleteProductBtn">Delete</button>
+                    <span class="msg muted" id="prodMsg"></span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Categories ───────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-categories">
+        <div class="card">
+            <strong id="catFormTitle">New category</strong>
+            <input id="c_id" type="hidden">
+            <div class="grid g2">
+                <div><label>Name *</label><input id="c_name"></div>
+                <div><label>Slug</label><input id="c_slug" placeholder="auto from name"></div>
+            </div>
+            <div class="grid g2">
+                <div><label>Parent category</label><select id="c_parent"></select></div>
+                <div><label>Description</label><input id="c_description"></div>
+            </div>
+            <div class="row" style="margin-top:12px">
+                <button class="btn primary" id="saveCatBtn">Save category</button>
+                <button class="btn" id="resetCatBtn">Clear</button>
+                <span class="msg muted" id="catMsg"></span>
+            </div>
+        </div>
+        <div id="catTable"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- ── Stock ────────────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-stock">
+        <div class="card">
+            <label>Product</label>
+            <select id="s_product">
+                <option value="">— Select a product —</option>
+            </select>
+            <div id="s_variants" style="margin-top:12px"></div>
+        </div>
+        <div class="card hide" id="s_adjustCard">
+            <strong>Adjust stock</strong>
+            <div class="grid g4" style="margin-top:8px">
+                <div><label>Variant</label><select id="s_variant"></select></div>
+                <div><label>Action</label>
+                    <select id="s_mode">
+                        <option value="receive">Receive (+)</option>
+                        <option value="remove">Remove (−)</option>
+                        <option value="set">Set exact level</option>
+                    </select>
+                </div>
+                <div><label>Amount</label><input id="s_amount" min="0" step="1" type="number" value="0"></div>
+                <div><label>Reason</label><input id="s_reason" placeholder="e.g. restock"></div>
+            </div>
+            <div class="row" style="margin-top:12px">
+                <button class="btn primary" id="adjustBtn">Apply adjustment</button>
+                <span class="msg muted" id="stockMsg"></span>
+            </div>
+        </div>
+        <div class="card">
+            <strong>Stock movements</strong>
+            <div id="movTable" style="margin-top:8px"><p class="muted">Select a product to see its ledger.</p></div>
+        </div>
+    </section>
+
+    <!-- ── Settings ─────────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-settings">
+        <div class="card">
+            <strong>Store settings</strong>
+            <div class="grid g2" style="margin-top:8px">
+                <div><label>Store name</label><input id="set_storeName"></div>
+                <div><label>Default low-stock alert</label><input id="set_lowStockThreshold" min="0" step="1"
+                                                                  type="number"></div>
+            </div>
+            <div class="grid g4">
+                <div><label>Currency code</label><input id="set_currency" maxlength="8"></div>
+                <div><label>Currency symbol</label><input id="set_currencySymbol" maxlength="4"></div>
+                <div><label>Tax rate (%)</label><input id="set_taxRate" max="100" min="0" step="0.01" type="number">
+                </div>
+                <div><label>Flat shipping</label><input id="set_shippingFlat" min="0" step="0.01" type="number"></div>
+            </div>
+            <div class="row" style="margin-top:12px">
+                <button class="btn primary" id="saveSettingsBtn">Save settings</button>
+                <span class="msg muted" id="setMsg"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Orders ───────────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-orders">
+        <div id="orderList">
+            <div class="row" style="margin-bottom:12px; gap:8px">
+                <select id="o_status" style="max-width:180px">
+                    <option value="">All statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="paid">Paid</option>
+                    <option value="fulfilled">Fulfilled</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="refunded">Refunded</option>
+                </select>
+                <input id="o_search" placeholder="Search order # or customer" style="max-width:260px">
+            </div>
+            <div id="orderTable"><p class="muted">Loading…</p></div>
+        </div>
+        <div class="hide" id="orderDetail"></div>
+    </section>
+
+    <!-- ── Returns ──────────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-returns">
+        <div class="row" style="margin-bottom:12px">
+            <select id="r_status" style="max-width:200px">
+                <option value="">All statuses</option>
+                <option value="requested">Requested</option>
+                <option value="approved">Approved</option>
+                <option value="received">Received</option>
+                <option value="refunded">Refunded</option>
+                <option value="rejected">Rejected</option>
+            </select>
+        </div>
+        <div id="returnTable"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- ── Payments ─────────────────────────────────────────────────────── -->
+    <section class="hide" id="tab-payments">
+        <p class="sub">Every payment and refund recorded against an order.</p>
+        <div id="paymentTable"><p class="muted">Loading…</p></div>
+    </section>
 </div>
 
-<div id="list"><p class="muted">Loading…</p></div>
-
 <script>
-  function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+    (function () {
+        "use strict";
+        var P = window.presshPanel;
   function $(id) { return document.getElementById(id); }
-  function msg(t, isErr) { var e = $("msg"); e.textContent = t || ""; e.className = isErr ? "err" : "muted"; }
 
-  function resetForm() {
-    $("id").value = ""; $("name").value = ""; $("sku").value = "";
-    $("price").value = "0"; $("stock").value = "0"; $("description").value = "";
-    $("published").checked = false; $("formTitle").textContent = "Add item"; msg("");
+        function esc(s) {
+            return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        }
+
+        function req(action, payload) {
+            return P.request(action, payload || {});
+        }
+
+        function setMsg(el, text, cls) {
+            var e = $(el);
+            e.textContent = text || "";
+            e.className = "msg " + (cls || "muted");
+        }
+
+        // shared state
+        var S = {settings: null, categories: [], items: [], editVariants: [], editOptions: [], editImages: []};
+
+        function sym() {
+            return (S.settings && S.settings.currencySymbol) || "$";
+        }
+
+        function money(n) {
+            var v = Number(n);
+            return sym() + (Number.isFinite(v) ? v.toFixed(2) : "0.00");
+        }
+
+        function catName(id) {
+            var c = S.categories.find(function (x) {
+                return x.id === id;
+            });
+            return c ? c.name : (id ? "—" : "");
+        }
+
+        // ── tabs ──
+        var tabs = document.querySelectorAll(".tab");
+        tabs.forEach(function (t) {
+            t.addEventListener("click", function () {
+                tabs.forEach(function (x) {
+                    x.classList.remove("active");
+                });
+                t.classList.add("active");
+                var tab = t.dataset.tab;
+                ["dashboard", "products", "categories", "stock", "orders", "returns", "payments", "settings"].forEach(function (name) {
+                    $("tab-" + name).classList.toggle("hide", name !== tab);
+                });
+                if (tab === "dashboard") loadDashboard();
+                if (tab === "products") loadProducts();
+                if (tab === "categories") loadCategories();
+                if (tab === "stock") loadStockProducts();
+                if (tab === "orders") {
+                    showOrderList();
+                    loadOrders();
+                }
+                if (tab === "returns") loadReturns();
+                if (tab === "payments") loadPayments();
+                if (tab === "settings") loadSettings();
+            });
+        });
+
+        // ───────────────────────── Products list ─────────────────────────
+        async function loadProducts() {
+            var box = $("prodTable");
+            try {
+                var r = await req("listItems");
+                S.items = (r && r.items) || [];
+                if (!S.items.length) {
+                    box.innerHTML = '<div class="empty">No products yet. Click “New product” to add one.</div>';
+                    return;
+                }
+                var rows = S.items.map(function (it) {
+                    var status = it.published ? '<span class="tag">Published</span>' : '<span class="tag off">Draft</span>';
+                    var low = it.lowStock ? ' <span class="tag low">Low</span>' : "";
+                    var img = it.image || (it.images && it.images[0]) || "";
+                    var thumb = img ? '<img class="thumb" src="' + esc(img) + '" alt="">' : '<div class="thumb"></div>';
+                    var price = it.priceMin != null && it.priceMax != null && it.priceMin !== it.priceMax
+                        ? money(it.priceMin) + "–" + money(it.priceMax) : money(it.price != null ? it.price : it.priceMin);
+                    return '<tr>' +
+                        '<td>' + thumb + '</td>' +
+                        '<td><b>' + esc(it.name) + '</b><br><span class="muted">' + esc(it.slug || "") + '</span></td>' +
+                        '<td>' + esc(catName(it.categoryId)) + '</td>' +
+                        '<td class="num">' + price + '</td>' +
+                        '<td class="num">' + (it.totalStock != null ? it.totalStock : 0) + low + '</td>' +
+                        '<td>' + status + '</td>' +
+                        '<td class="right"><button class="btn mini editP" data-id="' + esc(it.id) + '">Edit</button></td>' +
+                        '</tr>';
+                }).join("");
+                box.innerHTML = '<table><thead><tr><th></th><th>Name</th><th>Category</th><th class="num">Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+                box.querySelectorAll(".editP").forEach(function (b) {
+                    b.addEventListener("click", function () {
+                        openEditor(b.dataset.id);
+                    });
+                });
+            } catch (e) {
+                box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+            }
   }
 
-  function edit(it) {
-    $("id").value = it.id; $("name").value = it.name || ""; $("sku").value = it.sku || "";
-    $("price").value = it.price || 0; $("stock").value = it.stock || 0;
-    $("description").value = it.description || ""; $("published").checked = !!it.published;
-    $("formTitle").textContent = "Edit item"; window.scrollTo(0, 0); msg("Editing " + (it.name || ""));
+        function showList() {
+            $("prodList").classList.remove("hide");
+            $("prodEditor").classList.add("hide");
+        }
+
+        function showEditor() {
+            $("prodList").classList.add("hide");
+            $("prodEditor").classList.remove("hide");
+        }
+
+        $("prodBack").addEventListener("click", showList);
+        $("newProductBtn").addEventListener("click", function () {
+            openEditor(null);
+        });
+
+        // ── product editor ──
+        function fillCategorySelect(sel, selected, includeNone) {
+            var opts = (includeNone ? '<option value="">— Uncategorized —</option>' : "");
+            opts += S.categories.map(function (c) {
+                return '<option value="' + esc(c.id) + '"' + (c.id === selected ? " selected" : "") + '>' + esc(c.name) + '</option>';
+            }).join("");
+            sel.innerHTML = opts;
   }
 
-  async function save() {
+        function renderImages() {
+            var box = $("p_images");
+            box.innerHTML = S.editImages.map(function (url, i) {
+                var prev = url ? '<img class="thumb" src="' + esc(url) + '" alt="">' : '<div class="thumb"></div>';
+                return '<div class="imgrow">' + prev +
+                    '<input data-i="' + i + '" class="imgUrl" value="' + esc(url) + '" placeholder="https://…">' +
+                    '<button class="btn mini danger rmImg" data-i="' + i + '" type="button">×</button></div>';
+            }).join("");
+            box.querySelectorAll(".imgUrl").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editImages[Number(inp.dataset.i)] = inp.value;
+                });
+                inp.addEventListener("change", renderImages);
+            });
+            box.querySelectorAll(".rmImg").forEach(function (b) {
+                b.addEventListener("click", function () {
+                    S.editImages.splice(Number(b.dataset.i), 1);
+                    renderImages();
+                });
+            });
+        }
+
+        $("addImageBtn").addEventListener("click", function () {
+            S.editImages.push("");
+            renderImages();
+        });
+
+        function renderOptions() {
+            var box = $("p_options");
+            box.innerHTML = S.editOptions.map(function (o, i) {
+                return '<div class="grid g2" style="margin-bottom:6px">' +
+                    '<input data-i="' + i + '" class="optName" value="' + esc(o.name) + '" placeholder="Option name (e.g. Size)">' +
+                    '<div class="row"><input data-i="' + i + '" class="optVals" value="' + esc((o.values || []).join(", ")) + '" placeholder="Values, comma separated">' +
+                    '<button class="btn mini danger rmOpt" data-i="' + i + '" type="button">×</button></div></div>';
+            }).join("");
+            box.querySelectorAll(".optName").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editOptions[Number(inp.dataset.i)].name = inp.value;
+                });
+            });
+            box.querySelectorAll(".optVals").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editOptions[Number(inp.dataset.i)].values = inp.value.split(",").map(function (s) {
+                        return s.trim();
+                    }).filter(Boolean);
+                });
+            });
+            box.querySelectorAll(".rmOpt").forEach(function (b) {
+                b.addEventListener("click", function () {
+                    S.editOptions.splice(Number(b.dataset.i), 1);
+                    renderOptions();
+                });
+            });
+        }
+
+        $("addOptionBtn").addEventListener("click", function () {
+            S.editOptions.push({name: "", values: []});
+            renderOptions();
+        });
+
+        function variantLabel(ov) {
+            var p = Object.keys(ov || {}).map(function (k) {
+                return ov[k];
+            }).filter(Boolean);
+            return p.length ? p.join(" / ") : "Default";
+        }
+
+        function cartesian(opts) {
+            var acc = [{}];
+            opts.forEach(function (o) {
+                var next = [];
+                acc.forEach(function (combo) {
+                    (o.values || []).forEach(function (v) {
+                        var c = Object.assign({}, combo);
+                        c[o.name] = v;
+                        next.push(c);
+                    });
+                });
+                if (next.length) acc = next;
+            });
+            return acc;
+        }
+
+        function genVariants() {
+            var opts = S.editOptions.filter(function (o) {
+                return o.name && (o.values || []).length;
+            });
+            var combos = opts.length ? cartesian(opts) : [{}];
+            var prev = S.editVariants.slice();
+            S.editVariants = combos.map(function (ov) {
+                var label = variantLabel(ov);
+                var match = prev.find(function (v) {
+                    return variantLabel(v.optionValues) === label;
+                });
+                return match
+                    ? Object.assign({}, match, {optionValues: ov, label: label})
+                    : {optionValues: ov, label: label, sku: "", price: "", stock: 0, lowStockThreshold: ""};
+            });
+            renderVariants();
+        }
+
+        $("genVariantsBtn").addEventListener("click", genVariants);
+
+        function renderVariants() {
+            var box = $("p_variants");
+            if (!S.editVariants.length) {
+                box.innerHTML = '<p class="muted">No variants yet — click “Generate variants”.</p>';
+                return;
+            }
+            var rows = S.editVariants.map(function (v, i) {
+                var stockCell = v._existing
+                    ? '<td class="num">' + (Number(v.stock) || 0) + ' <span class="muted" title="Manage in the Stock tab">🔒</span></td>'
+                    : '<td class="num"><input data-i="' + i + '" class="vStock" type="number" min="0" step="1" value="' + (Number(v.stock) || 0) + '" style="width:80px"></td>';
+                return '<tr>' +
+                    '<td><b>' + esc(v.label || variantLabel(v.optionValues)) + '</b></td>' +
+                    '<td><input data-i="' + i + '" class="vSku" value="' + esc(v.sku || "") + '" placeholder="SKU" style="width:120px"></td>' +
+                    '<td><input data-i="' + i + '" class="vPrice" type="number" min="0" step="0.01" value="' + (v.price === "" || v.price == null ? "" : v.price) + '" placeholder="base" style="width:90px"></td>' +
+                    stockCell +
+                    '<td><input data-i="' + i + '" class="vLow" type="number" min="0" step="1" value="' + (v.lowStockThreshold === "" || v.lowStockThreshold == null ? "" : v.lowStockThreshold) + '" placeholder="default" style="width:80px"></td>' +
+                    '</tr>';
+            }).join("");
+            box.innerHTML = '<table><thead><tr><th>Variant</th><th>SKU</th><th>Price</th><th class="num">Stock</th><th>Low alert</th></tr></thead><tbody>' + rows + '</tbody></table>';
+            box.querySelectorAll(".vSku").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editVariants[Number(inp.dataset.i)].sku = inp.value;
+                });
+            });
+            box.querySelectorAll(".vPrice").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editVariants[Number(inp.dataset.i)].price = inp.value;
+                });
+            });
+            box.querySelectorAll(".vStock").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editVariants[Number(inp.dataset.i)].stock = inp.value;
+                });
+            });
+            box.querySelectorAll(".vLow").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    S.editVariants[Number(inp.dataset.i)].lowStockThreshold = inp.value;
+                });
+            });
+        }
+
+        async function openEditor(id) {
+            showEditor();
+            setMsg("prodMsg", "");
+            fillCategorySelect($("p_category"), "", true);
+            var item = null;
+            if (id) {
+                try {
+                    var r = await req("getItem", {id: id});
+                    item = r && r.item;
+                } catch (e) {
+                    setMsg("prodMsg", e.message, "err");
+                }
+            }
+            $("prodEditTitle").textContent = item ? "Edit product" : "New product";
+            $("deleteProductBtn").classList.toggle("hide", !item);
+            $("p_id").value = item ? item.id : "";
+            $("p_name").value = item ? item.name || "" : "";
+            $("p_slug").value = item ? item.slug || "" : "";
+            $("p_sku").value = item ? item.sku || "" : "";
+            $("p_price").value = item ? (item.price != null ? item.price : 0) : 0;
+            $("p_compare").value = item && item.compareAtPrice != null ? item.compareAtPrice : "";
+            $("p_currency").value = item ? item.currency || sym() : (S.settings ? S.settings.currency : "USD");
+            fillCategorySelect($("p_category"), item ? item.categoryId : "", true);
+            $("p_lowstock").value = item && item.lowStockThreshold != null ? item.lowStockThreshold : "";
+            $("p_description").value = item ? item.description || "" : "";
+            $("p_tags").value = item && item.tags ? item.tags.join(", ") : "";
+            $("p_seoTitle").value = item ? item.seoTitle || "" : "";
+            $("p_seoDescription").value = item ? item.seoDescription || "" : "";
+            $("p_published").checked = item ? !!item.published : false;
+            S.editImages = item && item.images ? item.images.slice() : [];
+            S.editOptions = item && item.options ? item.options.map(function (o) {
+                return {name: o.name, values: (o.values || []).slice()};
+            }) : [];
+            S.editVariants = item && item.variants
+                ? item.variants.map(function (v) {
+                    return {
+                        _existing: true,
+                        id: v.id,
+                        optionValues: v.optionValues || {},
+                        label: v.label,
+                        sku: v.sku || "",
+                        price: v.price == null ? "" : v.price,
+                        stock: v.stock || 0,
+                        lowStockThreshold: v.lowStockThreshold == null ? "" : v.lowStockThreshold
+                    };
+                })
+                : [{optionValues: {}, label: "Default", sku: "", price: "", stock: 0, lowStockThreshold: ""}];
+            renderImages();
+            renderOptions();
+            renderVariants();
+        }
+
+        function collectProduct() {
+            var variants = S.editVariants.map(function (v) {
+                var out = {optionValues: v.optionValues || {}, sku: (v.sku || "").trim()};
+                if (v._existing && v.id) out.id = v.id;
+                if (v.price !== "" && v.price != null) out.price = Number(v.price);
+                if (v.lowStockThreshold !== "" && v.lowStockThreshold != null) out.lowStockThreshold = parseInt(v.lowStockThreshold, 10);
+                if (!v._existing) out.stock = parseInt(v.stock, 10) || 0;
+                return out;
+            });
     var item = {
-      id: $("id").value || undefined,
-      name: $("name").value, sku: $("sku").value,
-      price: parseFloat($("price").value), stock: parseInt($("stock").value, 10),
-      description: $("description").value, published: $("published").checked,
+        id: $("p_id").value || undefined,
+        name: $("p_name").value,
+        slug: $("p_slug").value,
+        sku: $("p_sku").value,
+        price: parseFloat($("p_price").value) || 0,
+        currency: $("p_currency").value,
+        categoryId: $("p_category").value || null,
+        description: $("p_description").value,
+        tags: $("p_tags").value.split(",").map(function (s) {
+            return s.trim();
+        }).filter(Boolean),
+        images: S.editImages.map(function (s) {
+            return (s || "").trim();
+        }).filter(Boolean),
+        options: S.editOptions.filter(function (o) {
+            return o.name && (o.values || []).length;
+        }),
+        variants: variants,
+        seoTitle: $("p_seoTitle").value,
+        seoDescription: $("p_seoDescription").value,
+        published: $("p_published").checked,
     };
-    $("saveBtn").disabled = true;
+            var compare = $("p_compare").value;
+            if (compare !== "") item.compareAtPrice = parseFloat(compare);
+            var low = $("p_lowstock").value;
+            if (low !== "") item.lowStockThreshold = parseInt(low, 10);
+            return item;
+        }
+
+        $("saveProductBtn").addEventListener("click", async function () {
+            var btn = $("saveProductBtn");
+            btn.disabled = true;
+            setMsg("prodMsg", "Saving…");
+            try {
+                await req("saveItem", {item: collectProduct()});
+                setMsg("prodMsg", "Saved.", "ok");
+                await loadProducts();
+                showList();
+            } catch (e) {
+                setMsg("prodMsg", e.message, "err");
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        $("deleteProductBtn").addEventListener("click", async function () {
+            var id = $("p_id").value;
+            if (!id || !confirm("Delete this product? This cannot be undone.")) return;
+            try {
+                await req("removeItem", {id: id});
+                await loadProducts();
+                showList();
+            } catch (e) {
+                setMsg("prodMsg", e.message, "err");
+            }
+        });
+
+        // ───────────────────────── Categories ─────────────────────────
+        async function loadCategories() {
+            try {
+                var r = await req("listCategories");
+                S.categories = (r && r.categories) || [];
+            } catch (e) {
+                S.categories = [];
+            }
+            var par = $("c_parent");
+            par.innerHTML = '<option value="">— None —</option>' + S.categories.map(function (c) {
+                return '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>';
+            }).join("");
+            var box = $("catTable");
+            if (!S.categories.length) {
+                box.innerHTML = '<div class="empty">No categories yet.</div>';
+                return;
+            }
+            var rows = S.categories.map(function (c) {
+                return '<tr><td><b>' + esc(c.name) + '</b></td><td class="muted">' + esc(c.slug) + '</td><td>' + esc(catName(c.parentId)) + '</td>' +
+                    '<td class="right"><button class="btn mini editC" data-id="' + esc(c.id) + '">Edit</button> ' +
+                    '<button class="btn mini danger delC" data-id="' + esc(c.id) + '">Delete</button></td></tr>';
+            }).join("");
+            box.innerHTML = '<table><thead><tr><th>Name</th><th>Slug</th><th>Parent</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+            box.querySelectorAll(".editC").forEach(function (b) {
+                b.addEventListener("click", function () {
+                    var c = S.categories.find(function (x) {
+                        return x.id === b.dataset.id;
+                    });
+                    if (!c) return;
+                    $("c_id").value = c.id;
+                    $("c_name").value = c.name;
+                    $("c_slug").value = c.slug || "";
+                    $("c_parent").value = c.parentId || "";
+                    $("c_description").value = c.description || "";
+                    $("catFormTitle").textContent = "Edit category";
+                    setMsg("catMsg", "");
+                });
+            });
+            box.querySelectorAll(".delC").forEach(function (b) {
+                b.addEventListener("click", async function () {
+                    if (!confirm("Delete this category?")) return;
+                    try {
+                        await req("removeCategory", {id: b.dataset.id});
+                        resetCat();
+                        await loadCategories();
+                    } catch (e) {
+                        setMsg("catMsg", e.message, "err");
+                    }
+                });
+            });
+        }
+
+        function resetCat() {
+            $("c_id").value = "";
+            $("c_name").value = "";
+            $("c_slug").value = "";
+            $("c_parent").value = "";
+            $("c_description").value = "";
+            $("catFormTitle").textContent = "New category";
+            setMsg("catMsg", "");
+        }
+
+        $("resetCatBtn").addEventListener("click", resetCat);
+        $("saveCatBtn").addEventListener("click", async function () {
+            var category = {
+                id: $("c_id").value || undefined,
+                name: $("c_name").value,
+                slug: $("c_slug").value,
+                parentId: $("c_parent").value || null,
+                description: $("c_description").value
+            };
+            try {
+                await req("saveCategory", {category: category});
+                resetCat();
+                await loadCategories();
+                setMsg("catMsg", "Saved.", "ok");
+            } catch (e) {
+                setMsg("catMsg", e.message, "err");
+            }
+        });
+
+        // ───────────────────────── Stock ─────────────────────────
+        async function loadStockProducts() {
+            try {
+                var r = await req("listItems");
+                S.items = (r && r.items) || [];
+            } catch (e) {
+            }
+            var sel = $("s_product");
+            var cur = sel.value;
+            sel.innerHTML = '<option value="">— Select a product —</option>' + S.items.map(function (it) {
+                return '<option value="' + esc(it.id) + '">' + esc(it.name) + '</option>';
+            }).join("");
+            if (cur) sel.value = cur;
+        }
+
+        $("s_product").addEventListener("change", function () {
+            renderStockFor($("s_product").value);
+        });
+
+        function renderStockFor(id) {
+            var it = S.items.find(function (x) {
+                return x.id === id;
+            });
+            var box = $("s_variants");
+            var card = $("s_adjustCard");
+            if (!it) {
+                box.innerHTML = "";
+                card.classList.add("hide");
+                $("movTable").innerHTML = '<p class="muted">Select a product to see its ledger.</p>';
+                return;
+            }
+            var def = (S.settings && S.settings.lowStockThreshold) || 0;
+            var rows = (it.variants || []).map(function (v) {
+                var thr = v.lowStockThreshold != null ? v.lowStockThreshold : (it.lowStockThreshold != null ? it.lowStockThreshold : def);
+                var low = (Number(v.stock) || 0) <= Number(thr) ? ' <span class="tag low">Low</span>' : "";
+                return '<tr><td><b>' + esc(v.label || "Default") + '</b></td><td class="muted">' + esc(v.sku || "") + '</td><td class="num">' + (Number(v.stock) || 0) + low + '</td></tr>';
+            }).join("");
+            box.innerHTML = '<table><thead><tr><th>Variant</th><th>SKU</th><th class="num">On hand</th></tr></thead><tbody>' + rows + '</tbody></table>';
+            var vsel = $("s_variant");
+            vsel.innerHTML = (it.variants || []).map(function (v) {
+                return '<option value="' + esc(v.id) + '">' + esc(v.label || "Default") + '</option>';
+            }).join("");
+            card.classList.remove("hide");
+            setMsg("stockMsg", "");
+            loadMovements(id);
+        }
+
+        $("adjustBtn").addEventListener("click", async function () {
+            var id = $("s_product").value;
+            var modeSel = $("s_mode").value;
+            var amount = parseInt($("s_amount").value, 10);
+            if (!id || !Number.isInteger(amount)) {
+                setMsg("stockMsg", "Enter a whole number amount.", "err");
+                return;
+            }
+            var payload = {itemId: id, variantId: $("s_variant").value, reason: $("s_reason").value};
+            if (modeSel === "set") {
+                payload.mode = "set";
+                payload.amount = amount;
+                payload.type = "correction";
+            } else if (modeSel === "remove") {
+                payload.mode = "delta";
+                payload.amount = -Math.abs(amount);
+                payload.type = "adjust";
+            } else {
+                payload.mode = "delta";
+                payload.amount = Math.abs(amount);
+                payload.type = "receive";
+            }
+            var btn = $("adjustBtn");
+            btn.disabled = true;
+            try {
+                var r = await req("adjustStock", payload);
+                // refresh the cached item + views
+                var idx = S.items.findIndex(function (x) {
+                    return x.id === id;
+                });
+                if (idx >= 0 && r && r.item) S.items[idx] = r.item;
+                $("s_amount").value = "0";
+                $("s_reason").value = "";
+                setMsg("stockMsg", "Stock updated.", "ok");
+                renderStockFor(id);
+            } catch (e) {
+                setMsg("stockMsg", e.message, "err");
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        async function loadMovements(id) {
+            var box = $("movTable");
+            try {
+                var r = await req("listMovements", {itemId: id});
+                var ms = (r && r.movements) || [];
+                if (!ms.length) {
+                    box.innerHTML = '<p class="muted">No movements recorded yet.</p>';
+                    return;
+                }
+                var it = S.items.find(function (x) {
+                    return x.id === id;
+                });
+
+                function vlabel(vid) {
+                    var v = it && (it.variants || []).find(function (x) {
+                        return x.id === vid;
+                    });
+                    return v ? (v.label || "Default") : vid;
+                }
+
+                var rows = ms.map(function (m) {
+                    var d = new Date(m.at);
+                    var when = isNaN(d) ? esc(m.at) : d.toLocaleString();
+                    var delta = (m.qtyDelta > 0 ? "+" : "") + m.qtyDelta;
+                    var cls = m.qtyDelta >= 0 ? "ok" : "err";
+                    return '<tr><td>' + esc(when) + '</td><td>' + esc(vlabel(m.variantId)) + '</td><td>' + esc(m.type) + '</td>' +
+                        '<td class="num ' + cls + '">' + delta + '</td><td class="num">' + m.balanceAfter + '</td><td class="muted">' + esc(m.reason || "") + '</td></tr>';
+                }).join("");
+                box.innerHTML = '<table><thead><tr><th>When</th><th>Variant</th><th>Type</th><th class="num">Change</th><th class="num">Balance</th><th>Reason</th></tr></thead><tbody>' + rows + '</tbody></table>';
+            } catch (e) {
+                box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+            }
+        }
+
+        // ───────────────────────── Settings ─────────────────────────
+        async function loadSettings() {
+            try {
+                var r = await req("getSettings");
+                S.settings = (r && r.settings) || S.settings;
+            } catch (e) {
+            }
+            var s = S.settings || {};
+            $("set_storeName").value = s.storeName || "";
+            $("set_currency").value = s.currency || "USD";
+            $("set_currencySymbol").value = s.currencySymbol || "$";
+            $("set_taxRate").value = s.taxRate != null ? s.taxRate : 0;
+            $("set_shippingFlat").value = s.shippingFlat != null ? s.shippingFlat : 0;
+            $("set_lowStockThreshold").value = s.lowStockThreshold != null ? s.lowStockThreshold : 5;
+        }
+
+        $("saveSettingsBtn").addEventListener("click", async function () {
+            var settings = {
+                storeName: $("set_storeName").value,
+                currency: $("set_currency").value,
+                currencySymbol: $("set_currencySymbol").value,
+                taxRate: parseFloat($("set_taxRate").value) || 0,
+                shippingFlat: parseFloat($("set_shippingFlat").value) || 0,
+                lowStockThreshold: parseInt($("set_lowStockThreshold").value, 10) || 0,
+            };
+            try {
+                var r = await req("saveSettings", {settings: settings});
+                S.settings = (r && r.settings) || settings;
+                setMsg("setMsg", "Saved.", "ok");
+            } catch (e) {
+                setMsg("setMsg", e.message, "err");
+            }
+        });
+
+        // ───────────────────────── shared badges ─────────────────────────
+        function statusBadge(s) {
+            var map = {
+                pending: "off",
+                paid: "",
+                fulfilled: "",
+                cancelled: "low",
+                refunded: "low",
+                requested: "off",
+                approved: "",
+                received: "",
+                rejected: "low"
+            };
+            return '<span class="tag ' + (map[s] || "off") + '">' + esc(s || "—") + '</span>';
+        }
+
+        function payBadge(s) {
+            var map = {unpaid: "low", partial: "off", paid: "", refunded: "low"};
+            return '<span class="tag ' + (map[s] || "off") + '">' + esc(s || "unpaid") + '</span>';
+        }
+
+        function fmtDate(s) {
+            var d = new Date(s);
+            return isNaN(d) ? esc(s || "") : d.toLocaleString();
+        }
+
+        // ───────────────────────── Dashboard ─────────────────────────
+        async function loadDashboard() {
+            var box = $("dashBody");
     try {
-      await window.presshPanel.request("save", { item: item });
-      resetForm(); msg("Saved."); await load();
-    } catch (e) { msg(e.message, true); }
-    finally { $("saveBtn").disabled = false; }
+        var d = await req("summary");
+        if (d.currencySymbol && S.settings) S.settings.currencySymbol = d.currencySymbol;
+
+        function card(label, value) {
+            return '<div class="card" style="margin:0"><div class="muted" style="font-size:12px">' + esc(label) + '</div><div style="font-size:24px;font-weight:800">' + value + '</div></div>';
+        }
+
+        var kpis = '<div class="grid g4" style="margin-bottom:16px">' +
+            card("Revenue (net)", money(d.revenue)) +
+            card("Outstanding", money(d.outstanding)) +
+            card("Orders", d.counts.orders) +
+            card("Low stock", d.counts.lowStock) + '</div>';
+
+        var byStatus = Object.keys(d.ordersByStatus || {}).map(function (k) {
+            return '<span class="pill">' + esc(k) + ': ' + d.ordersByStatus[k] + '</span>';
+        }).join(" ") || '<span class="muted">No orders yet.</span>';
+
+        var recent = (d.recentOrders || []).length
+            ? '<table><thead><tr><th>Order</th><th>Customer</th><th class="num">Total</th><th>Status</th><th>Payment</th></tr></thead><tbody>' +
+            d.recentOrders.map(function (o) {
+                return '<tr><td><b>#' + esc(o.number) + '</b></td><td>' + esc(o.customer) + '</td><td class="num">' + money(o.total) + '</td><td>' + statusBadge(o.status) + '</td><td>' + payBadge(o.paymentStatus) + '</td></tr>';
+            }).join("") + '</tbody></table>'
+            : '<p class="muted">No orders yet.</p>';
+
+        var low = (d.lowStockProducts || []).length
+            ? d.lowStockProducts.map(function (p) {
+                return '<div class="row between" style="border-bottom:1px solid var(--bd);padding:6px 0"><span>' + esc(p.name) + '</span><span class="tag low">' + p.totalStock + ' left</span></div>';
+            }).join("")
+            : '<p class="muted">All products are well stocked.</p>';
+
+        box.innerHTML = kpis +
+            '<div class="card"><strong>Orders by status</strong><div style="margin-top:8px">' + byStatus + '</div></div>' +
+            '<div class="card"><strong>Recent orders</strong><div style="margin-top:8px">' + recent + '</div></div>' +
+            '<div class="card"><strong>Low stock</strong><div style="margin-top:8px">' + low + '</div></div>';
+    } catch (e) {
+        box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+    }
   }
 
-  async function del(id, name) {
-    if (!confirm('Delete "' + name + '"?')) return;
-    try { await window.presshPanel.request("remove", { id: id }); await load(); }
-    catch (e) { msg(e.message, true); }
-  }
+        // ───────────────────────── Orders ─────────────────────────
+        function showOrderList() {
+            $("orderList").classList.remove("hide");
+            $("orderDetail").classList.add("hide");
+        }
 
-  async function load() {
-    var box = $("list");
+        function showOrderDetail() {
+            $("orderList").classList.add("hide");
+            $("orderDetail").classList.remove("hide");
+        }
+
+        $("o_status").addEventListener("change", loadOrders);
+        var oSearchT;
+        $("o_search").addEventListener("input", function () {
+            clearTimeout(oSearchT);
+            oSearchT = setTimeout(loadOrders, 250);
+        });
+
+        async function loadOrders() {
+            var box = $("orderTable");
     try {
-      var r = await window.presshPanel.request("list");
-      var items = (r && r.items) || [];
-      if (!items.length) { box.innerHTML = '<p class="muted">No products yet. Add one above.</p>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Name</th><th>SKU</th><th class="num">Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead><tbody>' +
-        items.map(function (it) {
-          var tag = it.published ? '<span class="tag">Published</span>' : '<span class="tag off">Draft</span>';
-          return "<tr><td><b>" + esc(it.name) + "</b></td><td>" + esc(it.sku) + '</td><td class="num">' + esc(it.price) +
-            '</td><td class="num">' + esc(it.stock) + "</td><td>" + tag + '</td><td class="row">' +
-            '<button onclick=\'edit(' + JSON.stringify(it).replace(/'/g, "&#39;") + ')\'>Edit</button>' +
-            '<button class="danger" onclick="del(\'' + esc(it.id) + "','" + esc((it.name || "").replace(/'/g, "")) + '\')">Delete</button></td></tr>';
-        }).join("") + "</tbody></table>";
-    } catch (e) { box.innerHTML = '<p class="err">Could not load inventory: ' + esc(e.message) + "</p>"; }
+        var r = await req("listOrders", {status: $("o_status").value, search: $("o_search").value});
+        var orders = (r && r.orders) || [];
+        if (!orders.length) {
+            box.innerHTML = '<div class="empty">No orders found.</div>';
+            return;
+        }
+        var rows = orders.map(function (o) {
+            return '<tr>' +
+                '<td><b>#' + esc(o.number) + '</b></td>' +
+                '<td>' + esc((o.customer && (o.customer.name || o.customer.email)) || "—") + '</td>' +
+                '<td class="muted">' + esc(fmtDate(o.createdAt)) + '</td>' +
+                '<td class="num">' + money(o.total) + '</td>' +
+                '<td>' + statusBadge(o.status) + '</td>' +
+                '<td>' + payBadge(o.paymentStatus) + '</td>' +
+                '<td class="right"><button class="btn mini viewO" data-id="' + esc(o.id) + '">View</button></td>' +
+                '</tr>';
+        }).join("");
+        box.innerHTML = '<table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th class="num">Total</th><th>Status</th><th>Payment</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+        box.querySelectorAll(".viewO").forEach(function (b) {
+            b.addEventListener("click", function () {
+                openOrder(b.dataset.id);
+            });
+        });
+    } catch (e) {
+        box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+    }
+        }
+
+        async function openOrder(id) {
+            showOrderDetail();
+            var box = $("orderDetail");
+            box.innerHTML = '<p class="muted">Loading…</p>';
+            try {
+                var r = await req("getOrder", {id: id});
+                renderOrderDetail(r.order, r.payments || [], r.returns || []);
+            } catch (e) {
+                box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+            }
+        }
+
+        function renderOrderDetail(o, payments, returns) {
+            var box = $("orderDetail");
+            var balance = (Number(o.total) || 0) - ((Number(o.amountPaid) || 0) - (Number(o.amountRefunded) || 0));
+            var lines = (o.lines || []).map(function (l) {
+                return '<tr><td>' + esc(l.name) + '<br><span class="muted">' + esc(l.variantLabel || "") + '</span></td><td class="num">' + l.qty + '</td><td class="num">' + money(l.unitPrice) + '</td><td class="num">' + money(l.lineTotal) + '</td></tr>';
+            }).join("");
+            var totals = '<table style="margin-top:8px"><tbody>' +
+                '<tr><td>Subtotal</td><td class="num">' + money(o.subtotal) + '</td></tr>' +
+                '<tr><td>Tax</td><td class="num">' + money(o.tax) + '</td></tr>' +
+                '<tr><td>Shipping</td><td class="num">' + money(o.shipping) + '</td></tr>' +
+                (o.discount ? '<tr><td>Discount</td><td class="num">−' + money(o.discount) + '</td></tr>' : '') +
+                '<tr><td><b>Total</b></td><td class="num"><b>' + money(o.total) + '</b></td></tr>' +
+                '<tr><td>Paid</td><td class="num ok">' + money(o.amountPaid) + '</td></tr>' +
+                (o.amountRefunded ? '<tr><td>Refunded</td><td class="num err">' + money(o.amountRefunded) + '</td></tr>' : '') +
+                '<tr><td>Balance due</td><td class="num">' + money(balance) + '</td></tr></tbody></table>';
+
+            var payRows = payments.length ? payments.map(function (p) {
+                return '<tr><td>' + esc(fmtDate(p.at)) + '</td><td>' + esc(p.kind) + '</td><td class="num ' + (p.kind === "refund" ? "err" : "ok") + '">' + (p.kind === "refund" ? "−" : "") + money(p.amount) + '</td><td>' + esc(p.method) + '</td></tr>';
+            }).join("") : '<tr><td colspan="4" class="muted">No payments recorded.</td></tr>';
+
+            var retRows = returns.length ? returns.map(function (r) {
+                return '<tr><td>#' + esc(r.number) + '</td><td class="num">' + money(r.refundAmount) + '</td><td>' + statusBadge(r.status) + '</td></tr>';
+            }).join("") : '<tr><td colspan="3" class="muted">No returns.</td></tr>';
+
+            var statusOpts = ["pending", "paid", "fulfilled", "cancelled", "refunded"].map(function (s) {
+                return '<option value="' + s + '"' + (s === o.status ? " selected" : "") + '>' + s + '</option>';
+            }).join("");
+
+            var returnForm = (o.lines || []).map(function (l, i) {
+                return '<tr><td>' + esc(l.name) + ' <span class="muted">' + esc(l.variantLabel || "") + '</span></td><td class="muted">ordered ' + l.qty + '</td>' +
+                    '<td><input class="rqty" data-i="' + i + '" type="number" min="0" max="' + l.qty + '" value="0" style="width:70px"></td></tr>';
+            }).join("");
+
+            box.innerHTML =
+                '<div class="row between" style="margin-bottom:12px"><strong>Order #' + esc(o.number) + ' &nbsp;' + statusBadge(o.status) + ' ' + payBadge(o.paymentStatus) + '</strong><button class="btn" id="orderBack">← Back to orders</button></div>' +
+                '<div class="grid g2">' +
+                '<div class="card"><strong>Items</strong><table style="margin-top:8px"><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr></thead><tbody>' + lines + '</tbody></table>' + totals + '</div>' +
+                '<div class="card"><strong>Customer</strong><div style="margin-top:6px">' +
+                '<div>' + esc(o.customer && o.customer.name || "—") + '</div>' +
+                '<div class="muted">' + esc(o.customer && o.customer.email || "") + '</div>' +
+                '<div class="muted">' + esc(o.customer && o.customer.phone || "") + '</div>' +
+                '<div class="muted" style="white-space:pre-wrap">' + esc(o.customer && o.customer.address || "") + '</div>' +
+                (o.note ? '<div style="margin-top:8px"><span class="muted">Note:</span> ' + esc(o.note) + '</div>' : '') +
+                '</div></div>' +
+                '</div>' +
+                '<div class="card"><strong>Update status</strong><div class="row" style="margin-top:8px">' +
+                '<select id="od_status" style="max-width:200px">' + statusOpts + '</select>' +
+                '<button class="btn primary" id="od_applyStatus">Apply</button>' +
+                '<span id="od_msg" class="msg muted"></span></div></div>' +
+                '<div class="grid g2">' +
+                '<div class="card"><strong>Record payment</strong>' +
+                '<div class="grid g2" style="margin-top:8px"><div><label>Amount</label><input id="pay_amount" type="number" min="0" step="0.01" value="' + (balance > 0 ? balance.toFixed(2) : "0") + '"></div>' +
+                '<div><label>Method</label><select id="pay_method"><option>card</option><option>cash</option><option>bank</option><option>manual</option><option>other</option></select></div></div>' +
+                '<button class="btn primary" id="recordPayBtn" style="margin-top:10px">Record payment</button></div>' +
+                '<div class="card"><strong>Refund</strong>' +
+                '<div class="grid g2" style="margin-top:8px"><div><label>Amount</label><input id="ref_amount" type="number" min="0" step="0.01" value="0"></div>' +
+                '<div><label>Method</label><select id="ref_method"><option>card</option><option>cash</option><option>bank</option><option>manual</option><option>other</option></select></div></div>' +
+                '<button class="btn" id="refundBtn" style="margin-top:10px">Issue refund</button></div>' +
+                '</div>' +
+                '<div class="card"><strong>Payments</strong><table style="margin-top:8px"><thead><tr><th>When</th><th>Type</th><th class="num">Amount</th><th>Method</th></tr></thead><tbody>' + payRows + '</tbody></table></div>' +
+                '<div class="card"><strong>Create return</strong><table style="margin-top:8px"><thead><tr><th>Product</th><th></th><th>Return qty</th></tr></thead><tbody>' + returnForm + '</tbody></table>' +
+                '<label>Reason</label><input id="ret_reason" placeholder="e.g. damaged on arrival">' +
+                '<label class="row" style="margin-top:8px"><input type="checkbox" id="ret_restock" checked> &nbsp;Restock returned items</label>' +
+                '<button class="btn primary" id="createReturnBtn" style="margin-top:10px">Create return</button></div>' +
+                '<div class="card"><strong>Returns for this order</strong><table style="margin-top:8px"><thead><tr><th>Return</th><th class="num">Refund</th><th>Status</th></tr></thead><tbody>' + retRows + '</tbody></table></div>';
+
+            $("orderBack").addEventListener("click", function () {
+                showOrderList();
+                loadOrders();
+            });
+            $("od_applyStatus").addEventListener("click", async function () {
+                try {
+                    await req("updateOrderStatus", {id: o.id, status: $("od_status").value});
+                    await openOrder(o.id);
+                } catch (e) {
+                    setMsg("od_msg", e.message, "err");
+                }
+            });
+            $("recordPayBtn").addEventListener("click", async function () {
+                try {
+                    await req("recordPayment", {
+                        orderId: o.id,
+                        amount: parseFloat($("pay_amount").value),
+                        method: $("pay_method").value
+                    });
+                    await openOrder(o.id);
+                } catch (e) {
+                    setMsg("od_msg", e.message, "err");
+                }
+            });
+            $("refundBtn").addEventListener("click", async function () {
+                try {
+                    await req("refundPayment", {
+                        orderId: o.id,
+                        amount: parseFloat($("ref_amount").value),
+                        method: $("ref_method").value
+                    });
+                    await openOrder(o.id);
+                } catch (e) {
+                    setMsg("od_msg", e.message, "err");
+                }
+            });
+            $("createReturnBtn").addEventListener("click", async function () {
+                var rlines = [];
+                box.querySelectorAll(".rqty").forEach(function (inp) {
+                    var qty = parseInt(inp.value, 10) || 0;
+                    if (qty > 0) {
+                        var l = o.lines[Number(inp.dataset.i)];
+                        rlines.push({itemId: l.itemId, variantId: l.variantId, qty: qty});
+                    }
+                });
+                if (!rlines.length) {
+                    setMsg("od_msg", "Set a return quantity for at least one item.", "err");
+                    return;
+                }
+                try {
+                    await req("createReturn", {
+                        orderId: o.id,
+                        lines: rlines,
+                        reason: $("ret_reason").value,
+                        restock: $("ret_restock").checked
+                    });
+                    await openOrder(o.id);
+                } catch (e) {
+                    setMsg("od_msg", e.message, "err");
+                }
+            });
   }
 
-  load();
+        // ───────────────────────── Returns ─────────────────────────
+        $("r_status").addEventListener("change", loadReturns);
+
+        async function loadReturns() {
+            var box = $("returnTable");
+            try {
+                var r = await req("listReturns", {status: $("r_status").value});
+                var returns = (r && r.returns) || [];
+                if (!returns.length) {
+                    box.innerHTML = '<div class="empty">No returns found.</div>';
+                    return;
+                }
+                var rows = returns.map(function (rt) {
+                    var items = (rt.lines || []).reduce(function (s, l) {
+                        return s + l.qty;
+                    }, 0);
+                    var canProcess = rt.status !== "refunded" && rt.status !== "rejected";
+                    return '<tr>' +
+                        '<td><b>#' + esc(rt.number) + '</b></td>' +
+                        '<td>#' + esc(rt.orderNumber) + '</td>' +
+                        '<td class="muted">' + esc(fmtDate(rt.createdAt)) + '</td>' +
+                        '<td class="num">' + items + '</td>' +
+                        '<td class="num">' + money(rt.refundAmount) + '</td>' +
+                        '<td>' + statusBadge(rt.status) + '</td>' +
+                        '<td class="right">' +
+                        (canProcess ? '<button class="btn mini procR" data-id="' + esc(rt.id) + '">Process</button> ' : '') +
+                        (rt.status === "requested" ? '<button class="btn mini rejR" data-id="' + esc(rt.id) + '">Reject</button>' : '') +
+                        '</td></tr>';
+                }).join("");
+                box.innerHTML = '<table><thead><tr><th>Return</th><th>Order</th><th>Date</th><th class="num">Items</th><th class="num">Refund</th><th>Status</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+                box.querySelectorAll(".procR").forEach(function (b) {
+                    b.addEventListener("click", async function () {
+                        if (!confirm("Process this return? This will restock items (if requested) and issue a refund up to the amount paid.")) return;
+                        try {
+                            await req("processReturn", {id: b.dataset.id});
+                            await loadReturns();
+                        } catch (e) {
+                            alert(e.message);
+                        }
+                    });
+                });
+                box.querySelectorAll(".rejR").forEach(function (b) {
+                    b.addEventListener("click", async function () {
+                        try {
+                            await req("updateReturnStatus", {id: b.dataset.id, status: "rejected"});
+                            await loadReturns();
+                        } catch (e) {
+                            alert(e.message);
+                        }
+                    });
+                });
+            } catch (e) {
+                box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+            }
+        }
+
+        // ───────────────────────── Payments ─────────────────────────
+        async function loadPayments() {
+            var box = $("paymentTable");
+            try {
+                var r = await req("listPayments");
+                var ps = (r && r.payments) || [];
+                if (!ps.length) {
+                    box.innerHTML = '<div class="empty">No payments recorded yet.</div>';
+                    return;
+                }
+                var rows = ps.map(function (p) {
+                    return '<tr><td>' + esc(fmtDate(p.at)) + '</td><td>#' + esc(p.orderNumber) + '</td><td>' + esc(p.kind) + '</td>' +
+                        '<td class="num ' + (p.kind === "refund" ? "err" : "ok") + '">' + (p.kind === "refund" ? "−" : "") + money(p.amount) + '</td>' +
+                        '<td>' + esc(p.method) + '</td><td>' + esc(p.status) + '</td><td class="muted">' + esc(p.note || "") + '</td></tr>';
+                }).join("");
+                box.innerHTML = '<table><thead><tr><th>When</th><th>Order</th><th>Type</th><th class="num">Amount</th><th>Method</th><th>Status</th><th>Note</th></tr></thead><tbody>' + rows + '</tbody></table>';
+            } catch (e) {
+                box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
+            }
+        }
+
+        // ───────────────────────── boot ─────────────────────────
+        (async function init() {
+            try {
+                var r = await req("getSettings");
+                S.settings = (r && r.settings) || null;
+            } catch (e) {
+            }
+            try {
+                var rc = await req("listCategories");
+                S.categories = (rc && rc.categories) || [];
+            } catch (e) {
+            }
+            await loadDashboard();
+        })();
+    })();
 </script>
