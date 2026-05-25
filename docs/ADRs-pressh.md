@@ -260,3 +260,78 @@ Combines instant-live dynamism with CDN performance; precise invalidation avoids
 ### Consequences
 - (+) Fast and fresh; minimal origin load.
 - (−) Dependency tracking must be correct or pages go stale/over-purge; cross-process invalidation needed (ADR-002).
+
+## ADR-013: E-commerce as a plugin with recorded payments + a pluggable gateway
+
+**Status:** Accepted
+
+### Context
+
+Pressh needed full store capability (catalog, orders, returns, payments). Building it into the engine would couple the
+content core to commerce and widen the trusted surface; integrating a live payment processor in v1 would add
+external-network + webhook trust and require operator secrets.
+
+### Decision
+
+Ship commerce as the first-party **Inventory** plugin, with all data in plugin-owned, capability-gated collections (
+never `content_entries`). Payments are **recorded** behind a `PaymentGateway` interface (`{ charge, refund }`); v1 ships
+only a no-network `manual` gateway. Orders price and validate stock server-side and decrement through the audited stock
+ledger.
+
+### Rationale
+
+Keeps the engine generic and the commerce blast radius inside one capability-scoped worker (consistent with
+ADR-003/004). The gateway seam lets a real processor (Stripe, …) drop in later with no change outside its
+implementation. Recorded-payments-first matches the self-hosted, security-first posture — no external secrets or
+callback surface in v1.
+
+### Consequences
+
+- (+) No new trusted tier; commerce isolated like any plugin; clean upgrade path to a live gateway.
+- (+) Server-authoritative pricing/stock prevents client price tampering / oversell.
+- (−) v1 does not charge cards — payments are reconciled, not captured (documented in SRS FR-064).
+- (−) Cross-process stock races are bounded only within a worker; checkout happens on the Site process (acceptable for
+  v1; documented).
+
+### Alternatives Considered
+
+- **Commerce in the engine core:** rejected — couples core to commerce, widens trusted surface.
+- **Live Stripe integration in v1:** deferred — adds secrets, webhooks, and external-network trust; the seam preserves
+  the option.
+
+## ADR-014: Plugin-contributed designer widgets (enabled-only presets)
+
+**Status:** Accepted
+
+### Context
+
+Plugins (e.g. the store) need to add their own drag-and-drop blocks to the page designer. Hardcoding them in the engine
+palette would show commerce widgets even without the plugin and couple the engine to product features.
+
+### Decision
+
+A plugin manifest may declare `designerPresets` (a presets JSON of primitive-node templates). The PluginHost loads +
+sanitizes them (shape-checked, size-capped, ids namespaced `plugin:id`) and exposes them **only for enabled plugins**;
+the Studio designer-library endpoint merges them into the palette and instantiates them client-side. Any new rendered
+behaviour they need (e.g. add-to-cart) is provided by generic, type-validated engine primitives — not plugin-injected
+markup.
+
+### Rationale
+
+Reuses the existing preset/primitive model and the strict no-inline-style/script renderer, so contributed widgets
+inherit the same XSS/CSP guarantees. Gating on *enabled* keeps the palette scoped to installed capability, mirroring
+endpoint dispatch (ADR-007).
+
+### Consequences
+
+- (+) Reusable for any plugin; commerce widgets appear/disappear with the plugin; no engine coupling.
+- (+) Contributed content can't break the CSP — it renders through the validated primitive pipeline.
+- (−) Presets are limited to the existing primitive set; a genuinely new widget behaviour requires a new engine
+  primitive.
+- (−) `presets.json` is not yet covered by plugin signing (only `main` is); mitigated by load-time sanitization and the
+  safe renderer.
+
+### Alternatives Considered
+
+- **Hardcode commerce presets in the engine:** rejected — always-on, couples engine to product features.
+- **Let plugins inject raw HTML/CSS widgets:** rejected — breaks the no-inline CSP guarantee and the sandboxing model.

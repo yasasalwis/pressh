@@ -111,6 +111,10 @@
       <div>• <b>Servers:</b> Hono (HTTP) + Vite (build/SSR), React 19 UI</div>
       <div>• <b>Plugins:</b> uniform worker-thread isolation, capability-gated RPC</div>
       <div>• <b>Admin UI extensions:</b> iframe-sandboxed, strict CSP</div>
+        <div>• <b>Plugin widgets:</b> plugins contribute designer palette blocks (enabled-only)</div>
+        <div>• <b>Commerce (Wave 2):</b> Inventory plugin = catalog · stock ledger · orders · returns · recorded
+            payments · storefront
+        </div>
       <div>• <b>Storage:</b> filesystem default + SQLite index; Postgres/SQLite/Mongo adapters</div>
       <div>• <b>Users:</b> Owner / Admin / Editor / Author / Viewer + draft→review→publish</div>
       <div>• <b>Availability target:</b> 99.9% single-node; horizontal site scaling for HA</div>
@@ -522,6 +526,24 @@ flowchart TB
       <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Tampering with audit history</td><td class="p-2 text-center">Repudiation</td><td class="p-2 text-center">L</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">Append-only, hash-chained audit log</td></tr>
       <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Known-vulnerable plugin installed</td><td class="p-2 text-center">Elevation</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-rose-600">H</td><td class="p-2">CVE feed sync; host refuses to load flagged plugins; signature required in prod</td></tr>
       <tr class="border-t border-slate-100 dark:border-slate-800"><td class="p-2">Plugin DoS (infinite loop / memory bomb)</td><td class="p-2 text-center">DoS</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2 text-center text-amber-600">M</td><td class="p-2">Per-worker CPU/timeout + memory caps; host kills + restarts</td></tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800">
+          <td class="p-2">Storefront price tampering / oversell at checkout</td>
+          <td class="p-2 text-center">Tampering</td>
+          <td class="p-2 text-center text-amber-600">M</td>
+          <td class="p-2 text-center text-rose-600">H</td>
+          <td class="p-2">Public cart/checkout re-price + re-validate stock server-side; client sends only item/qty;
+              ledger decrement with non-negative guard
+          </td>
+      </tr>
+      <tr class="border-t border-slate-100 dark:border-slate-800">
+          <td class="p-2">Malicious plugin designer preset (stored XSS / CSS breakout)</td>
+          <td class="p-2 text-center">Tampering</td>
+          <td class="p-2 text-center">L</td>
+          <td class="p-2 text-center text-rose-600">H</td>
+          <td class="p-2">Presets render via the type-validated primitive renderer (no inline style/script);
+              shape-sanitized + size-capped at load; surface only while enabled
+          </td>
+      </tr>
     </tbody>
   </table></div>
 

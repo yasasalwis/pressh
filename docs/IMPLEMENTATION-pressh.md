@@ -200,19 +200,69 @@ interface GdprService {
 
 ---
 
+## Wave 2 — Commerce (Inventory plugin → store)
+
+> Built 2026-05-25 against the v1 platform; all four phases **done** (440 tests green, 0 lint errors, production build
+> clean). Satisfies SRS FR-025, FR-060…FR-066 and ADR-013/014. Delivered phase-gated.
+
+## Phase 19 — Advanced catalog (Inventory backend + admin)  · Effort L · Depends: 8, 10 · Status: done
+
+**Goal:** Turn the basic inventory plugin into a full product catalog.
+**Steps:** model products with option axes + variants (per-variant SKU/price/stock), categories (with child
+re-parenting), an audited stock ledger (`receive`/`adjust`/`set`/`sell`/`return`/`correction`, negative guard, low-stock
+thresholds), images/tags/slug/SEO/compare-at price, and store settings — all in plugin-owned collections. Rebuild
+`panel.html` as a tabbed admin (Products with a variant matrix, Categories, Stock, Settings).
+**Acceptance:** unit tests for variants, ledger reconciliation, low-stock flagging, categories, settings; legacy `save`/
+`publicItems` exports preserved; plugin re-signed.
+
+## Phase 20 — Orders / returns / payments · Effort L · Depends: 19 · Status: done
+
+**Goal:** Full order lifecycle with recorded payments and returns.
+**Steps:** `createOrder` (server-authoritative pricing + stock validation + ledger decrement, tax/shipping/discount);
+order status lifecycle + fulfil/cancel-with-restock; recorded payments + refunds behind a `PaymentGateway` seam (
+`manual` only) with a derived payment status and over-refund guard; returns (validated against order lines,
+`processReturn` restocks + refunds up to amount paid); dashboard summary; serialized order/return numbering. Add
+Dashboard/Orders/Returns/Payments admin tabs.
+**Acceptance:** tests for totals, stock decrement, oversell rejection, cancel-restock, return refund+restock, refund
+guard, dashboard.
+
+## Phase 21 — Plugin→designer widgets + commerce primitives · Effort M · Depends: 11, 19 · Status: done
+
+**Steps:** add an optional `designerPresets` manifest field; PluginHost loads + sanitizes presets and exposes
+`designerPresets()` for **enabled** plugins only; studio designer-library endpoint merges them. Add generic engine
+primitives `addToCart` + `commerce` (CSP-safe `data-ps-*`, not in the base palette) and a `collectionList` `source`
+prop. Ship `builtins/inventory/presets.json` (Product Grid, Featured, Cart Button, Cart, Checkout, Add-to-Cart).
+**Acceptance:** engine render tests for the new primitives + source pass-through; host test proves presets appear only
+while enabled; studio library merges them.
+
+## Phase 22 — Storefront runtime · Effort M · Depends: 9, 20, 21 · Status: done
+
+**Steps:** Site `makeSiteContext` resolves `collectionList source="<plugin>:<resource>"` via
+`pluginHost.invoke(plugin,"feed",…)` when enabled; add public POST endpoints `/products`, `/cart` (cartPreview),
+`/checkout`; build a CSP-safe storefront client (`apps/site/src/client/storefront.ts` + `storefront.css`) — localStorage
+cart, live mini-cart count, cart + checkout widgets that place real orders, styling via a bundled same-origin
+stylesheet (no inline style/script).
+**Acceptance:** site integration test renders products from an enabled plugin and shows the empty state when disabled;
+plugin tests for cartPreview (over-order/missing flags) and checkout (order created, stock decremented); client bundles
+clean.
+
+---
+
 ## Cross-cutting test matrix (must stay green from the phase that introduces each)
-| Area | Test | From phase |
-|---|---|---|
-| Capability denial | every capability has a deny test | 8 |
-| Worker escape | host globals / other plugins / raw env inaccessible | 8 |
-| XSS | sanitizer strips payload corpus | 6 |
-| Upload | polyglot/disguised exec rejected | 10 |
-| Enumeration | uniform 401/404; no user data public | 7, 9 |
-| CSRF | mutation without token rejected | 4, 10 |
-| Audit | mutation appends entry; chain verifies | 3 |
-| GDPR | export complete; erase unrecoverable + audited | 13 |
-| Cache | publish invalidates exactly affected pages | 9 |
-| Adapters | same suite passes on FS/PG/SQLite/Mongo | 16 |
+| Area               | Test                                                                         | From phase |
+|--------------------|------------------------------------------------------------------------------|------------|
+| Capability denial  | every capability has a deny test                                             | 8          |
+| Worker escape      | host globals / other plugins / raw env inaccessible                          | 8          |
+| XSS                | sanitizer strips payload corpus                                              | 6          |
+| Upload             | polyglot/disguised exec rejected                                             | 10         |
+| Enumeration        | uniform 401/404; no user data public                                         | 7, 9       |
+| CSRF               | mutation without token rejected                                              | 4, 10      |
+| Audit              | mutation appends entry; chain verifies                                       | 3          |
+| GDPR               | export complete; erase unrecoverable + audited                               | 13         |
+| Cache              | publish invalidates exactly affected pages                                   | 9          |
+| Adapters           | same suite passes on FS/PG/SQLite/Mongo                                      | 16         |
+| Commerce integrity | client can't set price/oversell; stock ledger reconciles; refund ≤ collected | 20, 22     |
+| Plugin widgets     | presets surface only while enabled; ids namespaced; render is no-inline      | 21         |
 
 ## Suggested branch / PR naming
 `phaseNN-short-name` (e.g., `phase08-plugin-host`). One PR per phase; PR description links the phase's acceptance gate and the relevant SRS FR/NFR IDs.

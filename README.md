@@ -32,6 +32,11 @@ Pressh eliminates each of these by design:
 - **Immutable revision history** — every save creates a timestamped, restorable snapshot
 - **Multi-user roles** — Owner, Admin, Editor, Author, Viewer with granular capability gating
 - **Plugin system** — TypeScript-native plugins with declarative capability manifests, isolated in worker threads
+- **Plugin-contributed widgets** — plugins can add their own drag-and-drop blocks to the page designer; they appear in
+  the palette only while the plugin is enabled
+- **Commerce / storefront** — the built-in Inventory plugin is a full store: product catalog with variants, categories,
+  an audited stock ledger, orders, returns, and recorded payments — plus drag-in Store widgets (product grid, cart,
+  checkout) that render server-side and place real orders (see [Store](#store-e-commerce))
 - **i18n** — per-locale content variants out of the box
 - **GDPR-native** — data-subject export, erasure, consent tracking, and retention policies built into v1
 - **Observability** — structured Pino logging (with redaction), Prometheus metrics, request-ID tracing, immutable audit log
@@ -437,15 +442,75 @@ Capabilities not listed in the manifest are rejected at the RPC boundary. The ad
 
 Pressh ships five first-party plugins in `builtins/` — same security model as any plugin (own worker, declared capabilities, signed at build). **All ship disabled**; enable only what you need from **Studio → Plugins** so the app stays lean. A disabled plugin spawns no worker at all.
 
-| Plugin | What it does | Capabilities |
-|---|---|---|
-| **DB** (Data Manager) | Read-only data browser + JSON export. No raw queries. | `storage.read:*` |
-| **Inventory** | Product/stock CRUD; public listing at `GET /api/p/inventory/items`. | `storage.read/write:inventory_items` |
-| **Forms** | Submissions → `form_submissions` (GDPR-linked); honeypot + per-IP rate limit. | `storage.read/write:form_submissions` |
-| **SEO** | Per-page + site meta/OpenGraph tags injected into the public `<head>`. | `storage.read/write:seo_meta` |
-| **Analytics** | Cookieless server-side page-view counts. No cookies, IPs, or third parties. | `storage.read/write:analytics_daily` |
+| Plugin                | What it does                                                                                                                                                                            | Capabilities                                                                                                                                                                                              |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **DB** (Data Manager) | Read-only data browser + JSON export. No raw queries.                                                                                                                                   | `storage.read:*`                                                                                                                                                                                          |
+| **Inventory / Store** | Full e-commerce: catalog (variants, categories, audited stock ledger), orders, returns, recorded payments, and drag-in storefront widgets. Public endpoints under `/api/p/inventory/*`. | `storage.read/write` on `inventory_items`, `inventory_categories`, `inventory_stock_movements`, `inventory_orders`, `inventory_returns`, `inventory_payments`, `inventory_counters`, `inventory_settings` |
+| **Forms**             | Submissions → `form_submissions` (GDPR-linked); honeypot + per-IP rate limit.                                                                                                           | `storage.read/write:form_submissions`                                                                                                                                                                     |
+| **SEO**               | Per-page + site meta/OpenGraph tags injected into the public `<head>`.                                                                                                                  | `storage.read/write:seo_meta`                                                                                                                                                                             |
+| **Analytics**         | Cookieless server-side page-view counts. No cookies, IPs, or third parties.                                                                                                             | `storage.read/write:analytics_daily`                                                                                                                                                                      |
 
 Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. Re-run `npm run sign:builtins` after editing a built-in's code (it also runs as part of `npm run build`).
+
+---
+
+## Store (e-commerce)
+
+The built-in **Inventory** plugin turns Pressh into a self-hosted store — with the same security model as any plugin (
+own worker, declared capabilities, all data in plugin-owned collections, never the engine's content store). Enable it
+from **Studio → Plugins**.
+
+- **Catalog** — products with option axes + variants (per-variant SKU/price/stock), categories, multiple images, tags,
+  slug/SEO, compare-at price.
+- **Stock** — an *audited ledger*: every change is a movement (`receive`/`adjust`/`set`/`sell`/`return`/`correction`)
+  with a running balance and a negative-stock guard; low-stock thresholds flag depleted variants.
+- **Orders / returns / payments** — server-authoritative orders (pricing + stock validated server-side), a status
+  lifecycle, returns that restock and refund, and **recorded payments** behind a pluggable `PaymentGateway` seam (only a
+  no-network `manual` gateway ships today).
+- **Storefront widgets** — Product Grid, Featured, Cart Button, Cart, Checkout, and Add-to-Cart appear in the page
+  designer **only while the plugin is enabled**. Product grids render server-side (SEO-friendly); the cart lives in
+  `localStorage` and checkout places a real order. Prices and stock are always re-validated server-side, so a client can
+  never set its own price or oversell.
+
+Customer flow — designer page → server-rendered product grid → client cart → server-validated checkout → order +
+payment + stock ledger:
+
+```mermaid
+flowchart LR
+    subgraph design["Studio designer"]
+        Preset["Store presets<br/>(enabled-plugin only)"]
+    end
+    subgraph site["Site — public process"]
+        Grid["Product Grid<br/>(SSR via collectionList source)"]
+        Client["Storefront client<br/>cart in localStorage"]
+        Cart["Cart / Checkout widgets"]
+    end
+    subgraph inv["Inventory plugin worker"]
+        Feed["feed"]
+        Preview["cartPreview"]
+        Checkout["checkout → createOrder"]
+        Ledger[("orders · payments<br/>stock_movements")]
+    end
+    Preset -->|publish| Grid
+    Grid -->|"pluginHost.invoke(feed)"| Feed
+    Client -->|add to cart| Cart
+    Cart -->|"POST /api/p/inventory/cart"| Preview
+    Cart -->|"POST /api/p/inventory/checkout"| Checkout
+    Checkout -->|validate price+stock, decrement| Ledger
+```
+
+Public storefront endpoints (rate-limited, published-only, capability-gated like any plugin endpoint):
+
+| Endpoint                         | Purpose                                                   |
+|----------------------------------|-----------------------------------------------------------|
+| `GET /api/p/inventory/items`     | Published, in-stock product feed (safe projection)        |
+| `POST /api/p/inventory/products` | Filter/sort product feed (category, tag, search)          |
+| `POST /api/p/inventory/cart`     | Re-price a cart authoritatively; flags out-of-stock lines |
+| `POST /api/p/inventory/checkout` | Place an order (validates + decrements stock)             |
+
+> **Payments are recorded, not charged.** No payment gateway ships in v1 — `recordPayment`/`refundPayment` keep a ledger
+> and an order's payment status. A real processor implements the same `{ charge, refund }` shape behind the
+`PaymentGateway` seam without touching the rest of the system.
 
 ---
 
@@ -577,16 +642,16 @@ node apps/studio/dist/cli.js gdpr erase --subject user@example.com
 
 Full design and architecture documents live in [`docs/`](./docs/):
 
-| Document | Description |
-|---|---|
-| [`SRS-pressh.md`](docs/SRS-pressh.md) | Software Requirements Specification (80+ requirements) |
-| [`TDD-pressh.md`](docs/TDD-pressh.md) | Technical Design Document |
-| [`SAD-pressh.md`](docs/SAD-pressh.md) | Security Architecture Document + threat model |
-| [`ADRs-pressh.md`](docs/ADRs-pressh.md) | Architecture Decision Records (11 ADRs) |
-| [`RUNBOOK-pressh.md`](docs/RUNBOOK-pressh.md) | Operations guide (deploy, scale, backup, troubleshoot) |
-| [`SDR-pressh.md`](docs/SDR-pressh.md) | Security Design Review + control verification matrix |
-| [`IMPLEMENTATION-pressh.md`](docs/IMPLEMENTATION-pressh.md) | Phase-by-phase build guide |
-| [`architecture-pressh-v1.html`](docs/architecture-pressh-v1.html) | Interactive architecture dashboard |
+| Document                                                          | Description                                            |
+|-------------------------------------------------------------------|--------------------------------------------------------|
+| [`SRS-pressh.md`](docs/SRS-pressh.md)                             | Software Requirements Specification (80+ requirements) |
+| [`TDD-pressh.md`](docs/TDD-pressh.md)                             | Technical Design Document                              |
+| [`SAD-pressh.md`](docs/SAD-pressh.md)                             | Security Architecture Document + threat model          |
+| [`ADRs-pressh.md`](docs/ADRs-pressh.md)                           | Architecture Decision Records (14 ADRs)                |
+| [`RUNBOOK-pressh.md`](docs/RUNBOOK-pressh.md)                     | Operations guide (deploy, scale, backup, troubleshoot) |
+| [`SDR-pressh.md`](docs/SDR-pressh.md)                             | Security Design Review + control verification matrix   |
+| [`IMPLEMENTATION-pressh.md`](docs/IMPLEMENTATION-pressh.md)       | Phase-by-phase build guide                             |
+| [`architecture-pressh-v1.html`](docs/architecture-pressh-v1.html) | Interactive architecture dashboard                     |
 
 ---
 

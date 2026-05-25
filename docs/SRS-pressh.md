@@ -61,7 +61,9 @@ Pressh is a new, greenfield, self-contained system distributed as a Docker image
 - Build pages from sanitized blocks via drag-and-drop.
 - Manage menus/navigation, forms, and media.
 - Manage users, roles, and a review/publish workflow.
-- Install, configure, and isolate plugins and themes.
+- Install, configure, and isolate plugins and themes (plugins may contribute their own designer widgets).
+- Run a self-hosted store: product catalog with variants, an audited stock ledger, orders, returns, and recorded
+  payments (built-in Inventory plugin).
 - Serve a fast, SEO-friendly public site with content-tag caching.
 - Satisfy GDPR data-subject requests.
 - Produce an append-only audit trail of all mutations and access.
@@ -197,6 +199,15 @@ Priority: High
 Description: Newly installed plugins may expose HTTP endpoints that become available at request time without a rebuild, routed through the front-controller dispatcher.
 Acceptance Criteria: After install/approval, `POST /api/p/<plugin>/<action>` is served by the plugin worker; uninstalling removes it; no redeploy is required.
 
+**[FR-025] Plugin-contributed designer widgets**
+Priority: Medium
+Description: A plugin may declare page-designer presets (composable blocks) in its manifest; the system shall surface
+them in the Studio designer palette only while the plugin is enabled.
+Acceptance Criteria: An enabled plugin's presets appear in the palette and instantiate into editable primitives;
+disabling the plugin removes them; preset ids are namespaced to the plugin to avoid collisions; preset content renders
+through the same sanitization/escaping and constrained-CSS rules as built-in blocks (no inline style/script reaches the
+page).
+
 #### Public Site
 
 **[FR-030] Dynamic URL resolution (front controller)**
@@ -267,6 +278,66 @@ Acceptance Criteria: A backup can be restored to a fresh host yielding a working
 Priority: Medium
 Description: Operators shall switch the storage backend (FS, Postgres, SQLite, Mongo) via configuration and a migration tool.
 Acceptance Criteria: The same functional test suite passes against each adapter; migration preserves all content and revisions.
+
+#### Commerce / Store (Inventory plugin)
+
+These requirements are satisfied by the first-party **Inventory** plugin. All commerce data lives in plugin-owned,
+capability-gated collections (never the engine's content store); the security model of FR-021…FR-024 applies unchanged.
+
+**[FR-060] Product catalog with variants**
+Priority: Medium
+Description: Operators shall create products with option axes (e.g. Size, Colour) and per-variant SKU, price, and stock,
+plus images, tags, slug/SEO, currency, and an optional compare-at price.
+Acceptance Criteria: A product can be saved with or without variants (variant-less products get a single default
+variant); variant combinations can be generated from option axes; the public projection never leaks draft/internal
+fields.
+
+**[FR-061] Catalog organization**
+Priority: Low
+Description: Operators shall organize products into categories (with a parent hierarchy) and tags, and filter/search the
+catalog.
+Acceptance Criteria: Deleting a category re-parents its children rather than orphaning them; storefront/admin can filter
+by category, tag, and free-text search.
+
+**[FR-062] Audited stock ledger**
+Priority: Medium
+Description: Stock shall change only through recorded movements (`receive`, `adjust`, `set`, `sell`, `return`,
+`correction`), each with a signed delta and a running balance; the system shall flag variants at or below a (
+per-variant, per-product, or store-default) low-stock threshold.
+Acceptance Criteria: On-hand stock always reconciles with the sum of its movements; a movement can never drive stock
+below zero; the ledger is viewable per product.
+
+**[FR-063] Orders**
+Priority: Medium
+Description: The system shall create orders from line items + customer details, pricing and validating them *
+*server-side** (authoritative price and stock), decrementing stock via the ledger, and shall support a status
+lifecycle (pending → paid → fulfilled, plus cancelled/refunded) with cancel-restock.
+Acceptance Criteria: A client cannot dictate price or oversell; cancelling a non-fulfilled order returns its stock;
+totals include tax and flat shipping from settings.
+
+**[FR-064] Recorded payments with pluggable gateway**
+Priority: Medium
+Description: The system shall record payments and refunds against an order in a ledger, deriving the order's payment
+status (unpaid/partial/paid/refunded), behind a `PaymentGateway` interface. v1 ships only a no-network `manual` gateway.
+Acceptance Criteria: A refund cannot exceed the amount collected; payment status is derived from the ledger; adding a
+real gateway requires no change outside the gateway implementation. Note: v1 does not integrate an external payment
+processor.
+
+**[FR-065] Returns & refunds**
+Priority: Low
+Description: Operators shall create returns against an order's lines and process them — optionally restocking the
+returned units and issuing a refund up to the amount collected.
+Acceptance Criteria: Return lines/quantities are validated against the originating order; processing a return restocks (
+if chosen) via the ledger and records the refund; a completed return cannot be reprocessed.
+
+**[FR-066] Storefront cart & checkout**
+Priority: Medium
+Description: The public site shall render product widgets server-side and provide a client cart (in `localStorage`) plus
+cart and checkout widgets that place real orders via the plugin's public endpoints; prices and stock are re-validated
+server-side at preview and checkout.
+Acceptance Criteria: The product grid is crawlable (server-rendered, no client JS required to see products); the cart
+re-prices authoritatively and flags out-of-stock lines; checkout creates an order and decrements stock; the storefront
+client introduces no inline styles/scripts (stays within the strict CSP).
 
 ### 3.2 Non-Functional Requirements
 
@@ -352,22 +423,30 @@ Acceptance Criteria: The same functional test suite passes against each adapter;
 3. Type is immediately available for authoring; no redeploy (FR-030).
 
 ### Appendix B — Data Dictionary (core entities)
-| Entity | Key fields |
-|---|---|
-| User | id (UUID), email, password_hash, mfa_enabled, status, created_at |
-| Role | id, name, capabilities[] |
-| ContentType | id (UUID), name, slug, fields[] |
-| Field | id, type, name, required, validation, sensitive |
-| ContentEntry | id (UUID), type_id, slug, status, author_id, locale, published_at |
-| Revision | id (UUID), entry_id, version, blocks(JSON), editor_id, created_at |
-| Media | id (UUID), filename, mime, size, checksum, path, created_at |
-| Menu / MenuItem | id, items[] / id, label, target, parent_id, order |
-| Form / FormSubmission | id, schema / id, form_id, data(JSON), consent, created_at |
-| Plugin | id, name, version, capabilities[], signature, enabled |
-| Secret | name, ciphertext, scope, created_at |
-| AuditEntry | id, action, actor_id, detail(JSON), prev_hash, at |
-| Session | id, user_id, expires_at, revoked |
-| ConsentRecord | id, subject_ref, scope, granted, at |
+| Entity                                      | Key fields                                                                                                                                               |
+|---------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| User                                        | id (UUID), email, password_hash, mfa_enabled, status, created_at                                                                                         |
+| Role                                        | id, name, capabilities[]                                                                                                                                 |
+| ContentType                                 | id (UUID), name, slug, fields[]                                                                                                                          |
+| Field                                       | id, type, name, required, validation, sensitive                                                                                                          |
+| ContentEntry                                | id (UUID), type_id, slug, status, author_id, locale, published_at                                                                                        |
+| Revision                                    | id (UUID), entry_id, version, blocks(JSON), editor_id, created_at                                                                                        |
+| Media                                       | id (UUID), filename, mime, size, checksum, path, created_at                                                                                              |
+| Menu / MenuItem                             | id, items[] / id, label, target, parent_id, order                                                                                                        |
+| Form / FormSubmission                       | id, schema / id, form_id, data(JSON), consent, created_at                                                                                                |
+| Plugin                                      | id, name, version, capabilities[], signature, enabled                                                                                                    |
+| Secret                                      | name, ciphertext, scope, created_at                                                                                                                      |
+| AuditEntry                                  | id, action, actor_id, detail(JSON), prev_hash, at                                                                                                        |
+| Session                                     | id, user_id, expires_at, revoked                                                                                                                         |
+| ConsentRecord                               | id, subject_ref, scope, granted, at                                                                                                                      |
+| Product *(inventory_items)*                 | id (UUID), name, slug, sku, price, compareAtPrice, currency, category_id, tags[], images[], options[], variants[], lowStockThreshold, published          |
+| ProductVariant *(embedded)*                 | id (UUID), optionValues{}, label, sku, price?, stock, lowStockThreshold?                                                                                 |
+| Category *(inventory_categories)*           | id (UUID), name, slug, description, parent_id                                                                                                            |
+| StockMovement *(inventory_stock_movements)* | id (UUID), item_id, variant_id, type, qty_delta, balance_after, reason, ref, at, seq                                                                     |
+| Order *(inventory_orders)*                  | id (UUID), number, status, lines[], subtotal, tax, shipping, discount, total, currency, customer{}, payment_status, amount_paid, amount_refunded, source |
+| Payment *(inventory_payments)*              | id (UUID), order_id, kind (payment/refund), amount, method, status, gateway, ref, at                                                                     |
+| Return *(inventory_returns)*                | id (UUID), number, order_id, status, lines[], reason, refund_amount, restock, refunded                                                                   |
+| StoreSettings *(inventory_settings)*        | id, storeName, currency, currencySymbol, taxRate, shippingFlat, lowStockThreshold                                                                        |
 
 ### Appendix C — Glossary
 See §1.3. Additional: **crypto-shred** — render data unrecoverable by destroying its encryption key; **tag cache** — cache keyed by content identity rather than time; **tombstone** — a marker recording that a record was erased while preserving referential integrity.

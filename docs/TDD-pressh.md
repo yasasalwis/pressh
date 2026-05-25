@@ -52,14 +52,26 @@ Full records in ADRs-pressh.md. Summary:
 - **Scaling:** in-process library; stateless except storage.
 
 ### 4.2 `@pressh/engine` (content runtime)
-- **Responsibility:** content types/fields, content entries, revisions, block system + sanitization, query resolver, i18n, media, render pipeline, cache-tag registry, GDPR data-subject operations.
+
+- **Responsibility:** content types/fields, content entries, revisions, block system + sanitization, query resolver,
+  i18n, media, render pipeline, cache-tag registry, GDPR data-subject operations, the **primitive page model** (
+  designer).
 - **Interfaces (out):** `ContentService`, `BlockRegistry`, `QueryResolver`, `MediaService`, `RenderService`, `GdprService`.
-- **Failure modes:** sanitization failure → drop block, log; render error in a block → fallback placeholder.
+- **Primitive page model (`primitives/`):** the designer renders a tree of type-validated primitives — every style value
+  is checked against a per-property grammar and **no inline `style`/`on*` attribute is ever emitted**, so output
+  satisfies the Site's hashed `style-src` CSP. Data primitive `collectionList` takes an optional `source` (
+  `"<plugin>:<resource>"`) that the host's `PrimitiveRenderContext` resolves to a plugin feed; commerce primitives
+  `addToCart` (emits CSP-safe `data-ps-add`) and `commerce` (`view: cart|cartButton|checkout`) exist for
+  plugin-contributed presets and are intentionally **not** in the base palette.
+- **Failure modes:** sanitization failure → drop block, log; render error in a block → fallback placeholder; an unknown
+  primitive type renders inert.
 - **Scaling:** pure functions over storage; cache memoizes render output per revision.
 
 ### 4.3 `@pressh/sdk` (plugin surface)
 - **Responsibility:** the only API plugins import. Subpackages: `worker` (proxy that turns calls into RPC), `host` (host-side registration/types), `internal` (shared types). Bundles CSRF, capability requests, sanitization helpers so authors can't bypass them.
-- **Interfaces:** typed proxies for storage, media, network (declared origins), secrets-by-name, hooks, endpoint registration.
+- **Interfaces:** typed proxies for storage, media, network (declared origins), secrets-by-name, hooks, endpoint
+  registration. The `PluginManifest` also declares `panelActions` (the panel-invocable allowlist) and an optional
+  `designerPresets` (a presets JSON file the plugin contributes to the designer palette).
 
 ### 4.4 `@pressh/runtime` (worker + iframe)
 - **Responsibility:** worker entry runner (loads plugin in worker, wires `parentPort` RPC), iframe shim for plugin admin panels.
@@ -69,17 +81,35 @@ Full records in ADRs-pressh.md. Summary:
 - **Responsibility:** shared React 19 components/design tokens for Studio and themes; accessible primitives.
 
 ### 4.6 PluginHost (in each app process)
-- **Responsibility:** discover `/plugins`, verify signature (prod), instantiate one worker per plugin, route RPC, enforce capability gate before dispatch, expose endpoint manifest to the dispatcher.
-- **Design notes:** one worker per plugin for fault isolation; structured-clone messages; capability check is host-side and authoritative.
+
+- **Responsibility:** discover `/plugins`, verify signature (prod), instantiate one worker per plugin, route RPC,
+  enforce capability gate before dispatch, expose endpoint manifest to the dispatcher, load+sanitize contributed
+  designer presets.
+- **Design notes:** one worker per plugin for fault isolation; structured-clone messages; capability check is host-side
+  and authoritative. `designerPresets()` returns contributed presets **only for enabled plugins** (ids namespaced
+  `plugin:id`, shape-validated/size-capped at load); a disabled plugin contributes neither endpoints nor presets.
 
 ### 4.7 `apps/site` (public)
 - **Responsibility:** Hono server; **front controller** (catch-all → `QueryResolver`), **API dispatcher** (catch-all `/api/*` → PluginHost), Vite SSR render, tag-cache + revalidation, sitemap/robots, image route, strict CSP headers.
 
 ### 4.8 `apps/studio` (admin)
-- **Responsibility:** Hono server serving the Vite-built React SPA; admin API + RPC; iframe-served plugin panels; seed CLI (admin bootstrap). Deployable behind allowlist.
+
+- **Responsibility:** Hono server serving the Vite-built React SPA; admin API + RPC; iframe-served plugin panels; seed
+  CLI (admin bootstrap); the designer-library endpoint (`/admin/api/designer/library`) merges built-in presets with *
+  *enabled-plugin** presets. Deployable behind allowlist.
 
 ### 4.9 `adapters/*`
 - **Responsibility:** `StorageAdapter` implementations for Postgres / SQLite / Mongo; migration from FS default.
+
+### 4.10 `builtins/*` (first-party plugins)
+
+- **Responsibility:** signed first-party plugins shipped in `builtins/` (DB, Inventory/Store, Forms, SEO, Analytics) —
+  same worker isolation + capability model as any plugin; all ship disabled.
+- **Inventory/Store:** a full commerce backend over plugin-owned collections — catalog (option axes + variants),
+  categories, audited stock ledger, orders, recorded payments (pluggable `PaymentGateway` seam; `manual` only in v1),
+  returns, and a dashboard. Ships a tabbed admin panel, public storefront endpoints (`feed`/`cartPreview`/`checkout`),
+  and contributed designer presets (Product Grid, Cart, Checkout, …). Order/return numbers via a serialized counter; the
+  stock ledger uses a monotonic `seq` tiebreaker.
 
 ## 5. Data Design
 
@@ -103,6 +133,30 @@ Session     { id:uuid, userId, expiresAt, revoked:bool }
 ```
 - **IDs:** UUID v4 everywhere (baseline #1; prevents IDOR).
 - **Indexes:** `(slug,locale,status)` on entries; `(entryId,version)` on revisions; `email` unique on users; `at` on audit.
+
+**Commerce (Inventory plugin) — plugin-owned, capability-gated collections (never `content_entries`):**
+
+```
+Product   (inventory_items)            { id:uuid, name, slug, sku, price, compareAtPrice?, currency,
+                                          categoryId?, tags[], images[], options[], variants[],
+                                          lowStockThreshold, seoTitle?, seoDescription?, published,
+                                          totalStock, inStock, lowStock }   // last 3 are denormalised roll-ups
+Variant   (embedded in Product)        { id:uuid, optionValues{}, label, sku, price?, stock, lowStockThreshold? }
+Category  (inventory_categories)       { id:uuid, name, slug, description?, parentId? }
+Movement  (inventory_stock_movements)  { id:uuid, itemId, variantId, type, qtyDelta, balanceAfter, reason?, ref?, at, seq }
+Order     (inventory_orders)           { id:uuid, number:int, status, lines[], subtotal, tax, shipping,
+                                          discount, total, currency, customer{}, paymentStatus,
+                                          amountPaid, amountRefunded, source, restocked }
+Payment   (inventory_payments)         { id:uuid, orderId, kind:'payment'|'refund', amount, method, status,
+                                          gateway, gatewayRef?, note?, at, seq }
+Return    (inventory_returns)          { id:uuid, number:int, orderId, status, lines[], reason?, refundAmount,
+                                          restock:bool, restocked:bool, refunded:bool }
+Counter   (inventory_counters)         { id:'orders'|'returns', value:int }   // serialized allocator
+Settings  (inventory_settings)         { id:'general', storeName, currency, currencySymbol, taxRate, shippingFlat, lowStockThreshold }
+```
+
+- **Authority:** prices and on-hand stock are server-authoritative; stock changes only via `inventory_stock_movements` (
+  sum of movements == on-hand). Reserved collections (`users`/`sessions`/`invites`) remain off-limits to the plugin.
 
 ### 5.2 Data Flow
 Create/edit → sanitize blocks → Zod validate → write entry + revision → register cache tag → append audit. Publish → state transition → revalidate tags → (Site) render on next request → cache → CDN. (See dashboard data-flow diagram.)
@@ -146,6 +200,12 @@ POST /v1/gdpr/erase            Auth: session+cap(gdpr.manage)+CSRF      Body:{su
 GET  /*                         Front controller → resolve URL → SSR HTML (published-only)
 ANY  /api/p/:plugin/:action     Dispatcher → capability check → plugin worker RPC
 GET  /sitemap.xml , /robots.txt
+
+# Public storefront (Inventory plugin endpoints, via the dispatcher above)
+GET  /api/p/inventory/items     → published, in-stock product feed (safe projection)
+POST /api/p/inventory/products  Body:{category?,tag?,search?,sort?,limit?} → filtered feed
+POST /api/p/inventory/cart      Body:{items:[{itemId,variantId,qty}]}      → authoritative re-priced lines + totals
+POST /api/p/inventory/checkout  Body:{items,customer:{name,email,...},note?} → {orderNumber} (validates+decrements stock)
 ```
 
 Error codes: 400 validation, 401 unauthenticated (uniform), 403 capability denied, 404 not found (also for unauthorized-to-see), 409 conflict (revision), 415 invalid upload, 429 rate-limited, 500 internal (no detail leaked).

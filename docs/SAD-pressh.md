@@ -40,29 +40,36 @@
 - **Curious/abusive authenticated user** — privilege escalation, IDOR.
 
 ### 2.3 STRIDE Analysis
-| # | Threat | STRIDE | Likelihood | Impact | Mitigation |
-|---|---|---|---|---|---|
-| 1 | Plugin executes arbitrary host code | Elevation | H | H | Worker-thread isolation; host never imports plugin code; RPC-only |
-| 2 | Plugin reads data beyond grant | Info Disclosure | M | H | Default-deny capability gate on every RPC |
-| 3 | IDOR via guessable IDs | Info Disclosure | M | M | UUID v4 IDs; published-only public scope |
-| 4 | User enumeration on public API | Info Disclosure | H | M | No user data publicly; uniform 401/404 responses |
-| 5 | Stored XSS via block content | Tampering | H | H | Per-block sanitization; raw HTML gated; strict CSP |
-| 6 | CSRF on admin mutations | Tampering | M | H | CSRF tokens enforced in SDK (cannot be omitted) |
-| 7 | File-upload RCE / polyglot | Elevation | M | H | Magic-byte + content-type + extension whitelist; stored outside web root; served via controlled route |
-| 8 | Secret theft from memory/env | Info Disclosure | M | H | Sealed AES-256-GCM vault; scoped tokens by name; never `process.env` to plugins |
-| 9 | Plugin admin UI steals session | Spoofing | M | H | Iframe sandbox (allow-scripts allow-forms); no same-origin cookie access; postMessage only |
-| 10 | Credential stuffing / brute force | Spoofing | H | M | Rate limit + lockout + argon2id |
-| 11 | Audit-history tampering | Repudiation | L | M | Append-only, hash-chained log; write fail = op fail |
-| 12 | Known-vulnerable plugin installed | Elevation | M | H | CVE feed; refuse flagged plugins; signature required in prod |
-| 13 | Plugin DoS (loop / memory bomb) | DoS | M | M | Per-worker CPU/timeout + memory caps; kill+restart |
-| 14 | SQL injection in plugin code | Tampering/Info | M | H | No raw DB access; `storage.raw` gated; parameterized adapter APIs |
-| 15 | Session fixation/hijack | Spoofing | M | H | httpOnly/Secure/SameSite cookies; rotate on login; TLS-only |
-| 16 | SSRF via plugin network calls | Info Disclosure | M | M | Egress restricted to manifest-declared origins; deny by default |
-| 17 | Public→admin lateral movement | Elevation | L | H | Two-process trust split; separate worker pools; admin allowlist |
-| 18 | Mass assignment / over-posting | Tampering | M | M | Zod schemas; explicit field allowlists |
+| #  | Threat                                                       | STRIDE          | Likelihood | Impact | Mitigation                                                                                                                                                                                                                                                      |
+|----|--------------------------------------------------------------|-----------------|------------|--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1  | Plugin executes arbitrary host code                          | Elevation       | H          | H      | Worker-thread isolation; host never imports plugin code; RPC-only                                                                                                                                                                                               |
+| 2  | Plugin reads data beyond grant                               | Info Disclosure | M          | H      | Default-deny capability gate on every RPC                                                                                                                                                                                                                       |
+| 3  | IDOR via guessable IDs                                       | Info Disclosure | M          | M      | UUID v4 IDs; published-only public scope                                                                                                                                                                                                                        |
+| 4  | User enumeration on public API                               | Info Disclosure | H          | M      | No user data publicly; uniform 401/404 responses                                                                                                                                                                                                                |
+| 5  | Stored XSS via block content                                 | Tampering       | H          | H      | Per-block sanitization; raw HTML gated; strict CSP                                                                                                                                                                                                              |
+| 6  | CSRF on admin mutations                                      | Tampering       | M          | H      | CSRF tokens enforced in SDK (cannot be omitted)                                                                                                                                                                                                                 |
+| 7  | File-upload RCE / polyglot                                   | Elevation       | M          | H      | Magic-byte + content-type + extension whitelist; stored outside web root; served via controlled route                                                                                                                                                           |
+| 8  | Secret theft from memory/env                                 | Info Disclosure | M          | H      | Sealed AES-256-GCM vault; scoped tokens by name; never `process.env` to plugins                                                                                                                                                                                 |
+| 9  | Plugin admin UI steals session                               | Spoofing        | M          | H      | Iframe sandbox (allow-scripts allow-forms); no same-origin cookie access; postMessage only                                                                                                                                                                      |
+| 10 | Credential stuffing / brute force                            | Spoofing        | H          | M      | Rate limit + lockout + argon2id                                                                                                                                                                                                                                 |
+| 11 | Audit-history tampering                                      | Repudiation     | L          | M      | Append-only, hash-chained log; write fail = op fail                                                                                                                                                                                                             |
+| 12 | Known-vulnerable plugin installed                            | Elevation       | M          | H      | CVE feed; refuse flagged plugins; signature required in prod                                                                                                                                                                                                    |
+| 13 | Plugin DoS (loop / memory bomb)                              | DoS             | M          | M      | Per-worker CPU/timeout + memory caps; kill+restart                                                                                                                                                                                                              |
+| 14 | SQL injection in plugin code                                 | Tampering/Info  | M          | H      | No raw DB access; `storage.raw` gated; parameterized adapter APIs                                                                                                                                                                                               |
+| 15 | Session fixation/hijack                                      | Spoofing        | M          | H      | httpOnly/Secure/SameSite cookies; rotate on login; TLS-only                                                                                                                                                                                                     |
+| 16 | SSRF via plugin network calls                                | Info Disclosure | M          | M      | Egress restricted to manifest-declared origins; deny by default                                                                                                                                                                                                 |
+| 17 | Public→admin lateral movement                                | Elevation       | L          | H      | Two-process trust split; separate worker pools; admin allowlist                                                                                                                                                                                                 |
+| 18 | Mass assignment / over-posting                               | Tampering       | M          | M      | Zod schemas; explicit field allowlists                                                                                                                                                                                                                          |
+| 19 | Storefront price tampering / oversell at checkout            | Tampering       | M          | H      | Public checkout/cart re-price and re-validate stock **server-side** from stored data; the client supplies only `{itemId, variantId, qty}` — never prices; stock decrements via the audited ledger with a non-negative guard                                     |
+| 20 | Anonymous order/checkout flood (stock-lock / write DoS)      | DoS             | M          | M      | Per-IP rate limit on `/api/p/*`; orders are cheap appends; cancel restocks via the ledger                                                                                                                                                                       |
+| 21 | Malicious plugin designer preset (stored XSS / CSS breakout) | Tampering       | L          | H      | Presets render through the same primitive renderer — all text escaped, URLs `safeUrl`'d, styles type-validated, **no inline `style`/`on*`** — preset shape is sanitized + size-capped at load; ids namespaced; presets surface only while the plugin is enabled |
+| 22 | Storefront client injects inline script/style (CSP bypass)   | Tampering       | L          | M      | Storefront client builds DOM with `textContent`/typed attributes only; styling ships as a bundled same-origin stylesheet — the strict `style-src 'self'` / `script-src 'self'` CSP holds (no `unsafe-inline`)                                                   |
 
 ### 2.4 Attack Surface Map
-- **Public Site:** front-controller URLs, `/api/p/*` dispatcher, media route, forms, sitemap/robots.
+
+- **Public Site:** front-controller URLs, `/api/p/*` dispatcher (incl. storefront
+  `inventory/{items,products,cart,checkout}` — unauthenticated, rate-limited, server-authoritative pricing/stock), media
+  route, forms, sitemap/robots.
 - **Studio:** `/admin/api/*`, login, upload, plugin install, iframe panels.
 - **Plugin boundary:** the SDK RPC channel (the *only* path host↔plugin).
 - **Storage:** filesystem/DB, vault file, audit log.
@@ -94,6 +101,9 @@
 - **Broken access control:** capability gate on every privileged op; published-only public scope; UUIDs.
 - **Insecure deserialization:** structured-clone RPC only; no `eval`/dynamic require of plugin code in host.
 - **Security misconfig:** secure defaults, prod refuses unsigned plugins, TLS enforced.
+- **Commerce integrity:** public storefront endpoints (`inventory/cart`, `inventory/checkout`) treat the client cart as
+  untrusted — prices and stock are recomputed server-side from stored data and stock is decremented through the audited
+  ledger; the contributed-preset surface renders only through the type-validated, no-inline primitive renderer.
 
 ### 3.5 Data (classification, encryption, masking)
 - Classify fields; `sensitive: true` → AES-256-GCM at rest, redacted in logs, separate capability to read.

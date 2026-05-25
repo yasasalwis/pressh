@@ -13,6 +13,11 @@ Pressh is a self-hosted, single-tenant CMS running as **two processes**:
 
 Both read shared on-disk state (`/content`, `/media`, `/plugins`, vault file) and a SQLite index (or external DB via adapter). Plugins run in isolated worker threads per process. State lives in storage, not memory — any process can be restarted safely.
 
+**Commerce (Inventory plugin):** when enabled, the store keeps all data — products, categories, the stock ledger,
+orders, payments, returns — in plugin-owned collections within the shared store, so the standard backup/restore (below)
+covers it. The public storefront serves orders/cart/checkout from the **Site** process. Customer order records contain
+PII (name/email/address) — include `inventory_orders` in GDPR subject scopes and apply a retention policy.
+
 **Boot dependencies (fail-closed):** `PRESSH_MASTER_KEY` must decrypt the vault; the audit log must be writable; in production, plugins must be validly signed (or `PRESSH_ALLOW_UNSIGNED=1`).
 
 ## Architecture Quick Reference
@@ -25,16 +30,17 @@ Shared volume: /content  /media  /plugins  vault.bin   +  SQLite index (or exter
 Full diagrams: `architecture-pressh-v1.html` → Diagrams.
 
 ## Monitoring & Alerting Reference
-| Alert | Meaning | Severity | First step |
-|---|---|---|---|
-| Site health check failing | Site process down/unresponsive | SEV-2 | Check container status + logs; restart; CDN serves stale meanwhile |
-| SSR p99 > 400ms sustained | Render slow / cache misses | SEV-3 | Check cache hit ratio; warm cache; scale site nodes |
-| Worker crash-loop (plugin X) | A plugin keeps crashing | SEV-3 | Disable/quarantine plugin; inspect worker logs |
-| Auth failure spike / lockouts | Brute force or credential stuffing | SEV-2 | Confirm rate-limit firing; consider IP block at proxy; check audit log |
-| Disk > 85% | Content/media/log growth | SEV-3 | Check media + audit growth; prune per retention; expand volume |
-| Vault decrypt failure on boot | Wrong/missing master key | SEV-1 | Supply correct `PRESSH_MASTER_KEY`; do NOT rotate blindly |
-| CVE-gate rejection on load | Plugin flagged vulnerable | SEV-3 | Verify CVE feed; update/remove plugin |
-| Audit write failure | Storage issue (ops fail closed) | SEV-1 | Restore log writability; mutations are being rejected |
+| Alert                                   | Meaning                            | Severity | First step                                                                                                      |
+|-----------------------------------------|------------------------------------|----------|-----------------------------------------------------------------------------------------------------------------|
+| Site health check failing               | Site process down/unresponsive     | SEV-2    | Check container status + logs; restart; CDN serves stale meanwhile                                              |
+| SSR p99 > 400ms sustained               | Render slow / cache misses         | SEV-3    | Check cache hit ratio; warm cache; scale site nodes                                                             |
+| Worker crash-loop (plugin X)            | A plugin keeps crashing            | SEV-3    | Disable/quarantine plugin; inspect worker logs                                                                  |
+| Auth failure spike / lockouts           | Brute force or credential stuffing | SEV-2    | Confirm rate-limit firing; consider IP block at proxy; check audit log                                          |
+| Disk > 85%                              | Content/media/log growth           | SEV-3    | Check media + audit growth; prune per retention; expand volume                                                  |
+| Vault decrypt failure on boot           | Wrong/missing master key           | SEV-1    | Supply correct `PRESSH_MASTER_KEY`; do NOT rotate blindly                                                       |
+| CVE-gate rejection on load              | Plugin flagged vulnerable          | SEV-3    | Verify CVE feed; update/remove plugin                                                                           |
+| Audit write failure                     | Storage issue (ops fail closed)    | SEV-1    | Restore log writability; mutations are being rejected                                                           |
+| Checkout error rate up / orders stalled | Storefront checkout failing        | SEV-2    | Confirm Inventory plugin enabled (`has('inventory')`); check worker logs; verify stock/settings; see playbook 6 |
 
 **Tooling:** logs (pino JSON), metrics (Prometheus), traces (OpenTelemetry), audit log viewer in Studio.
 
@@ -96,6 +102,20 @@ pressh migrate --down <version>              # only if a migration must be rever
 ### 5. Disk full / storage pressure
 - **Diagnose:** `df -h`; identify growth (media vs audit vs revisions).
 - **Remediate:** apply retention purge (`pressh gdpr:purge`, revision cap); offload media to object store; expand volume. Never delete the audit log manually (purges must be audited).
+
+### 6. Storefront checkout failing / stock looks wrong
+
+- **Symptom:** customers can't check out, orders stall in `pending`, or on-hand stock disagrees with the catalog.
+- **Diagnose:** confirm the **Inventory** plugin is enabled (a disabled plugin makes `/api/p/inventory/*` 404 and
+  product grids render their empty state); check the Site worker logs for the plugin; in Studio → Inventory → Stock,
+  compare a variant's on-hand against its movement ledger (they must reconcile).
+- **Remediate:** re-enable the plugin if off; checkout validates price + stock server-side, so a rejected checkout
+  usually means genuinely insufficient stock — restock via Studio → Inventory → Stock (a `receive` movement). For an
+  order placed but not captured, record/refund payment from the order detail (payments are recorded, not charged — no
+  external gateway in v1). Cancelling an order restocks it through the ledger.
+- **Escalate:** SEV-2 if checkout is down during a sale; the public site itself stays up (only the store widgets are
+  affected).
+- **Post:** confirm the stock ledger reconciles; check for any oversell (guarded server-side, but verify).
 
 ## Disaster Recovery Procedures
 - **RTO:** ~15–30 min (single-node restore). **RPO:** ≤ 24h daily backups; ≤ 1h with hourly snapshots / DB WAL.
