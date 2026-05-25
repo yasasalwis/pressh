@@ -1,24 +1,25 @@
-import { copyFile, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-import {
-  PressError,
-  createBackup,
-  createStorageFromConfig,
-  loadStorageConfig,
-  migrateStorage,
-  saveStorageConfig,
-} from "@pressh/core";
+import {copyFile, mkdir, readFile, rm, writeFile} from "node:fs/promises";
+import {join} from "node:path";
 import type {
   AuditLog,
+  Page,
   PersistedStorageConfig,
   SecretsBackend,
   StorageAdapter,
   StorageBackend,
   StorageConfig,
   StorageFactory,
+  StoredDoc,
 } from "@pressh/core";
-import { readFile, writeFile } from "node:fs/promises";
-import type { MigrationLock } from "./migration-lock.js";
+import {
+  createBackup,
+  createStorageFromConfig,
+  loadStorageConfig,
+  migrateStorage,
+  PressError,
+  saveStorageConfig,
+} from "@pressh/core";
+import type {MigrationLock} from "./migration-lock.js";
 
 const SETTINGS_COLLECTION = "settings";
 const SETTINGS_DOC = "general";
@@ -189,7 +190,8 @@ export interface DbManagerService {
   testConnection(input: { backend: StorageBackend; values: Record<string, string> }): Promise<{ ok: true }>;
   startMigration(actorId: string, input: StartMigrationInput): MigrationRunView;
   migrationStatus(): MigrationRunView | null;
-  cleanup(actorId: string): Promise<{ removed: boolean }>;
+
+  cleanup(actorId: string, options?: { keep?: boolean }): Promise<{ removed: boolean }>;
   /** Resolves when the in-flight migration settles (test helper; no-op when idle). */
   whenSettled(): Promise<void>;
 }
@@ -247,10 +249,11 @@ async function countByCollection(adapter: StorageAdapter): Promise<Map<string, n
     let cursor: string | null = null;
     let n = 0;
     do {
-      const page = await adapter.query(collection, {}, { limit: COUNT_PAGE, after: cursor });
+      const page = await adapter.query<StoredDoc>(collection, {}, {limit: COUNT_PAGE, after: cursor});
       if (!page.ok) throw page.error;
-      n += page.value.items.length;
-      cursor = page.value.nextCursor;
+      const value: Page<StoredDoc> = page.value;
+      n += value.items.length;
+      cursor = value.nextCursor;
     } while (cursor !== null);
     counts.set(collection, n);
   }
@@ -263,10 +266,11 @@ async function purgeAll(adapter: StorageAdapter): Promise<void> {
   for (const collection of cols.value) {
     let cursor: string | null = null;
     do {
-      const page = await adapter.query(collection, {}, { limit: COUNT_PAGE, after: cursor });
+      const page = await adapter.query<StoredDoc>(collection, {}, {limit: COUNT_PAGE, after: cursor});
       if (!page.ok) throw page.error;
-      for (const item of page.value.items) await adapter.delete(collection, item.id);
-      cursor = page.value.nextCursor;
+      const value: Page<StoredDoc> = page.value;
+      for (const item of value.items) await adapter.delete(collection, item.id);
+      cursor = value.nextCursor;
     } while (cursor !== null);
   }
 }
@@ -471,8 +475,11 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
       if (current && (current.phase !== "done" && current.phase !== "failed" && current.phase !== "awaiting-restart")) {
         throw new PressError("conflict", "A migration is already in progress");
       }
-      if (input.backend === connector(input.backend).backend && input.backend === "fs") {
-        throw new PressError("validation", "Already using the file backend");
+      // Validates the backend exists; migrating back to the file store is out of
+      // scope (its target root would collide with the source content dir).
+      connector(input.backend);
+      if (input.backend === "fs") {
+        throw new PressError("validation", "Switching back to the file backend is not supported");
       }
       current = {
         id: `mig-${now()}`,
@@ -496,9 +503,14 @@ export function createDbManager(opts: DbManagerOptions): DbManagerService {
       return current;
     },
 
-    async cleanup(actorId) {
+    async cleanup(actorId, options) {
       const marker = await readMarker();
       if (!marker) return { removed: false };
+      // "Keep" dismisses the prompt without touching the retained store.
+      if (options?.keep) {
+        await rm(previousMarkerPath, {force: true});
+        return {removed: false};
+      }
       const from = marker.config;
       if (from.backend === "fs") {
         const root = typeof from.options?.["root"] === "string" ? (from.options["root"] as string) : opts.contentRoot;

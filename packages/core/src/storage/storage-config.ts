@@ -1,11 +1,11 @@
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { PressError } from "../errors.js";
-import type { SecretsBackend } from "../secrets.js";
-import { createFileSystemStorage } from "./fs-adapter.js";
-import { createStorageFromConfig } from "./migrate.js";
-import type { StorageConfig, StorageFactory } from "./migrate.js";
-import type { StorageAdapter } from "./types.js";
+import {mkdir, readFile, rename, stat, writeFile} from "node:fs/promises";
+import {dirname} from "node:path";
+import {PressError} from "../errors.js";
+import type {SecretsBackend} from "../secrets.js";
+import {createFileSystemStorage} from "./fs-adapter.js";
+import type {StorageConfig, StorageFactory} from "./migrate.js";
+import {createStorageFromConfig} from "./migrate.js";
+import type {StorageAdapter} from "./types.js";
 
 /**
  * The active storage backend is persisted OUTSIDE the content store (it cannot
@@ -127,6 +127,7 @@ export function watchStorageConfig(
   intervalMs = 2000,
 ): () => void {
   let last: number | null = null;
+  let ready = false;
   let fired = false;
   let stopped = false;
 
@@ -138,17 +139,23 @@ export function watchStorageConfig(
     }
   };
 
+  // Establish the baseline before comparing, so a slow initial stat can't be
+  // mistaken for a change on the first tick.
   void readMtime().then((m) => {
     last = m;
+    ready = true;
   });
 
   const timer = setInterval(() => {
     void readMtime().then((m) => {
-      if (stopped || fired) return;
-      if (last !== null && m !== null && m !== last) {
+      if (stopped || fired || !ready) return;
+      // Fire when the file is created (null → present) OR modified (mtime
+      // changed). Deletion (present → null) is ignored — never restart on that.
+      if (m !== null && m !== last) {
         fired = true;
         clearInterval(timer);
         onChange();
+        return;
       }
       last = m;
     });

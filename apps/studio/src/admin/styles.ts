@@ -237,4 +237,22 @@ table.tbl .actions{display:flex;gap:.35rem;justify-content:flex-end}
 .menu-btn{display:none;background:transparent;border:1px solid var(--card-border);border-radius:8px;
   padding:.3rem .55rem;cursor:pointer;color:var(--text)}
 @media(max-width:760px){.menu-btn{display:inline-block}}
+
+/* ── Database Manager ── */
+.db-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem}
+.db-card{background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:1rem;
+  display:flex;flex-direction:column;gap:.5rem}
+.db-card.active{border-color:#16a34a;box-shadow:0 0 0 1px #16a34a33}
+.db-card-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.db-card .hint{flex:1;margin:0}
+.db-card-foot{display:flex;justify-content:flex-end;align-items:center;min-height:32px}
+.db-steps{display:flex;flex-direction:column;gap:.5rem;margin:1rem 0}
+.db-step{display:flex;align-items:center;gap:.6rem;color:var(--muted);font-size:.9rem}
+.db-step .db-step-mark{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border-radius:50%;border:1px solid var(--card-border);font-size:.75rem}
+.db-step.active{color:var(--text);font-weight:600}
+.db-step.active .db-step-mark{border-color:#d97706;color:#d97706}
+.db-step.done{color:var(--text)}
+.db-step.done .db-step-mark{background:#16a34a;border-color:#16a34a;color:#fff}
+@media(max-width:760px){.db-grid{grid-template-columns:1fr}}
 `;

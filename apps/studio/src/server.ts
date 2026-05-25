@@ -1,10 +1,10 @@
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { readdir } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
-import { serve } from "@hono/node-server";
+import {join} from "node:path";
+import {pathToFileURL} from "node:url";
+import {readdir} from "node:fs/promises";
+import {randomBytes} from "node:crypto";
+import {serve} from "@hono/node-server";
+import type {SecretsBackend} from "@pressh/core";
 import {
-  MASTER_KEY_BYTES,
   createAuthService,
   createCsrf,
   createFileAuditLog,
@@ -12,23 +12,24 @@ import {
   createScheduler,
   deriveMasterKey,
   loadStorageConfig,
+  MASTER_KEY_BYTES,
   watchStorageConfig,
 } from "@pressh/core";
-import type { SecretsBackend } from "@pressh/core";
-import { buildStorage } from "./storage.js";
+import {buildStorage, STORAGE_FACTORIES} from "./storage.js";
 import {
-  PUBLISH_JOB_TYPE,
   createContentService,
   createGdprService,
   createSettingsService,
   createThemeService,
+  PUBLISH_JOB_TYPE,
 } from "@pressh/engine";
-import { PluginHost, createCveService, createPluginStateStore } from "@pressh/runtime";
-import type { CveFeedSource } from "@pressh/runtime";
-import { createStudioApp, seedDemoContent } from "./app.js";
-import type { PanelProvider, PluginControlProvider, PluginInfoProvider } from "./app.js";
-import { createMediaService } from "./media.js";
-import { createMigrationLock } from "./migration-lock.js";
+import type {CveFeedSource} from "@pressh/runtime";
+import {createCveService, createPluginStateStore, PluginHost} from "@pressh/runtime";
+import type {PanelProvider, PluginControlProvider, PluginInfoProvider} from "./app.js";
+import {createStudioApp, seedDemoContent} from "./app.js";
+import {createMediaService} from "./media.js";
+import {createMigrationLock} from "./migration-lock.js";
+import {createDbManager} from "./db-manager.js";
 
 /** Registers every plugin folder under `dir` without spawning workers; the state
  * store decides which actually start. Per-plugin failures are swallowed so one
@@ -94,12 +95,10 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   // strings). Built before storage because DB backends resolve their connection
   // string from the vault. Optional in dev; when absent the Settings/Database
   // screens report credential storage disabled.
+  const vaultPath = opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json");
   let secrets: SecretsBackend | undefined;
   if (opts.masterKey) {
-    secrets = await createFileSecretsBackend({
-      path: opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json"),
-      key: opts.masterKey,
-    });
+    secrets = await createFileSecretsBackend({path: vaultPath, key: opts.masterKey});
   }
 
   // Active storage backend is chosen by `storage.json` (written by the Database
@@ -109,9 +108,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const persistedStorage = await loadStorageConfig(storageConfigPath);
   const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets);
 
-  const audit = await createFileAuditLog({
-    path: opts.auditPath ?? join(opts.contentRoot, "..", "audit.log"),
-  });
+  const auditPath = opts.auditPath ?? join(opts.contentRoot, "..", "audit.log");
+  const audit = await createFileAuditLog({path: auditPath});
   const auth = await createAuthService({ storage, audit });
   const scheduler = createScheduler({ storage, audit });
   const content = createContentService({ storage, audit, scheduler });
@@ -174,6 +172,18 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   };
 
   const migrationLock = createMigrationLock();
+  const dbManager = createDbManager({
+    factories: STORAGE_FACTORIES,
+    storage,
+    secrets,
+    audit,
+    migrationLock,
+    contentRoot: opts.contentRoot,
+    mediaRoot: opts.mediaRoot,
+    auditPath,
+    vaultPath,
+    storageConfigPath,
+  });
 
   const app = createStudioApp({
     auth,
@@ -190,6 +200,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     gdpr,
     cve,
     migrationLock,
+    dbManager,
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
 

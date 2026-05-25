@@ -35,46 +35,102 @@ Pressh eliminates each of these by design:
 - **i18n** — per-locale content variants out of the box
 - **GDPR-native** — data-subject export, erasure, consent tracking, and retention policies built into v1
 - **Observability** — structured Pino logging (with redaction), Prometheus metrics, request-ID tracing, immutable audit log
-- **Flexible storage** — filesystem + SQLite by default; swap to PostgreSQL or MongoDB via adapter
+- **Flexible storage** — filesystem + SQLite by default; switch to SQLite, PostgreSQL, MySQL/MariaDB, or MongoDB from
+  Studio → Database (no-downtime-window migration with backup, verify, and auto cut-over)
 - **Two-process architecture** — Studio (admin) and Site (public) run as separate OS processes; compromise of the public site cannot touch admin data
 
 ---
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Monorepo                                                   │
-│                                                             │
-│  packages/                                                  │
-│    @pressh/core     ← auth, storage, capabilities, audit   │
-│    @pressh/engine   ← content types, blocks, workflow      │
-│    @pressh/sdk      ← plugin types & RPC protocol          │
-│    @pressh/runtime  ← plugin host, worker isolation        │
-│    @pressh/ui-kit   ← shared UI components                 │
-│                                                             │
-│  adapters/                                                  │
-│    @pressh/adapter-sqlite    ← default (embedded)          │
-│    @pressh/adapter-postgres  ← external Postgres           │
-│    @pressh/adapter-mongo     ← MongoDB                     │
-│                                                             │
-│  apps/                                                      │
-│    @pressh/site    :3000 ← public-facing, SSR              │
-│    @pressh/studio  :4000 ← admin CMS (internal only)      │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph public["Public zone — internet-facing"]
+        Visitor([Visitor])
+        Site["@pressh/site<br/>SSR · :3000"]
+        Visitor -->|HTTPS| Site
+    end
+    subgraph adminzone["Admin zone — internal only"]
+        Editor(["Editor / Admin"])
+        Studio["@pressh/studio<br/>CMS · :4000"]
+        Editor -->|"VPN · IP allowlist"| Studio
+    end
+
+    subgraph libs["Shared libraries — packages/"]
+        Engine["@pressh/engine<br/>content types · blocks · workflow"]
+        Runtime["@pressh/runtime<br/>plugin host · worker isolation"]
+        Core["@pressh/core<br/>auth · storage · capabilities · audit"]
+        SDK["@pressh/sdk<br/>plugin types · RPC protocol"]
+    end
+
+    subgraph store["Persistent /data volume"]
+        Adapter{{"Storage adapter<br/>filesystem · sqlite · postgres · mysql · mongo"}}
+        Disk[("content · media · audit.log")]
+    end
+
+    Site --> Engine
+    Studio --> Engine
+    Site --> Runtime
+    Studio --> Runtime
+    Runtime -.-> SDK
+    Engine --> Core
+    Core --> Adapter
+    Adapter --> Disk
 ```
 
 **Two-process trust split:** Studio and Site are independent server processes sharing only a volume. In production, Studio should never be reachable from the public internet.
 
-**Plugin isolation model:**
+### Communication & plugin RPC
 
+How an admin mutation flows through the system — session and CSRF checks, plugin hooks gated by capability,
+parameterized storage, and an immutable audit entry:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Editor
+    participant Studio
+    participant Host as PluginHost
+    participant Worker as Plugin worker thread
+    participant Gate as Capability gate
+    participant Store as Storage adapter
+    participant Audit as Audit log
+
+    Editor->>Studio: POST /content (+ CSRF token)
+    Studio->>Studio: Verify session + CSRF
+    Studio->>Host: Fire content hook
+    Host->>Worker: structured RPC over parentPort
+    Worker->>Host: host.storage.read('posts')
+    Host->>Gate: check declared capability
+    alt capability granted
+        Gate->>Store: parameterized query
+        Store-->>Worker: result
+    else denied (default)
+        Gate-->>Worker: forbidden — rejected before execution
+    end
+    Studio->>Store: persist revision
+    Studio->>Audit: append immutable entry
+    Studio-->>Editor: 200 — updated content
 ```
-Studio process
-  └── PluginHost
-        └── Worker thread (plugin code)
-              ↕  structured RPC over parentPort
-              capability gate checks on every call
-              sandboxed iframe for plugin UI
+
+### Plugin isolation
+
+Every plugin runs in its own worker thread, reached only through a capability-gated RPC bridge. Its admin UI is confined
+to a sandboxed iframe that cannot touch the host DOM.
+
+```mermaid
+flowchart LR
+    Manifest["pressh.plugin.json<br/>declared capabilities"] -->|"load-time"| Host
+    subgraph proc["Site / Studio process"]
+        Host[PluginHost]
+        subgraph sandbox["Worker thread — sandbox · no eval · no vm"]
+            Plugin[Plugin code]
+            IFrame["Admin UI<br/>sandboxed iframe"]
+        end
+    end
+    Host -->|"signature + CVE check"| Host
+    Host <-->|"RPC · capability gate — default deny"| Plugin
+    Plugin -.->|cannot touch host DOM| IFrame
 ```
 
 Plugins declare their capabilities in `pressh.plugin.json`. Any call beyond the granted set is rejected before execution.
@@ -395,7 +451,43 @@ Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to eve
 
 ## Security Baselines
 
-Pressh ships with 14 security baselines enforced by `tests/security-baselines.test.ts`:
+Pressh ships with 14 security baselines enforced by `tests/security-baselines.test.ts`. The
+defenses are layered across the trust boundaries — public site, admin studio, plugin runtime,
+and data layer:
+
+```mermaid
+flowchart TB
+    Net{{"Public internet"}} -->|"TLS only"| Edge
+    Net -. blocked .-> Login
+
+    subgraph site["Site — public process"]
+        Edge["CSP + security headers"]
+        Edge --> NoEnum["No user-enumeration endpoints"]
+    end
+
+    subgraph studio["Studio — admin process, internal only"]
+        Login["Argon2id + rate-limit + lockout"]
+        Login --> Session["Session expiry + rotation"]
+        Session --> CSRF["CSRF token enforced"]
+        CSRF --> Sanitize["sanitize-html on rich text"]
+        Sanitize --> MIME["MIME allowlist on uploads"]
+    end
+
+    subgraph runtime["Plugin runtime — both processes"]
+        Sign["Signed + CVE-checked at load"]
+        Sign --> Sandbox["Worker-thread isolation · no eval"]
+        Sandbox --> CapGate["Default-deny capability gate"]
+    end
+
+    NoEnum --> Vault
+    MIME --> Vault
+    CapGate --> Vault
+
+    subgraph data["Data layer"]
+        Vault[Secrets encrypted at rest<br/>master-key derivation]
+        Vault --> AuditLog[("Append-only audit log")]
+    end
+```
 
 1. Argon2id password hashing (no MD5/bcrypt/SHA-1)
 2. CSRF tokens on all admin mutations

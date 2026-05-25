@@ -1,16 +1,12 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { PressError } from "../errors.js";
-import type { SecretsBackend } from "../secrets.js";
-import type { StorageConfig, StorageFactory } from "./migrate.js";
-import type { StorageAdapter } from "./types.js";
-import {
-  loadStorageConfig,
-  resolveStorage,
-  saveStorageConfig,
-} from "./storage-config.js";
+import {mkdtemp, readFile, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {PressError} from "../errors.js";
+import type {SecretsBackend} from "../secrets.js";
+import type {StorageConfig, StorageFactory} from "./migrate.js";
+import type {StorageAdapter} from "./types.js";
+import {loadStorageConfig, resolveStorage, saveStorageConfig, watchStorageConfig,} from "./storage-config.js";
 
 const stubAdapter = (): StorageAdapter =>
   ({
@@ -88,6 +84,25 @@ describe("storage-config", () => {
     expect((received as unknown as StorageConfig)["database"]).toBe("presshprod");
     expect((received as unknown as StorageConfig)["credential"]).toBe("mongodb://u:p@host/db");
   });
+
+    it("fires the watcher when the config file is first created (fresh-install cutover)", async () => {
+        let fired = 0;
+        const stop = watchStorageConfig(path, () => (fired += 1), 30);
+        await new Promise((r) => setTimeout(r, 80)); // establish baseline (absent)
+        await saveStorageConfig(path, {backend: "sqlite", options: {path: "/x.sqlite"}});
+        await new Promise((r) => setTimeout(r, 120));
+        stop();
+        expect(fired).toBe(1);
+    });
+
+    it("does not fire while the config file is unchanged", async () => {
+        await saveStorageConfig(path, {backend: "sqlite"});
+        let fired = 0;
+        const stop = watchStorageConfig(path, () => (fired += 1), 30);
+        await new Promise((r) => setTimeout(r, 150));
+        stop();
+        expect(fired).toBe(0);
+    });
 
   it("throws when a DB backend needs credentials but no vault is configured", async () => {
     await expect(

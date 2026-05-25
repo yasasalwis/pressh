@@ -119,6 +119,22 @@ curl -fsS https://<host>/healthz
 
 ## Maintenance Procedures
 - **Database / index migrations:** `pressh migrate` (idempotent, forward); test on a restored backup first; index rebuild is always safe (derived from canonical files).
+- **Switching the storage backend (Database Manager):** Studio → **Database** changes the active store (File → SQLite /
+  PostgreSQL / MySQL / MongoDB). The flow is, in order: test the target connection → put the public Site into
+  maintenance mode (HTTP 503) → copy every record → verify per-collection counts → snapshot the old store to
+  `<data>/backups/pre-migration-<ts>` → write `<data>/storage.json` and clear maintenance on the new store → **both
+  processes exit and the supervisor restarts them on the new backend** → the old store is removed (a
+  `<data>/storage.json.previous` marker drives this after the restart; the backup is retained).
+    - **Prerequisites:** `PRESSH_MASTER_KEY` must be set on **both** Studio and Site (the connection string is sealed in
+      the vault), and a process supervisor must auto-restart on clean exit (compose `restart: unless-stopped`, systemd
+      `Restart=always`, or pm2). The target database must be empty.
+    - **Expected downtime:** a maintenance window of a few seconds to minutes (proportional to data size) plus one
+      restart blip on each process.
+    - **If it fails before cutover:** nothing changes — maintenance mode is lifted, the lock is released, and the app
+      keeps serving the current store. Re-check the target connection and retry.
+    - **Rollback after cutover:** restore the retained `pre-migration-<ts>` backup over `<data>` (or delete
+      `storage.json` to fall back to the filesystem) and restart. The pre-cutover store/backup is kept until you
+      explicitly remove it (Studio prompts, or it auto-removes only when you opted in).
 - **Certificate rotation:** managed at the proxy (Caddy auto-renews; Nginx via your ACME tooling). Pressh requires TLS in prod — verify after rotation.
 - **Master key rotation:** `pressh vault:rotate` re-encrypts all secrets under a new `PRESSH_MASTER_KEY`; keep the old key until rotation completes; back up the vault first.
 - **Dependency updates:** bump pinned versions on a branch; CI must pass (typecheck, tests, dependency/secret/SAST scan); deploy via standard procedure.

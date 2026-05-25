@@ -1,13 +1,22 @@
 # Single-host deployment of the two-process trust split (ADR-002).
 # `studio` (admin) is reachable only on the internal network here; front it with
 # a reverse proxy + IP allowlist in production (see RUNBOOK).
+#
+# `restart: unless-stopped` is REQUIRED for the Database Manager: switching the
+# storage backend writes /data/storage.json and each process exits cleanly so the
+# supervisor restarts it on the new database. Both processes share /data, so they
+# read the same storage.json + vault and both cut over.
 services:
   site:
     build: .
     command: ["node", "apps/site/dist/server.js"]
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       PRESSH_CONTENT_ROOT: /data/content
+      # Supply the same key as the Studio: the Site reads sealed database
+      # credentials from the shared vault after a Database-Manager cutover.
+      # PRESSH_MASTER_KEY must be supplied as a secret.
     volumes:
       - pressh-data:/data
     ports:
@@ -21,6 +30,7 @@ services:
   studio:
     build: .
     command: ["node", "apps/studio/dist/server.js"]
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       PRESSH_CONTENT_ROOT: /data/content

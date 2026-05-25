@@ -1,25 +1,28 @@
-import { readFile } from "node:fs/promises";
-import { Hono } from "hono";
-import type { Context, Next } from "hono";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { CapabilityGate, PressError, createMetrics, createRateLimiter, requestId } from "@pressh/core";
-import type { AuditLog, AuthService, CsrfProtection, RoleName, StorageAdapter, User } from "@pressh/core";
+import {readFile} from "node:fs/promises";
+import type {Context, Next} from "hono";
+import {Hono} from "hono";
+import {deleteCookie, getCookie, setCookie} from "hono/cookie";
+import type {AuditLog, AuthService, CsrfProtection, RoleName, StorageAdapter, User} from "@pressh/core";
+import {CapabilityGate, createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
 import type {
+  ContentEntry,
   ContentService,
   ContentStatus,
   FieldDef,
   GdprService,
+  PrimitiveNode,
+  PrimitiveRenderContext,
   SettingsService,
   ThemeService,
 } from "@pressh/engine";
-import { PRESETS, PRIMITIVE_DEFS, renderTree } from "@pressh/engine";
-import type { ContentEntry, PrimitiveNode, PrimitiveRenderContext } from "@pressh/engine";
-import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
-import type { CveService, PluginInfo } from "@pressh/runtime";
-import { MAX_UPLOAD_BYTES } from "./media.js";
-import type { MediaService } from "./media.js";
-import type { MigrationLock } from "./migration-lock.js";
-import { ADMIN_HTML } from "./admin-html.js";
+import {PRESETS, PRIMITIVE_DEFS, renderTree} from "@pressh/engine";
+import type {CveService, PluginInfo} from "@pressh/runtime";
+import {panelFrameTag, wrapPanelHtml} from "@pressh/runtime";
+import type {MediaService} from "./media.js";
+import {MAX_UPLOAD_BYTES} from "./media.js";
+import type {MigrationLock} from "./migration-lock.js";
+import type {DbManagerService, StartMigrationInput} from "./db-manager.js";
+import {ADMIN_HTML} from "./admin-html.js";
 
 /** Source of plugin admin panels (wired from the PluginHost in the bootstrap). */
 export interface PanelProvider {
@@ -60,6 +63,8 @@ export interface StudioAppDeps {
   cve?: CveService;
   /** When locked (during a DB migration), data-mutating admin routes return 409. */
   migrationLock?: MigrationLock;
+  /** Database Manager: switch storage backend, migrate data, cut over. */
+  dbManager?: DbManagerService;
   production?: boolean;
 }
 
@@ -703,6 +708,51 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.put("/admin/api/settings", requireSession, requireCsrf, requireCap("settings.manage"), async (c) => {
     const body = await c.req.json();
     return run(c, () => deps.settings.updateSettings(caps(c), body));
+  });
+
+  // --- database manager: connectors, credential test, migrate, cleanup ---
+  const dbUnavailable = (c: Context<Vars>): Response =>
+      c.json({error: {code: "not_found", message: "Database manager not enabled"}}, 404);
+
+  app.get("/admin/api/db/status", requireSession, requireCap("db.manage"), async (c) =>
+      deps.dbManager ? run(c, () => deps.dbManager!.status()) : dbUnavailable(c),
+  );
+
+  app.get("/admin/api/db/migrate/status", requireSession, requireCap("db.manage"), (c) =>
+      deps.dbManager ? c.json({ok: true, data: {migration: deps.dbManager.migrationStatus()}}) : dbUnavailable(c),
+  );
+
+  app.post("/admin/api/db/test", requireSession, requireCsrf, requireCap("db.manage"), async (c) => {
+    if (!deps.dbManager) return dbUnavailable(c);
+    const body = await c.req
+        .json<{ backend?: unknown; values?: unknown }>()
+        .catch(() => ({}) as { backend?: unknown; values?: unknown });
+    return run(c, () =>
+        deps.dbManager!.testConnection({
+          backend: body.backend as StartMigrationInput["backend"],
+          values: (body.values as Record<string, string>) ?? {},
+        }),
+    );
+  });
+
+  app.post("/admin/api/db/migrate", requireSession, requireCsrf, requireCap("db.manage"), async (c) => {
+    if (!deps.dbManager) return dbUnavailable(c);
+    const body = await c.req
+        .json<Partial<StartMigrationInput>>()
+        .catch(() => ({}) as Partial<StartMigrationInput>);
+    return run(c, async () =>
+        deps.dbManager!.startMigration(c.get("user").id, {
+          backend: body.backend as StartMigrationInput["backend"],
+          values: body.values ?? {},
+          ...(body.removeOld !== undefined ? {removeOld: body.removeOld} : {}),
+        }),
+    );
+  });
+
+  app.post("/admin/api/db/cleanup", requireSession, requireCsrf, requireCap("db.manage"), async (c) => {
+    if (!deps.dbManager) return dbUnavailable(c);
+    const body = await c.req.json<{ keep?: boolean }>().catch(() => ({}) as { keep?: boolean });
+    return run(c, () => deps.dbManager!.cleanup(c.get("user").id, {keep: body.keep === true}));
   });
 
   // --- audit log viewer (append-only, hash-chained) ---

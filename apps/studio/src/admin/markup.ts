@@ -1,4 +1,4 @@
-import { DESIGNER_MARKUP } from "./designer.js";
+import {DESIGNER_MARKUP} from "./designer.js";
 
 /** Body markup for the Studio admin client: auth screens, app shell + sidebar, designer overlay. */
 export const MARKUP = String.raw`
@@ -76,6 +76,7 @@ export const MARKUP = String.raw`
         <a class="nav-item" data-section="settings" href="#/settings" data-cap="settings.manage"><span class="ico">&#9881;</span>Settings</a>
         <div class="nav-group-label" data-cap="audit.read">System</div>
         <a class="nav-item" data-section="plugins" href="#/plugins" data-cap="plugins.manage"><span class="ico">&#129513;</span>Plugins</a>
+        <a class="nav-item" data-section="database" href="#/database" data-cap="db.manage"><span class="ico">&#128190;</span>Database</a>
         <a class="nav-item" data-section="privacy" href="#/privacy" data-cap="gdpr.manage"><span class="ico">&#128274;</span>Privacy &amp; GDPR</a>
         <a class="nav-item" data-section="audit" href="#/audit" data-cap="audit.read"><span class="ico">&#128220;</span>Audit Log</a>
       </nav>

@@ -1,14 +1,13 @@
-import { createHash } from "node:crypto";
-import { createReadStream, existsSync, statSync } from "node:fs";
-import { extname, resolve as resolvePath } from "node:path";
-import { Readable } from "node:stream";
-import { createElement } from "react";
-import { renderToString } from "react-dom/server";
-import { Hono } from "hono";
-import type { Context } from "hono";
-import { PressError, createMetrics, createRateLimiter, requestId } from "@pressh/core";
-import type { Metrics, StorageAdapter } from "@pressh/core";
-import { DESIGNER_LAYOUT_BLOCK, SYSTEM_SLUGS, renderTree } from "@pressh/engine";
+import {createHash} from "node:crypto";
+import {createReadStream, existsSync, statSync} from "node:fs";
+import {extname, resolve as resolvePath} from "node:path";
+import {Readable} from "node:stream";
+import {createElement} from "react";
+import {renderToString} from "react-dom/server";
+import type {Context} from "hono";
+import {Hono} from "hono";
+import type {Metrics, StorageAdapter} from "@pressh/core";
+import {createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
 import type {
   BlockNode,
   ContentEntry,
@@ -18,11 +17,12 @@ import type {
   QueryResolver,
   ThemeService,
 } from "@pressh/engine";
-import type { RenderCache } from "./cache.js";
-import { escapeHtml, renderNotFound, renderPage } from "./render.js";
-import { Blocks } from "./components/Blocks.js";
-import { Page } from "./components/Page.js";
-import { getClientAssets } from "./manifest.js";
+import {DESIGNER_LAYOUT_BLOCK, renderTree, SYSTEM_SLUGS} from "@pressh/engine";
+import type {RenderCache} from "./cache.js";
+import {escapeHtml, renderNotFound, renderPage} from "./render.js";
+import {Blocks} from "./components/Blocks.js";
+import {Page} from "./components/Page.js";
+import {getClientAssets} from "./manifest.js";
 
 /** Minimal structural view of the PluginHost the site needs. */
 export interface SitePluginHost {
@@ -239,6 +239,78 @@ async function renderMaintenancePage(deps: SiteAppDeps): Promise<string> {
       title: "Down for maintenance",
       body: "<h1>We&rsquo;ll be right back</h1><p>The site is temporarily offline for scheduled maintenance. Please check back shortly.</p>",
     });
+  }
+}
+
+/**
+ * Renders a standalone system page (404 / 500) as a full themed document, with
+ * the site's own header/footer chrome so visitors can navigate away. Handles
+ * both designer-authored layouts and block content. Returns null when the page
+ * can't be resolved (e.g. before it's seeded, or during a storage outage) so the
+ * caller can fall back to a minimal static page.
+ */
+async function renderSystemDocument(deps: SiteAppDeps, slug: string): Promise<string | null> {
+  try {
+    const ctx = makeSiteContext(deps.resolver, deps.storage);
+    const resolved = await deps.resolver.resolve({slug, scope: "public"});
+    const title =
+        typeof resolved.fields["title"] === "string" ? (resolved.fields["title"] as string) : resolved.slug;
+    const locale = resolved.locale;
+    const blocks = resolved.blocks as BlockNode[];
+
+    const layoutBlock = (resolved.blocks as Array<{ type: string; props?: Record<string, unknown> }>).find(
+        (b) => b.type === DESIGNER_LAYOUT_BLOCK,
+    );
+    const layoutNodes = Array.isArray(layoutBlock?.props?.["nodes"])
+        ? (layoutBlock!.props!["nodes"] as PrimitiveNode[])
+        : [];
+
+    let bodyHtml: string;
+    let componentStyles = "";
+    if (layoutNodes.length) {
+      const rendered = await renderTree(layoutNodes, ctx);
+      bodyHtml = rendered.html;
+      componentStyles =
+          "main{max-width:none!important;margin:0!important;padding:0!important;width:100%!important}" +
+          rendered.css;
+    } else {
+      bodyHtml = renderToString(createElement(Blocks, {blocks}));
+    }
+
+    const [headerFragment, footerFragment] = await Promise.all([
+      renderSystemFragment(SYSTEM_SLUGS.header, deps.resolver, ctx),
+      renderSystemFragment(SYSTEM_SLUGS.footer, deps.resolver, ctx),
+    ]);
+    const headerHtml = headerFragment
+        ? `<style>${headerFragment.css}</style>${headerFragment.html}`
+        : undefined;
+    const footerHtml = footerFragment
+        ? `<style>${footerFragment.css}</style>${footerFragment.html}`
+        : undefined;
+
+    if (deps.themeService) {
+      const t = await deps.themeService.resolve();
+      const wrappedBody = componentStyles
+          ? `<style>${componentStyles}</style><div id="root">${bodyHtml}</div>`
+          : `<div id="root">${bodyHtml}</div>`;
+      return t.theme.layout({
+        title,
+        body: wrappedBody,
+        locale,
+        cssVars: t.cssVars,
+        siteName: t.siteName,
+        ...(headerHtml !== undefined ? {header: headerHtml} : {}),
+        ...(footerHtml !== undefined ? {footer: footerHtml} : {}),
+      });
+    }
+    return renderPage({
+      title,
+      body: `<div id="root">${bodyHtml}</div>`,
+      locale,
+      ...(componentStyles ? {extraStyles: componentStyles} : {}),
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -549,11 +621,13 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       return c.html(html);
     } catch (error) {
       if (error instanceof PressError && error.code === "not_found") {
-        const notFound = renderNotFound();
+        const notFound = (await renderSystemDocument(deps, SYSTEM_SLUGS.notFound)) ?? renderNotFound();
         c.set("styleCsp", styleSrcDirective(notFound));
         return c.html(notFound, 404);
       }
-      const errorPage = renderPage({ title: "Error", body: "<h1>500 — Server error</h1>" });
+      const errorPage =
+          (await renderSystemDocument(deps, SYSTEM_SLUGS.serverError)) ??
+          renderPage({title: "Error", body: "<h1>500 — Server error</h1>"});
       c.set("styleCsp", styleSrcDirective(errorPage));
       return c.html(errorPage, 500);
     }

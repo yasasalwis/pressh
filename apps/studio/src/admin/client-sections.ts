@@ -50,9 +50,30 @@ function newPageFormHtml(){
 }
 function toggleNewPage(){ var f=el("new-page-form"); if(f){ f.classList.toggle("hide"); if(!f.classList.contains("hide")) el("pg-title").focus(); } }
 function suggestSlug(){ var s=el("pg-slug"); if(!s||s.dataset.touched) return; s.value=el("pg-title").value.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); }
-var SYSTEM_SLUGS_SET=["header","footer"];
+var LAYOUT_FRAGMENT_SLUGS=["header","footer"];
+var SYSTEM_PAGE_SLUGS=["home","404","500","maintenance"];
+var SYSTEM_SLUGS_SET=LAYOUT_FRAGMENT_SLUGS.concat(SYSTEM_PAGE_SLUGS);
 function isSystemPage(p){ return !!p.system||SYSTEM_SLUGS_SET.indexOf(p.slug)>=0; }
-function systemPageLabel(slug){ return slug==="header"?"Header Layout":slug==="footer"?"Footer Layout":slug; }
+function isLayoutFragment(p){ return LAYOUT_FRAGMENT_SLUGS.indexOf(p.slug)>=0; }
+var SYSTEM_PAGE_LABELS={header:"Header Layout",footer:"Footer Layout",home:"Homepage","404":"404 \\u2014 Not Found","500":"500 \\u2014 Server Error",maintenance:"Maintenance Page"};
+function systemPageLabel(slug){ return SYSTEM_PAGE_LABELS[slug]||slug; }
+function systemRow(p){
+  return '<div class="list-row">'+
+    '<span class="ico" style="font-size:1rem;margin-right:.4rem">&#128274;</span>'+
+    '<div class="grow"><div class="title">'+esc(systemPageLabel(p.slug))+'</div>'+
+    '<div class="meta">/'+esc(p.slug)+' &middot; rev '+(p.currentRevision||1)+'</div></div>'+
+    '<span class="badge b-published">published</span>'+
+    '<button class="btn-sm" onclick="navigate(\\'#/page/'+esc(p.id)+'\\')">&#9998; Edit</button></div>';
+}
+function lockedCard(title,sub,list){
+  // title/sub are trusted static labels (never user input), passed as raw HTML
+  // so entities like &middot; render correctly.
+  if(!list.length) return '';
+  return '<div class="card" style="margin-bottom:.8rem"><div class="row-head" style="margin-bottom:.6rem">'+
+    '<h3 style="margin:0;font-size:.9rem">'+title+'</h3>'+
+    '<span class="meta" style="font-size:.78rem">'+sub+'</span></div>'+
+    list.map(systemRow).join("")+'</div>';
+}
 
 async function renderPages(){
   var promises=[api("/admin/api/content")];
@@ -67,21 +88,13 @@ async function renderPages(){
   el("nav-pages-count").textContent=items.length||"";
   var canNav=can("settings.manage");
 
-  // System layout pages (header / footer) — always at the top, non-deletable.
-  var systemRows=systemItems.map(function(p){
-    var label=systemPageLabel(p.slug);
-    return '<div class="list-row">'+
-      '<span class="ico" style="font-size:1rem;margin-right:.4rem">&#128274;</span>'+
-      '<div class="grow"><div class="title">'+esc(label)+'</div>'+
-      '<div class="meta">/'+esc(p.slug)+' &middot; rev '+(p.currentRevision||1)+' &middot; system layout</div></div>'+
-      '<span class="badge b-published">published</span>'+
-      '<button class="btn-sm" onclick="navigate(\\'#/page/'+esc(p.id)+'\\')">&#9998; Edit</button></div>';
-  }).join("");
-  var systemSection=systemItems.length
-    ? '<div class="card" style="margin-bottom:.8rem"><div class="row-head" style="margin-bottom:.6rem"><h3 style="margin:0;font-size:.9rem">Layout pages</h3>'+
-      '<span class="meta" style="font-size:.78rem">Injected into every page &middot; always published</span></div>'+
-      systemRows+'</div>'
-    : '';
+  // Built-in pages — always at the top, locked & non-deletable. Header/footer
+  // are injected into every page; home/404/500/maintenance are standalone pages.
+  var fragmentItems=systemItems.filter(isLayoutFragment);
+  var pageItems=systemItems.filter(function(p){ return !isLayoutFragment(p); });
+  var systemSection=
+    lockedCard("Layout fragments","Injected into every page &middot; always published",fragmentItems)+
+    lockedCard("System pages","Built-in pages &middot; non-deletable",pageItems);
 
   var rows;
   if(!items.length){ rows='<div class="empty"><span class="ico">&#128196;</span>No pages yet. Create your first one.</div>'; }
@@ -433,6 +446,9 @@ async function renderSettings(){
       '<div class="full"><label>Public base URL</label><input id="set-baseurl" placeholder="https://example.com" value="'+escAttr(s.baseUrl||"")+'"></div>'+
       '<div><label>Default locale</label><input id="set-locale" placeholder="en" value="'+escAttr(s.defaultLocale||"en")+'"></div>'+
       '<div><label>Timezone</label><input id="set-tz" placeholder="UTC" value="'+escAttr(s.timezone||"UTC")+'"></div></div></div>'+
+    '<div class="card"><h3>Maintenance mode</h3>'+
+      '<p class="hint">When on, the public site returns HTTP 503 and serves your Maintenance page to every visitor. The admin Studio stays reachable. Edit the page under Pages &middot; System pages.</p>'+
+      '<label class="dp-check-row"><input type="checkbox" id="set-maint"'+(s.maintenanceMode?' checked':'')+'><span>Take the public site offline for maintenance</span></label></div>'+
     '<div class="card"><h3>Email (SMTP)</h3><p class="hint">Used for invitations and notifications. The password is sealed in the secrets vault.</p>'+smtpNote+
       '<div class="field-grid">'+
         '<div><label>Host</label><input id="smtp-host" value="'+escAttr(smtp.host||"")+'"></div>'+
@@ -446,7 +462,7 @@ async function renderSettings(){
 }
 async function saveSettings(){
   clearErr("set-error");
-  var body={ baseUrl:el("set-baseurl").value.trim(), defaultLocale:el("set-locale").value.trim(), timezone:el("set-tz").value.trim() };
+  var body={ baseUrl:el("set-baseurl").value.trim(), defaultLocale:el("set-locale").value.trim(), timezone:el("set-tz").value.trim(), maintenanceMode:el("set-maint").checked };
   var host=el("smtp-host").value.trim();
   if(host){
     body.smtp={ host:host, port:Number(el("smtp-port").value)||587, secure:el("smtp-secure").checked, fromEmail:el("smtp-from").value.trim(), username:el("smtp-user").value.trim() };
@@ -523,5 +539,189 @@ async function renderAudit(){
   }).join(""):'<div class="empty"><span class="ico">&#128220;</span>No audit entries yet.</div>';
   el("view").innerHTML='<div class="row-head"><h2>Audit Log</h2><button class="ghost" onclick="renderAudit()">Refresh</button></div>'+
     '<div class="card"><p class="hint">Append-only, hash-chained record of every mutation, login, and capability use.</p>'+rows+'</div>';
+}
+
+// ═══════════════ DATABASE MANAGER ═══════════════
+var DB_POLL=null;
+var DB_CONNECTORS=[];
+var DB_VAULT=false;
+var DB_RESTART_TRIES=0;
+var DB_MIG_STEPS=[
+  ["testing","Test connection"],["locking","Maintenance mode"],["copying","Copy data"],
+  ["verifying","Verify"],["backing-up","Back up old store"],["cutover","Cut over"],["awaiting-restart","Restart"]
+];
+function dbStopPoll(){ if(DB_POLL){ clearTimeout(DB_POLL); DB_POLL=null; } }
+function dbActivePhase(p){ return p && p!=="done" && p!=="failed"; }
+function dbCon(backend){ for(var i=0;i<DB_CONNECTORS.length;i++){ if(DB_CONNECTORS[i].backend===backend) return DB_CONNECTORS[i]; } return null; }
+
+async function renderDatabase(){
+  dbStopPoll();
+  var r=await api("/admin/api/db/status");
+  if(r.status===404){ el("view").innerHTML='<div class="card"><div class="empty"><span class="ico">&#128190;</span>The database manager is not enabled on this server.</div></div>'; return; }
+  if(r.status!==200){ el("view").innerHTML='<div class="card"><div class="empty">Could not load database status.</div></div>'; return; }
+  var d=r.body.data||{};
+  DB_CONNECTORS=d.connectors||[]; DB_VAULT=!!d.vaultConfigured;
+  if(d.migration && dbActivePhase(d.migration.phase)){ return dbRenderProgress(d.migration); }
+  if(d.pendingCleanup){ return dbRenderPending(d); }
+  dbRenderConnectors(d);
+}
+
+function dbRenderConnectors(d){
+  var active=(d.active&&d.active.backend)||"fs";
+  var vaultNote=DB_VAULT?'':'<div class="notice">The secrets vault is not configured. Set <b>PRESSH_MASTER_KEY</b> to store database credentials securely &mdash; until then only the File and SQLite backends are available.</div>';
+  var failed=(d.migration&&d.migration.phase==="failed")
+    ?'<div class="alert">Last migration failed: '+esc(d.migration.error||"unknown error")+'. Nothing was changed &mdash; you are still on the current database.</div>':'';
+  var cards=(d.connectors||[]).map(function(c){ return dbConnectorCard(c,active); }).join("");
+  el("view").innerHTML='<div class="row-head"><h2>Database</h2></div>'+
+    '<div class="card"><p class="hint">Choose where Pressh stores your content. The default is the built-in File store. '+
+    'Switching copies all your data to the new database, verifies it, takes a backup, then restarts Pressh on the new backend.</p>'+vaultNote+failed+'</div>'+
+    '<div class="db-grid">'+cards+'</div>';
+}
+
+function dbConnectorCard(c,active){
+  var isActive=c.backend===active;
+  var badge=isActive?'<span class="tag" style="background:#16a34a22;color:#16a34a">Active</span>':'';
+  var blockedByVault=c.requiresVault && !DB_VAULT;
+  var action='';
+  if(isActive){ action='<span class="meta">In use</span>'; }
+  else if(c.backend==="fs"){ action='<span class="meta">Default store</span>'; }
+  else if(blockedByVault){ action='<button class="btn-sm" disabled title="Set PRESSH_MASTER_KEY first">Vault required</button>'; }
+  else { action='<button class="btn-sm" onclick="dbOpenMigrate(\\''+esc(c.backend)+'\\')">Switch to this</button>'; }
+  return '<div class="db-card'+(isActive?' active':'')+'">'+
+    '<div class="db-card-head"><b>'+esc(c.label)+'</b>'+badge+'</div>'+
+    '<p class="hint">'+esc(c.description)+'</p>'+
+    '<div class="db-card-foot">'+action+'</div></div>';
+}
+
+function dbOpenMigrate(backend){
+  var c=dbCon(backend); if(!c) return;
+  var fields=(c.fields||[]).map(function(f){
+    var type=f.secret?"password":"text";
+    return '<label>'+esc(f.label)+(f.required?' *':'')+'</label>'+
+      '<input id="dbf-'+esc(f.key)+'" type="'+type+'" placeholder="'+escAttr(f.placeholder||"")+'"'+(f.secret?' autocomplete="off"':'')+'>';
+  }).join("");
+  openModal(
+    '<h3>Switch to '+esc(c.label)+'</h3>'+
+    '<p class="hint">'+esc(c.description)+'</p>'+fields+
+    '<div id="db-test-result" class="meta" style="margin:.5rem 0"></div>'+
+    '<label class="dp-check-row"><input type="checkbox" id="db-removeold" checked><span>Back up, then remove the current store after a verified switch (recommended)</span></label>'+
+    '<div class="notice">This takes the public site offline briefly, copies all data, switches over, and restarts Pressh.</div>'+
+    '<div id="db-mig-error" class="alert hide"></div>'+
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button>'+
+    '<button class="ghost" id="db-test-btn" data-label="Test connection" onclick="dbTest(\\''+esc(backend)+'\\')">Test connection</button>'+
+    '<button class="btn-sm" id="db-mig-btn" data-label="Start migration" onclick="dbConfirmMigrate(\\''+esc(backend)+'\\')">Start migration</button></div>'
+  );
+}
+
+function dbCollectValues(c){ var v={}; (c.fields||[]).forEach(function(f){ var n=el("dbf-"+f.key); if(n) v[f.key]=n.value; }); return v; }
+
+async function dbTest(backend){
+  var c=dbCon(backend); if(!c) return;
+  var res=el("db-test-result"); res.textContent="Testing connection\\u2026"; res.style.color="";
+  busy("db-test-btn",true,"Testing\\u2026");
+  var r=await api("/admin/api/db/test",{method:"POST",body:JSON.stringify({backend:backend,values:dbCollectValues(c)})});
+  busy("db-test-btn",false);
+  if(r.status===200){ res.textContent="\\u2713 Connection succeeded"; res.style.color="#16a34a"; }
+  else { res.textContent="\\u2717 "+((r.body.error&&r.body.error.message)||"Connection failed"); res.style.color="#e11d48"; }
+}
+
+function dbConfirmMigrate(backend){
+  var c=dbCon(backend); if(!c) return;
+  var values=dbCollectValues(c);
+  for(var i=0;i<c.fields.length;i++){ var f=c.fields[i]; if(f.required && !(values[f.key]||"").trim()){ return err("db-mig-error",f.label+" is required."); } }
+  clearErr("db-mig-error");
+  var removeOld=el("db-removeold").checked;
+  confirmAction("Migrate to "+c.label+"?",
+    "Pressh will go offline briefly, copy all data, switch over, and restart. "+(removeOld?"The current store will be backed up, then removed.":"The current store will be kept."),
+    function(){ dbStartMigrate(backend,values,removeOld); });
+}
+
+async function dbStartMigrate(backend,values,removeOld){
+  var r=await api("/admin/api/db/migrate",{method:"POST",body:JSON.stringify({backend:backend,values:values,removeOld:removeOld})});
+  if(r.status!==200){ openModal('<h3>Could not start migration</h3><div class="alert">'+esc((r.body.error&&r.body.error.message)||"Failed to start.")+'</div><div class="actions"><button class="btn-sm" onclick="closeModal()">Close</button></div>'); return; }
+  closeModal();
+  renderDatabase();
+}
+
+function dbStepRow(phase,key,label){
+  var order=DB_MIG_STEPS.map(function(s){ return s[0]; });
+  var cur=order.indexOf(phase), me=order.indexOf(key);
+  var cls=me<cur?"done":(me===cur?"active":"");
+  var mark=me<cur?"\\u2713":(me===cur?"\\u2026":"");
+  return '<div class="db-step '+cls+'"><span class="db-step-mark">'+mark+'</span>'+esc(label)+'</div>';
+}
+
+function dbRenderProgress(mig){
+  if(mig.phase==="awaiting-restart") return dbRenderRestarting();
+  var steps=DB_MIG_STEPS.map(function(s){ return dbStepRow(mig.phase,s[0],s[1]); }).join("");
+  var detail=mig.records?'<p class="meta">'+esc(mig.records)+' records copied across '+esc(mig.collections)+' collections.</p>':'';
+  el("view").innerHTML='<div class="row-head"><h2>Migrating to '+esc(mig.to)+'</h2></div>'+
+    '<div class="card"><p class="hint">Migration in progress. The public site is in maintenance mode and admin changes are paused until this completes. Do not close this tab.</p>'+
+    '<div class="db-steps">'+steps+'</div>'+detail+'</div>';
+  dbStopPoll();
+  DB_POLL=setTimeout(dbPollProgress,1500);
+}
+
+async function dbPollProgress(){
+  var r;
+  try{ r=await api("/admin/api/db/migrate/status"); }catch(e){ DB_POLL=setTimeout(dbPollProgress,1500); return; }
+  if(r.status!==200){ DB_POLL=setTimeout(dbPollProgress,1500); return; }
+  var mig=(r.body.data&&r.body.data.migration)||null;
+  if(!mig){ return renderDatabase(); }
+  if(mig.phase==="failed"){ dbStopPoll(); return renderDatabase(); }
+  if(!dbActivePhase(mig.phase)){ dbStopPoll(); return renderDatabase(); }
+  dbRenderProgress(mig);
+}
+
+function dbRenderRestarting(){
+  el("view").innerHTML='<div class="row-head"><h2>Finishing up</h2></div>'+
+    '<div class="card"><div class="loading">Cutover complete &mdash; restarting Pressh on the new database&hellip;</div>'+
+    '<p class="hint" id="db-restart-hint">This usually takes a few seconds. The page will refresh automatically.</p></div>';
+  DB_RESTART_TRIES=0;
+  dbStopPoll();
+  DB_POLL=setTimeout(dbPollRestart,2500);
+}
+
+async function dbPollRestart(){
+  DB_RESTART_TRIES++;
+  var r=null;
+  try{ r=await api("/admin/api/db/status"); }catch(e){ r=null; }
+  if(r && r.status===200){
+    var mig=r.body.data&&r.body.data.migration;
+    if(!mig || !dbActivePhase(mig.phase)){ dbStopPoll(); location.reload(); return; }
+    // Same process still awaiting a restart (no supervisor): nudge the operator.
+    if(DB_RESTART_TRIES>6){
+      var h=el("db-restart-hint");
+      if(h) h.innerHTML='The new database is configured, but Pressh is still running the old one. If it does not restart automatically, restart the Pressh processes to finish. <button class="ghost" onclick="location.reload()">Reload</button>';
+    }
+  } else if(DB_RESTART_TRIES>18){
+    var h2=el("db-restart-hint");
+    if(h2) h2.innerHTML='Still waiting for Pressh to come back. <button class="ghost" onclick="location.reload()">Reload now</button>';
+  }
+  DB_POLL=setTimeout(dbPollRestart,2500);
+}
+
+function dbRenderPending(d){
+  var pc=d.pendingCleanup||{};
+  var backupNote=pc.backupPath?'<p class="meta">A backup was saved to <code>'+esc(pc.backupPath)+'</code>.</p>':'';
+  el("view").innerHTML='<div class="row-head"><h2>Database</h2></div>'+
+    '<div class="card"><h3>Migration complete</h3>'+
+    '<p class="hint">Pressh is now running on the <b>'+esc((d.active&&d.active.backend)||"")+'</b> backend. '+
+    'The previous <b>'+esc(pc.backend||"")+'</b> store has been retained so you can roll back if needed.</p>'+backupNote+
+    '<div class="actions"><button class="ghost" onclick="dbCleanup(true)">Keep it</button>'+
+    '<button class="btn-sm danger" id="db-clean-btn" data-label="Remove previous store" onclick="dbCleanup(false)">Remove previous store</button></div>'+
+    '<div id="db-clean-msg" class="meta" style="margin-top:.5rem"></div></div>';
+  if(pc.autoRemove){
+    var m=el("db-clean-msg"); if(m) m.textContent="Removing the previous store as requested\\u2026";
+    dbCleanup(false);
+  }
+}
+
+async function dbCleanup(keep){
+  busy("db-clean-btn",true,"Working\\u2026");
+  var r=await api("/admin/api/db/cleanup",{method:"POST",body:JSON.stringify({keep:!!keep})});
+  busy("db-clean-btn",false);
+  if(r.status===200){ toast(keep?"Previous store kept":"Previous store removed"); renderDatabase(); }
+  else toast("Could not complete cleanup",true);
 }
 `;

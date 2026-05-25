@@ -1,5 +1,5 @@
-import type { ReactElement } from "react";
-import type { BlockNode } from "@pressh/engine";
+import type {ReactElement} from "react";
+import type {BlockNode} from "@pressh/engine";
 
 function clampLevel(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
@@ -40,7 +40,6 @@ export function Blocks({ blocks }: { readonly blocks: BlockNode[] }): ReactEleme
   return (
     <>
       {blocks.map((block, i) => (
-        // eslint-disable-next-line react/no-array-index-key
         <Block key={i} block={block} />
       ))}
       {blocks.flatMap((block, i) =>

@@ -1,7 +1,7 @@
-import { MongoClient } from "mongodb";
-import type { Db, Filter as MongoFilter } from "mongodb";
-import { PressError } from "@pressh/core";
-import type { Cursor, Filter, Page, Result, StorageAdapter, StoredDoc } from "@pressh/core";
+import type {Db} from "mongodb";
+import {MongoClient} from "mongodb";
+import type {Cursor, Filter, Page, Result, StorageAdapter, StoredDoc} from "@pressh/core";
+import {PressError} from "@pressh/core";
 
 /**
  * MongoDB StorageAdapter. Each Pressh collection maps to a Mongo collection;

@@ -155,8 +155,8 @@ function currentRoute(){
 }
 function navigate(hash){ if((location.hash||"")===hash) applyRoute(); else location.hash=hash; }
 
-var SECTION_CAP={ types:"types.manage", media:"media.read", users:"users.manage", appearance:"themes.manage", settings:"settings.manage", plugins:"plugins.manage", privacy:"gdpr.manage", audit:"audit.read" };
-var SECTION_TITLE={ dashboard:"Dashboard", pages:"Pages", types:"Content Types", media:"Media", users:"Users", appearance:"Appearance", settings:"Settings", plugins:"Plugins", privacy:"Privacy & GDPR", audit:"Audit Log" };
+var SECTION_CAP={ types:"types.manage", media:"media.read", users:"users.manage", appearance:"themes.manage", settings:"settings.manage", plugins:"plugins.manage", privacy:"gdpr.manage", audit:"audit.read", database:"db.manage" };
+var SECTION_TITLE={ dashboard:"Dashboard", pages:"Pages", types:"Content Types", media:"Media", users:"Users", appearance:"Appearance", settings:"Settings", plugins:"Plugins", privacy:"Privacy & GDPR", audit:"Audit Log", database:"Database" };
 
 async function applyRoute(){
   var route=currentRoute();
@@ -175,9 +175,10 @@ async function applyRoute(){
 }
 
 function renderSection(section){
+  dbStopPoll(); // stop any Database-Manager polling when leaving the section
   var renderers={ dashboard:renderDashboard, pages:renderPages, types:renderTypes, media:renderMedia,
     users:renderUsers, appearance:renderAppearance, settings:renderSettings, plugins:renderPlugins,
-    privacy:renderPrivacy, audit:renderAudit };
+    privacy:renderPrivacy, audit:renderAudit, database:renderDatabase };
   var fn=renderers[section]; if(!fn){ section="dashboard"; fn=renderDashboard; }
   setActiveNav(section);
   el("view-title").textContent=SECTION_TITLE[section]||"Dashboard";

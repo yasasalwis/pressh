@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { compileDeclarations, compileNodeCss, compileTreeCss, cssId } from "./css.js";
-import type { PrimitiveNode, StyleProps } from "./types.js";
+import {describe, expect, it} from "vitest";
+import {compileDeclarations, compileNodeCss, compileTreeCss, cssId} from "./css.js";
+import type {PrimitiveNode, StyleProps} from "./types.js";
 
 describe("compileDeclarations — valid values", () => {
   it("emits whitelisted declarations", () => {
@@ -417,7 +417,6 @@ describe("compileTreeCss — determinism and base rules", () => {
     const header = compileTreeCss([
       { id: "hdr", type: "container", styles: { base: { default: { maxWidth: "100%" } } } },
     ]);
-    const page = compileTreeCss([{ id: "pg", type: "container" }]);
     expect(header).toContain(".pst-container{"); // single-class default (0,1,0)
     expect(header).toContain(".psn-hdr.psn-hdr{max-width:100%}"); // doubled override (0,2,0)
   });
