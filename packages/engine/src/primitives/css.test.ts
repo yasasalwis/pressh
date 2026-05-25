@@ -21,6 +21,21 @@ describe("compileDeclarations — valid values", () => {
     expect(css).toContain("gap:2rem");
   });
 
+  it("emits size declarations including height and max-height", () => {
+    const css = compileDeclarations({
+      width: "320px",
+      maxWidth: "100%",
+      height: "480px",
+      minHeight: "240px",
+      maxHeight: "640px",
+    });
+    expect(css).toContain("width:320px");
+    expect(css).toContain("max-width:100%");
+    expect(css).toContain("height:480px");
+    expect(css).toContain("min-height:240px");
+    expect(css).toContain("max-height:640px");
+  });
+
   it("resolves token references to CSS vars", () => {
     expect(compileDeclarations({ color: "token:colorPrimary" })).toBe("color:var(--colorPrimary)");
     expect(compileDeclarations({ background: "token:colorBackground" })).toBe(
@@ -91,9 +106,9 @@ describe("compileNodeCss — breakpoints and states", () => {
       },
     };
     const css = compileNodeCss(node);
-    expect(css).toContain(".psn-n1{color:#fff}");
-    expect(css).toContain(".psn-n1:hover{color:#eee}");
-    expect(css).toContain("@media(max-width:480px){.psn-n1{font-size:0.9rem}}");
+    expect(css).toContain(".psn-n1.psn-n1{color:#fff}");
+    expect(css).toContain(".psn-n1.psn-n1:hover{color:#eee}");
+    expect(css).toContain("@media(max-width:480px){.psn-n1.psn-n1{font-size:0.9rem}}");
   });
 });
 
@@ -105,15 +120,15 @@ describe("compileNodeCss — auto-responsive grid collapse", () => {
       styles: { base: { default: { gridTemplateColumns: "repeat(4,1fr)" } } },
     };
     const css = compileNodeCss(node);
-    expect(css).toContain(".psn-g{grid-template-columns:repeat(4,1fr)}");
-    expect(css).toContain("@media(max-width:768px){.psn-g{grid-template-columns:repeat(2,1fr)}}");
-    expect(css).toContain("@media(max-width:480px){.psn-g{grid-template-columns:1fr}}");
+    expect(css).toContain(".psn-g.psn-g{grid-template-columns:repeat(4,1fr)}");
+    expect(css).toContain("@media(max-width:768px){.psn-g.psn-g{grid-template-columns:repeat(2,1fr)}}");
+    expect(css).toContain("@media(max-width:480px){.psn-g.psn-g{grid-template-columns:1fr}}");
   });
 
   it("collapses the default grid even when the node sets no columns", () => {
     const css = compileNodeCss({ id: "g2", type: "grid" });
-    expect(css).toContain("@media(max-width:768px){.psn-g2{grid-template-columns:repeat(2,1fr)}}");
-    expect(css).toContain("@media(max-width:480px){.psn-g2{grid-template-columns:1fr}}");
+    expect(css).toContain("@media(max-width:768px){.psn-g2.psn-g2{grid-template-columns:repeat(2,1fr)}}");
+    expect(css).toContain("@media(max-width:480px){.psn-g2.psn-g2{grid-template-columns:1fr}}");
   });
 
   it("stacks a 2-col grid on mobile but keeps it on tablet", () => {
@@ -122,7 +137,7 @@ describe("compileNodeCss — auto-responsive grid collapse", () => {
       type: "grid",
       styles: { base: { default: { gridTemplateColumns: "repeat(2,1fr)" } } },
     });
-    expect(css).toContain("@media(max-width:480px){.psn-g3{grid-template-columns:1fr}}");
+    expect(css).toContain("@media(max-width:480px){.psn-g3.psn-g3{grid-template-columns:1fr}}");
     expect(css).not.toContain("max-width:768px");
   });
 
@@ -147,10 +162,112 @@ describe("compileNodeCss — manual override always wins", () => {
       },
     };
     const css = compileNodeCss(node);
-    expect(css).toContain("@media(max-width:480px){.psn-g{grid-template-columns:repeat(2,1fr)}}");
+    expect(css).toContain("@media(max-width:480px){.psn-g.psn-g{grid-template-columns:repeat(2,1fr)}}");
     expect(css).not.toContain("grid-template-columns:1fr}");
     // tablet gap is still auto-filled because the designer left it unset
-    expect(css).toContain("@media(max-width:768px){.psn-g{grid-template-columns:repeat(2,1fr)}}");
+    expect(css).toContain("@media(max-width:768px){.psn-g.psn-g{grid-template-columns:repeat(2,1fr)}}");
+  });
+});
+
+describe("compileNodeCss — column width beats row flex distribution", () => {
+  it("doubles the class and opts a width-bearing column out of flex", () => {
+    const css = compileNodeCss({
+      id: "c1",
+      type: "column",
+      styles: { base: { default: { width: "300px" } } },
+    });
+    // doubled class (0,2,0) out-specifies `.pst-row>.pst-column` (0,2,0) on source order
+    expect(css).toContain(".psn-c1.psn-c1{width:300px;flex:0 0 auto}");
+  });
+
+  it("does not opt out when only max-width is set (flex distribution still applies)", () => {
+    const css = compileNodeCss({
+      id: "c2",
+      type: "column",
+      styles: { base: { default: { maxWidth: "300px" } } },
+    });
+    expect(css).toContain(".psn-c2.psn-c2{max-width:300px}");
+    expect(css).not.toContain("flex:0 0 auto");
+  });
+
+  it("only applies the flex opt-out to columns, not other primitives in a row", () => {
+    const css = compileNodeCss({
+      id: "i1",
+      type: "image",
+      styles: { base: { default: { width: "50%" } } },
+    });
+    expect(css).toContain(".psn-i1.psn-i1{width:50%}");
+    expect(css).not.toContain("flex:0 0 auto");
+  });
+});
+
+describe("compileNodeCss — children fill an explicit parent height", () => {
+  it("flexes a fixed-height container and grows its layout children", () => {
+    const css = compileNodeCss({
+      id: "wrap",
+      type: "container",
+      styles: { base: { default: { height: "300px" } } },
+      children: [{ id: "inner", type: "container", children: [] }],
+    });
+    expect(css).toContain(".psn-wrap.psn-wrap{display:flex;flex-direction:column}");
+    expect(css).toContain(".psn-wrap.psn-wrap>:where(.pst-section,.pst-container,.pst-row,.pst-column,.pst-grid){flex:1 1 auto;min-height:0}");
+  });
+
+  it("treats min-height the same as height", () => {
+    const css = compileNodeCss({
+      id: "w2",
+      type: "container",
+      styles: { base: { default: { minHeight: "240px" } } },
+      children: [{ id: "i2", type: "container", children: [] }],
+    });
+    expect(css).toContain(".psn-w2.psn-w2{display:flex;flex-direction:column}");
+  });
+
+  it("does not re-flex a column (already a flex column) but still grows its children", () => {
+    const css = compileNodeCss({
+      id: "col",
+      type: "column",
+      styles: { base: { default: { height: "300px" } } },
+      children: [{ id: "ci", type: "container", children: [] }],
+    });
+    expect(css).not.toContain(".psn-col.psn-col{display:flex");
+    expect(css).toContain(".psn-col.psn-col>:where(.pst-section,.pst-container,.pst-row,.pst-column,.pst-grid){flex:1 1 auto;min-height:0}");
+  });
+
+  it("skips the fill when children are a column-flow row (they already stretch)", () => {
+    const css = compileNodeCss({
+      id: "row",
+      type: "container",
+      styles: { base: { default: { height: "80px" } } },
+      children: [
+        { id: "a", type: "column", children: [] },
+        { id: "b", type: "column", children: [] },
+      ],
+    });
+    expect(css).not.toContain("flex:1 1 auto");
+    expect(css).not.toContain(".psn-row.psn-row{display:flex");
+  });
+
+  it("does not fill when the container has no explicit height", () => {
+    const css = compileNodeCss({
+      id: "plain",
+      type: "container",
+      styles: { base: { default: { background: "#fff" } } },
+      children: [{ id: "x", type: "container", children: [] }],
+    });
+    expect(css).not.toContain("flex:1 1 auto");
+  });
+
+  it("respects a designer-set display/direction instead of forcing flex-column", () => {
+    const css = compileNodeCss({
+      id: "grid",
+      type: "container",
+      styles: { base: { default: { height: "300px", display: "grid" } } },
+      children: [{ id: "g", type: "container", children: [] }],
+    });
+    expect(css).toContain("display:grid");
+    expect(css).not.toContain("flex:1 1 auto");
+    expect(css).not.toContain("flex-direction:column");
   });
 });
 
@@ -161,7 +278,7 @@ describe("compileNodeCss — fluid typography", () => {
       type: "heading",
       styles: { base: { default: { fontSize: "2.5rem" } } },
     });
-    expect(css).toMatch(/\.psn-h\{font-size:clamp\([^)]*rem, calc\([^)]+\), 2\.5rem\)\}/);
+    expect(css).toMatch(/\.psn-h\.psn-h\{font-size:clamp\([^)]*rem, calc\([^)]+\), 2\.5rem\)\}/);
   });
 
   it("leaves small body text fixed", () => {
@@ -170,7 +287,7 @@ describe("compileNodeCss — fluid typography", () => {
       type: "text",
       styles: { base: { default: { fontSize: "1rem" } } },
     });
-    expect(css).toContain(".psn-t{font-size:1rem}");
+    expect(css).toContain(".psn-t.psn-t{font-size:1rem}");
     expect(css).not.toContain("clamp(");
   });
 
@@ -183,9 +300,9 @@ describe("compileNodeCss — fluid typography", () => {
         mobile: { default: { fontSize: "1.5rem" } },
       },
     });
-    expect(css).toContain(".psn-h2{font-size:3rem}");
+    expect(css).toContain(".psn-h2.psn-h2{font-size:3rem}");
     expect(css).not.toContain("clamp(");
-    expect(css).toContain("@media(max-width:480px){.psn-h2{font-size:1.5rem}}");
+    expect(css).toContain("@media(max-width:480px){.psn-h2.psn-h2{font-size:1.5rem}}");
   });
 });
 
@@ -220,11 +337,12 @@ describe("compileTreeCss — auto-responsive base rules", () => {
     },
   ];
 
-  it("stacks flow-rows and reduces container padding on mobile", () => {
+  it("stacks flow-rows on mobile and never injects container padding", () => {
     const css = compileTreeCss(tree);
     expect(css).toContain("@media(max-width:480px){");
     expect(css).toContain(".ps-flow-row{flex-direction:column}");
-    expect(css).toContain(".pst-container{padding-left:1.1rem;padding-right:1.1rem}");
+    // Layout primitives add zero spacing by default — no auto container gutter.
+    expect(css).not.toContain("padding-left:1.1rem");
   });
 
   it("gives columns an intrinsic flex-basis so they wrap when narrow", () => {
@@ -242,7 +360,7 @@ describe("compileTreeCss — auto-responsive base rules", () => {
     ];
     const css = compileTreeCss(withOverride);
     const baseStack = css.indexOf(".pst-row{flex-direction:column}");
-    const nodeOverride = css.indexOf(".psn-r{flex-direction:row}");
+    const nodeOverride = css.indexOf(".psn-r.psn-r{flex-direction:row}");
     expect(baseStack).toBeGreaterThanOrEqual(0);
     expect(nodeOverride).toBeGreaterThanOrEqual(0);
     expect(nodeOverride).toBeGreaterThan(baseStack);
@@ -270,5 +388,33 @@ describe("compileTreeCss — determinism and base rules", () => {
 
   it("is deterministic across runs", () => {
     expect(compileTreeCss(tree)).toBe(compileTreeCss(tree));
+  });
+
+  // A header/footer fragment and the page are injected as separate <style>
+  // blocks. The per-node rule doubles its class (0,2,0) so it outranks the
+  // page's later, single-class `.pst-container` default (0,1,0) — it can't be
+  // clobbered by source order across stylesheets ("header not full width on
+  // other pages"), while the default still stays a class so it beats the theme.
+  it("doubles per-node class so an override survives a later base duplicate", () => {
+    const header = compileTreeCss([
+      { id: "hdr", type: "container", styles: { base: { default: { maxWidth: "100%" } } } },
+    ]);
+    const page = compileTreeCss([{ id: "pg", type: "container" }]);
+    expect(header).toContain(".pst-container{"); // single-class default (0,1,0)
+    expect(header).toContain(".psn-hdr.psn-hdr{max-width:100%}"); // doubled override (0,2,0)
+  });
+
+  // The published page injects the theme's article typography (e.g.
+  // `img{margin:2rem 0}`, `h2{margin-top:3rem}`) alongside the compiled tree
+  // CSS. A single-class `.pst-*` default (0,1,0) must beat the theme's bare
+  // element selectors (0,0,1) so that leak can't push a header logo/heading out
+  // of place — a mismatch the studio canvas (theme CSS absent) never reveals.
+  it("keeps type defaults single-class so they beat the theme's element selectors", () => {
+    const css = compileTreeCss([
+      { id: "img", type: "image", props: { src: "https://x/y.png" } },
+      { id: "h", type: "heading", props: { text: "Hi", level: 2 } },
+    ]);
+    expect(css).toMatch(/(^|\n)\.pst-image\{[^}]*margin:0/); // not :where(...) → (0,1,0) > img (0,0,1)
+    expect(css).toMatch(/(^|\n)\.pst-heading\{[^}]*margin:0/); // (0,1,0) > h2 (0,0,1)
   });
 });

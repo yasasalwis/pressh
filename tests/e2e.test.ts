@@ -120,8 +120,11 @@ describe("end-to-end golden path (two processes, one store)", () => {
     const html = await page.text();
     expect(html).toContain("<title>About Us</title>");
     expect(html).toContain("Welcome");
-    expect(html).not.toContain("<script"); // sanitized at write
-    expect(html).toContain("Powered by Pressh"); // themed layout
+    // Injected payload was sanitized at write; the only scripts the page carries
+    // are the CSP-safe hydration tags (`type="application/json"` / `type="module"`).
+    expect(html).not.toContain("alert(1)");
+    expect(html).not.toContain("<script>"); // no attribute-less inline script
+    expect(html).toContain("Powered by Pressh"); // themed layout (built-in footer fallback)
   });
 
   it("enforces authz across the boundary: an author cannot publish", async () => {

@@ -467,7 +467,8 @@ var STYLE_PRESETS={
   width:["auto","100%","75%","50%","33%","320px","480px","640px"],
   maxWidth:["none","1280px","1100px","960px","760px","640px","100%"],
   minHeight:["0","120px","240px","360px","480px","100vh"],
-  height:["auto","120px","240px","360px","480px"],
+  height:["auto","120px","240px","360px","480px","100vh"],
+  maxHeight:["none","240px","360px","480px","640px","100vh"],
   fontSize:["0.75rem","0.875rem","1rem","1.125rem","1.25rem","1.5rem","2rem","2.5rem","3rem","3.5rem"],
   lineHeight:["1","1.1","1.2","1.4","1.6","1.8"],
   letterSpacing:["normal","-0.04em","-0.02em","0.02em","0.06em"],
@@ -517,7 +518,9 @@ function buildLayoutTab(node){
   html+=grp("Size")+
     sField(node,"Width","width","text",{ph:"auto / 100% / 320px"})+
     sField(node,"Max width","maxWidth","text",{ph:"none = full width"})+
-    sField(node,"Min height","minHeight","text",{ph:"e.g. 320px"});
+    sField(node,"Height","height","text",{ph:"auto / 320px"})+
+    sField(node,"Min height","minHeight","text",{ph:"e.g. 320px"})+
+    sField(node,"Max height","maxHeight","text",{ph:"none / e.g. 480px"});
   if(cont){
     html+=grp("Layout");
     if(node.type==="row"||node.type==="column"||node.type==="grid"||node.type==="form") html+=sField(node,"Direction","flexDirection","select",{o:["row","column"]});

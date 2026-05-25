@@ -70,8 +70,26 @@ export const defaultTheme: ThemeDefinition = {
     { key: "spacing", group: "layout", label: "Spacing", type: "size", default: "1rem" },
   ],
   layout: (input) => {
-    const headerHtml = input.header ?? "";
-    const footerHtml = input.footer ?? "";
+    // A designer-built header/footer page replaces the theme's built-in chrome;
+    // when none is configured, fall back to the default nav + footer so a site
+    // is never left without navigation or attribution.
+    const defaultNav = `<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="/">
+      <div class="nav-mark">P</div>
+      ${escapeHtml(input.siteName)}
+    </a>
+    <ul class="nav-links">
+      <li><a href="/">Home</a></li>
+      <li><a href="/about">About</a></li>
+      <li><a href="/blog">Blog</a></li>
+      <li><a href="/contact">Contact</a></li>
+    </ul>
+  </div>
+</nav>`;
+    const defaultFooter = `<footer><a href="https://pressh.io" target="_blank" rel="noopener">Powered by Pressh</a></footer>`;
+    const headerHtml = input.header ?? defaultNav;
+    const footerHtml = input.footer ?? defaultFooter;
     return `<!DOCTYPE html>
 <html lang="${escapeHtml(input.locale)}">
 <head>

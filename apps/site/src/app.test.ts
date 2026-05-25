@@ -79,7 +79,11 @@ describe("front controller", () => {
     const body = await res.text();
     expect(body).toContain("<title>About Us</title>");
     expect(body).toContain("<p>hello</p>"); // script was sanitized away at write time
-    expect(body).not.toContain("<script");
+    // The injected payload is gone everywhere (rendered HTML and the hydration
+    // JSON). The page legitimately carries a CSP-safe `<script type="application/json">`
+    // data tag, so we assert the payload — not the substring "<script" — is absent.
+    expect(body).not.toContain("alert(1)");
+    expect(body).not.toContain("<script>"); // no attribute-less inline script
     expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
   });

@@ -99,7 +99,14 @@ function icon(id: string, name: string): PrimitiveNode {
   return n(id, "icon", { props: { name }, styles: st({ color: "token:colorPrimary", width: "2.25rem", height: "2.25rem" }) });
 }
 function container(id: string, children: PrimitiveNode[], styles?: ResponsiveStyles): PrimitiveNode {
-  return n(id, "container", styles ? { styles, children } : { children });
+  // The engine no longer bakes horizontal padding into the container base CSS
+  // (so bare primitives stay flush), so presets carry their own gutter here.
+  const gutter: StyleProps = { paddingLeft: "1.5rem", paddingRight: "1.5rem" };
+  const merged: ResponsiveStyles = {
+    ...styles,
+    base: { ...styles?.base, default: { ...gutter, ...(styles?.base?.default ?? {}) } },
+  };
+  return n(id, "container", { styles: merged, children });
 }
 
 // repeats a card builder n times with sample copy

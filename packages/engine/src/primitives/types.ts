@@ -44,6 +44,7 @@ export interface StyleProps {
   maxWidth?: string;
   height?: string;
   minHeight?: string;
+  maxHeight?: string;
   // typography
   fontSize?: string;
   fontWeight?: string;

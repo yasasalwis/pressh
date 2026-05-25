@@ -165,6 +165,7 @@ const STYLE_SPEC: Record<keyof StyleProps, Spec> = {
   maxWidth: { css: "max-width", validate: vSize },
   height: { css: "height", validate: vSize },
   minHeight: { css: "min-height", validate: vSize },
+  maxHeight: { css: "max-height", validate: vSize },
 
   fontSize: { css: "font-size", validate: vFontSize },
   fontWeight: { css: "font-weight", validate: vFontWeight },
@@ -321,6 +322,48 @@ function synthesizeResponsive(node: PrimitiveNode): ResponsiveStyles | undefined
   return out;
 }
 
+// ── height-fill: children of a fixed-height container stretch to fill it ──────
+/** Containers whose layout children stretch to fill an explicit parent height. */
+const HEIGHT_FILL_PARENTS = new Set<PrimitiveType>(["section", "container", "column"]);
+/** Only layout children grow (zero-specificity list); text/media keep natural height. */
+const HEIGHT_FILL_CHILDREN = ".pst-section,.pst-container,.pst-row,.pst-column,.pst-grid";
+
+/** Mirrors render.ts isColumnFlow: a 2+ all-column group is laid out as a row. */
+function childrenAreColumnFlow(children: PrimitiveNode[] | undefined): boolean {
+  if (!children || children.length < 2) return false;
+  return children.every((c) => c.type === "column");
+}
+
+/**
+ * When a container has an explicit height/min-height, its layout children should
+ * fill that height (a designer's mental model: the child "inherits" the parent
+ * height). Columns in a row already stretch via `align-items:stretch`; this
+ * covers the block-stacked case by flexing the parent's column axis and letting
+ * structural children grow. Skipped when the children are a column-flow row, or
+ * when the designer set their own display/direction.
+ */
+function heightFillCss(node: PrimitiveNode, cls: string): string[] {
+  const baseDef = node.styles?.base?.default;
+  if (
+    !HEIGHT_FILL_PARENTS.has(node.type) ||
+    !baseDef ||
+    !(baseDef.height || baseDef.minHeight) ||
+    !node.children?.length ||
+    childrenAreColumnFlow(node.children) ||
+    baseDef.display ||
+    baseDef.flexDirection
+  ) {
+    return [];
+  }
+  const rules: string[] = [];
+  // Doubled class (0,2,0) so this beats the type default (e.g. section's
+  // `display:block`). Columns are already flex-column; sections/containers
+  // default to block.
+  if (node.type !== "column") rules.push(`.${cls}.${cls}{display:flex;flex-direction:column}`);
+  rules.push(`.${cls}.${cls}>:where(${HEIGHT_FILL_CHILDREN}){flex:1 1 auto;min-height:0}`);
+  return rules;
+}
+
 /** Per-node CSS across all breakpoints and states, keyed by the node's class. */
 export function compileNodeCss(node: PrimitiveNode): string {
   const cls = nodeClass(node.id);
@@ -333,14 +376,29 @@ export function compileNodeCss(node: PrimitiveNode): string {
     for (const state of STATE_ORDER) {
       const sp = states[state];
       if (!sp) continue;
-      const decl = compileDeclarations(sp);
+      let decl = compileDeclarations(sp);
       if (!decl) continue;
-      const selector = state === "hover" ? `.${cls}:hover` : `.${cls}`;
+      // Every per-node rule doubles its class (`.psn-id.psn-id`, specificity
+      // 0,2,0) so a designer's explicit style always beats the structural type
+      // default `.pst-type` (0,1,0) — even across separate stylesheets, e.g. a
+      // header fragment plus the page, where source order alone is unreliable.
+      // Type defaults stay single-class (0,1,0) so they still beat the theme's
+      // bare element selectors (`h2`, `p`, `img` … 0,0,1) and reset their leak.
+      // A column inside a row is force-flexed by COLUMN_FLEX_CSS
+      // (`.pst-row>.pst-column{flex:1 1 <basis>}`, also 0,2,0): when a designer
+      // sets an explicit width, opt the column out of equal distribution (the
+      // doubled class wins on source order) so its width takes effect.
+      const base = `.${cls}.${cls}`;
+      if (node.type === "column" && /(?:^|;)width:/.test(decl)) {
+        decl += ";flex:0 0 auto";
+      }
+      const selector = state === "hover" ? `${base}:hover` : base;
       const rule = `${selector}{${decl}}`;
       const media = BREAKPOINT_MEDIA[bp];
       out.push(media ? `@media${media}{${rule}}` : rule);
     }
   }
+  out.push(...heightFillCss(node, cls));
   return out.join("");
 }
 
@@ -350,16 +408,16 @@ export function compileNodeCss(node: PrimitiveNode): string {
  */
 const BASE_CSS: Partial<Record<PrimitiveType, string>> = {
   section: "display:block;width:100%",
-  container: "width:100%;max-width:1100px;margin-left:auto;margin-right:auto;padding-left:1.5rem;padding-right:1.5rem",
-  row: "display:flex;flex-direction:row;gap:1rem;flex-wrap:wrap",
-  column: "display:flex;flex-direction:column;gap:1rem;min-width:0",
-  grid: "display:grid;gap:1rem;grid-template-columns:repeat(3,1fr)",
+  container: "width:100%;max-width:1100px;margin-left:auto;margin-right:auto",
+  row: "display:flex;flex-direction:row;flex-wrap:wrap",
+  column: "display:flex;flex-direction:column;min-width:0",
+  grid: "display:grid;grid-template-columns:repeat(3,1fr)",
   spacer: "display:block;height:2rem",
   divider: "border:0;border-top:1px solid currentColor;opacity:.15;margin:0",
   heading: "margin:0;line-height:1.2",
   text: "margin:0;line-height:1.65",
   button: "display:inline-flex;align-items:center;justify-content:center;gap:.4rem;text-decoration:none;padding:.7rem 1.4rem;border-radius:8px;font-weight:600;cursor:pointer",
-  image: "display:block;max-width:100%;height:auto",
+  image: "display:block;max-width:100%;height:auto;margin:0",
   icon: "display:inline-flex;align-items:center;justify-content:center;width:1.5em;height:1.5em",
   video: "position:relative;width:100%;aspect-ratio:16/9",
   list: "margin:0;padding-left:1.25rem;line-height:1.7",
@@ -378,13 +436,14 @@ const FIELD_INPUT_CSS = `.${TYPE_CLASS_PREFIX}input input,.${TYPE_CLASS_PREFIX}t
 // A non-zero flex-basis lets columns wrap intrinsically once the row gets too
 // narrow to fit them at a readable width — responsive with no breakpoint needed.
 const COL_FLEX_BASIS = "220px";
-const FLOW_ROW_CSS = `.ps-flow-row{display:flex;flex-direction:row;flex-wrap:wrap;gap:1rem;align-items:stretch}`;
+const FLOW_ROW_CSS = `.ps-flow-row{display:flex;flex-direction:row;flex-wrap:wrap;align-items:stretch}`;
 const COLUMN_FLEX_CSS = `.${TYPE_CLASS_PREFIX}row>.${TYPE_CLASS_PREFIX}column,.ps-flow-row>.${TYPE_CLASS_PREFIX}column{flex:1 1 ${COL_FLEX_BASIS}}`;
 
 /**
  * Shared auto-responsive rules emitted once for the whole tree. They sit in the
- * base block (before per-node rules) so any explicit per-breakpoint override a
- * designer sets — emitted later — wins on equal specificity.
+ * base block (before per-node rules); a designer's per-breakpoint override is a
+ * doubled-class per-node rule (0,2,0) and so always wins over these type-level
+ * defaults (0,1,0) regardless of source order.
  */
 function responsiveBaseCss(types: Set<PrimitiveType>): string {
   const C = TYPE_CLASS_PREFIX;
@@ -395,8 +454,6 @@ function responsiveBaseCss(types: Set<PrimitiveType>): string {
     // Stacked columns size to content instead of sharing space / forcing a min height.
     mobile.push(`.ps-flow-row>.${C}column,.${C}row>.${C}column{flex-basis:auto}`);
   }
-  if (types.has("container"))
-    mobile.push(`.${C}container{padding-left:1.1rem;padding-right:1.1rem}`);
   return mobile.length ? `@media(max-width:480px){${mobile.join("")}}` : "";
 }
 
@@ -421,6 +478,12 @@ const TYPE_ORDER = Object.keys(BASE_CSS) as PrimitiveType[];
 /**
  * Compiles the whole tree to one deterministic stylesheet: base type rules
  * (deduped, in fixed order) followed by per-node rules in tree order.
+ *
+ * Specificity is layered in three tiers so the cascade is order-independent
+ * across separately-emitted stylesheets (e.g. a header/footer fragment plus the
+ * page): the theme's bare element selectors (`h2`, `p`, `img` … 0,0,1) are the
+ * floor; `.pst-type` defaults (0,1,0) sit above them and reset that leak; and
+ * doubled-class `.psn-id.psn-id` per-node rules (0,2,0) win over both.
  */
 export function compileTreeCss(nodes: PrimitiveNode[]): string {
   const types = new Set<PrimitiveType>();

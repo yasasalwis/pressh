@@ -48,7 +48,7 @@ export const PRIMITIVE_DEFS: PrimitiveDef[] = [
     category: "layout",
     description: "Horizontal flex group",
     isContainer: true,
-    defaultStyles: base({ gap: "1.5rem", alignItems: "center" }),
+    defaultStyles: base({ alignItems: "center" }),
   },
   {
     type: "column",
@@ -57,7 +57,6 @@ export const PRIMITIVE_DEFS: PrimitiveDef[] = [
     category: "layout",
     description: "Vertical flex group",
     isContainer: true,
-    defaultStyles: base({ gap: "1rem" }),
   },
   {
     type: "grid",
@@ -66,7 +65,7 @@ export const PRIMITIVE_DEFS: PrimitiveDef[] = [
     category: "layout",
     description: "Responsive grid of equal cells",
     isContainer: true,
-    defaultStyles: base({ gridTemplateColumns: "repeat(3,1fr)", gap: "1.5rem" }),
+    defaultStyles: base({ gridTemplateColumns: "repeat(3,1fr)" }),
   },
   {
     type: "spacer",
