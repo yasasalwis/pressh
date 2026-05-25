@@ -458,11 +458,12 @@ export class PluginHost {
   }
 
   async #verifySignature(dir: string, manifest: PluginManifest): Promise<void> {
-    let signature: { algorithm?: string; hash?: string } | null = null;
+      let signature: { algorithm?: string; hash?: string; files?: Record<string, string> } | null = null;
     try {
       signature = JSON.parse(await readFile(join(dir, SIGNATURE_FILE), "utf8")) as {
         algorithm?: string;
         hash?: string;
+          files?: Record<string, string>;
       };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -481,6 +482,32 @@ export class PluginHost {
     if (actual !== signature.hash) {
       throw new PressError("forbidden", `Plugin "${manifest.name}" failed signature verification`);
     }
+
+      // Auxiliary files the manifest references (e.g. the contributed designer
+      // presets) are attacker-controlled too: a signed plugin must also sign them
+      // (the `files` map), so a tampered presets.json is rejected before load —
+      // defense-in-depth beyond the load-time preset sanitizer.
+      await this.#verifyAuxFile(dir, manifest, manifest.designerPresets, signature.files);
+  }
+
+    /** Verifies one manifest-referenced file against the signature's `files` map. */
+    async #verifyAuxFile(
+        dir: string,
+        manifest: PluginManifest,
+        relPath: string | undefined,
+        files: Record<string, string> | undefined,
+    ): Promise<void> {
+        if (!relPath) return;
+        let content: Buffer;
+        try {
+            content = await readFile(resolveWithin(dir, relPath));
+        } catch {
+            throw new PressError("forbidden", `Plugin "${manifest.name}" references "${relPath}" but it is unreadable`);
+        }
+        const actual = createHash("sha256").update(content).digest("hex");
+        if (files?.[relPath] !== actual) {
+            throw new PressError("forbidden", `Plugin "${manifest.name}" file "${relPath}" failed signature verification`);
+        }
   }
 
   async #handleServiceCall(

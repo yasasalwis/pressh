@@ -328,8 +328,8 @@ endpoint dispatch (ADR-007).
 - (+) Contributed content can't break the CSP — it renders through the validated primitive pipeline.
 - (−) Presets are limited to the existing primitive set; a genuinely new widget behaviour requires a new engine
   primitive.
-- (−) `presets.json` is not yet covered by plugin signing (only `main` is); mitigated by load-time sanitization and the
-  safe renderer.
+- (+) `presets.json` is covered by the plugin signature (a `files` map alongside the `main` hash): the host rejects a
+  tampered or missing presets file at load, on top of load-time sanitization and the no-inline renderer.
 
 ### Alternatives Considered
 

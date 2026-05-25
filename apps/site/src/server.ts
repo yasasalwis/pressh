@@ -103,7 +103,11 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
   const gdpr = createGdprService({
     storage,
     audit,
-    scopes: [{ collection: "form_submissions", subjectField: "subjectRef", timestampField: "at" }],
+      scopes: [
+          {collection: "form_submissions", subjectField: "subjectRef", timestampField: "at"},
+          // Storefront orders carry customer PII; `subjectRef` is the lowercased email.
+          {collection: "inventory_orders", subjectField: "subjectRef", timestampField: "createdAt"},
+      ],
   });
   // Shares the CVE store the Studio syncs; the Site's host refuses flagged plugins too.
   const cve = createCveService({ storage, audit, source: { fetch: async () => [] } });

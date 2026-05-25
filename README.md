@@ -188,27 +188,36 @@ internet** — firewall the port and/or front it with a reverse proxy + IP allow
 **2. A persistent `/data` volume.** Content, uploaded media, and the audit log live on disk
 under `PRESSH_CONTENT_ROOT` and `PRESSH_MEDIA_ROOT`. Both processes share it. Back it up.
 
-**3. Two secrets, generated once.** Required when `NODE_ENV=production`:
+**3. Two secrets.** Required when `NODE_ENV=production`:
+
+| Secret               | Purpose                               |
+|----------------------|---------------------------------------|
+| `PRESSH_MASTER_KEY`  | seals the secrets vault (AES-256-GCM) |
+| `PRESSH_CSRF_SECRET` | signs CSRF tokens                     |
+
+**The Docker image generates both on first boot if you don't supply them**, persisting
+them under `/data/secrets` (`0600`) so Site and Studio share the same key automatically —
+no manual step for the container deploys (Options B and D). To manage them yourself
+(or for the non-Docker Option A), generate each one and set it on **both** processes:
 
 ```bash
-# Run twice — once for each secret
+# Run twice — once per secret
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-```env
-PRESSH_MASTER_KEY=<32-byte hex>   # seals the secrets vault (AES-256-GCM)
-PRESSH_CSRF_SECRET=<32-byte hex>  # signs CSRF tokens
-```
+> Keep `PRESSH_MASTER_KEY` **stable for the life of a deployment** — it decrypts your vault
+> (SMTP credentials, plugin secrets, and the database connection string). If it changes,
+> that data is unrecoverable. Include `/data/secrets` in your `/data` backups.
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `NODE_ENV` | `production` enforces TLS, signed plugins, and the master key | `development` |
-| `PRESSH_MASTER_KEY` | Encryption-vault seal (**required in prod**) | — |
-| `PRESSH_CSRF_SECRET` | CSRF token signing (**required in prod**) | — |
-| `PRESSH_CONTENT_ROOT` | Content + audit log directory | `./data/content` |
-| `PRESSH_MEDIA_ROOT` | Uploaded media directory | `./data/media` |
-| `PRESSH_SITE_PORT` | Public site port | `3000` |
-| `PRESSH_STUDIO_PORT` | Admin studio port | `4000` |
+| Variable              | Purpose                                                       | Default                  |
+|-----------------------|---------------------------------------------------------------|--------------------------|
+| `NODE_ENV`            | `production` enforces TLS, signed plugins, and the master key | `development`            |
+| `PRESSH_MASTER_KEY`   | Encryption-vault seal (**required in prod**)                  | auto-generated in Docker |
+| `PRESSH_CSRF_SECRET`  | CSRF token signing (**required in prod**)                     | auto-generated in Docker |
+| `PRESSH_CONTENT_ROOT` | Content + audit log directory                                 | `./data/content`         |
+| `PRESSH_MEDIA_ROOT`   | Uploaded media directory                                      | `./data/media`           |
+| `PRESSH_SITE_PORT`    | Public site port                                              | `3000`                   |
+| `PRESSH_STUDIO_PORT`  | Admin studio port                                             | `4000`                   |
 
 Both processes expose `GET /healthz` (liveness) and `GET /readyz` (readiness) for health checks.
 
@@ -299,14 +308,28 @@ that run Site and Studio as two services sharing a named volume. This is the sim
 production setup on a single host.
 
 ```bash
-cp .env.example .env     # fill in PRESSH_MASTER_KEY and PRESSH_CSRF_SECRET
-
 docker compose up -d --build
 ```
 
-| Service | Port | Exposure |
-|---|---|---|
-| `site` | `3000` | Published to the host |
+That's the whole setup — the container **auto-generates `PRESSH_MASTER_KEY` and
+`PRESSH_CSRF_SECRET` on first boot** and persists them under the shared `/data` volume, so
+both services use the same key with no manual step. To manage the keys yourself, run
+`cp .env.example .env`, fill them in, and Compose passes them through (a supplied value
+overrides the generated one).
+
+**Run the published image instead of building.** Every release pushes an image to GitHub
+Container Registry (see [CI/CD → Releases](#releases)). Pull a tagged image directly:
+
+```bash
+docker pull ghcr.io/your-org/pressh:latest
+```
+
+or point Compose at it by replacing `build: .` with `image: ghcr.io/your-org/pressh:<version>`
+on both services.
+
+| Service  | Port   | Exposure                                                   |
+|----------|--------|------------------------------------------------------------|
+| `site`   | `3000` | Published to the host                                      |
 | `studio` | `4000` | `expose`d on the internal network only — **not** published |
 
 The compose file mounts a `pressh-data` volume at `/data` for both services and sets
@@ -359,7 +382,7 @@ a firewall and TLS.
 apt-get update && apt-get install -y docker.io docker-compose-plugin git
 git clone https://github.com/your-org/pressh.git /opt/pressh
 cd /opt/pressh
-cp .env.example .env     # fill in the two secrets
+# Secrets auto-provision on first boot; to set your own: cp .env.example .env
 
 docker compose up -d --build
 ```
@@ -593,12 +616,35 @@ The adapter conformance suite (`adapters/conformance.ts`) runs against all three
 
 ## CI/CD
 
-GitHub Actions runs on every push to `main`/`dev` and all PRs:
+GitHub Actions runs on every push to `main`/`dev` and all PRs ([`ci.yml`](.github/workflows/ci.yml)):
 
-| Job | Steps |
-|---|---|
-| **build-and-test** | `npm ci` → `build:packages` → `test` → `lint` |
-| **security** | `npm audit --audit-level=high` → SBOM (CycloneDX) → secret scanning |
+| Job                | Steps                                                                          |
+|--------------------|--------------------------------------------------------------------------------|
+| **build-and-test** | `npm ci` → `npm run build` → `npm run tests` → `npm run lint`                  |
+| **security**       | `npm ci` → `npm audit --audit-level=high` → SBOM (CycloneDX) → secret scanning |
+
+### Releases
+
+Pushes to `main` also run the **Release** workflow ([`release.yml`](.github/workflows/release.yml)),
+driven by [release-please](https://github.com/googleapis/release-please):
+
+1. It maintains a **Release PR** that bumps the version in `package.json` and updates
+   `CHANGELOG.md` from your [Conventional Commit](https://www.conventionalcommits.org/) messages
+   (`fix:` → patch, `feat:` → minor, `feat!:` / `BREAKING CHANGE` → major).
+2. Merging that PR tags `vX.Y.Z` and publishes a **GitHub Release**.
+3. That release builds and pushes the Docker image to GitHub Container Registry:
+
+   ```text
+   ghcr.io/<owner>/pressh:X.Y.Z
+   ghcr.io/<owner>/pressh:X.Y
+   ghcr.io/<owner>/pressh:latest
+   ```
+
+The image build authenticates with the built-in `GITHUB_TOKEN` — no registry secrets to
+configure. Two repo prerequisites: enable **Settings → Actions → General → "Allow GitHub
+Actions to create and approve pull requests"** so release-please can open its PR, and write
+Conventional Commit messages (non-conventional commits produce no version bump). The first
+published package is **private** — make it public in the package settings for anonymous pulls.
 
 ---
 

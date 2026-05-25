@@ -791,6 +791,9 @@ export async function createOrder(args, host) {
     total,
     currency: settings.currency,
     customer,
+    // Top-level subject reference (lowercased email) so the GDPR service — which
+    // matches on a flat field — can find a customer's orders for export/erasure.
+    subjectRef: customer.email.toLowerCase(),
     note: trimmed(args?.note, 1000),
     source,
     paymentStatus: "unpaid",

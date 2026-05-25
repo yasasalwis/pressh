@@ -4,10 +4,10 @@
 // refuses unsigned/tampered plugins in production (allowUnsigned=false), so this
 // runs as part of `npm run build` to keep shipped built-ins loadable in prod.
 
-import { readdir, readFile, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {readdir, readFile, writeFile} from "node:fs/promises";
+import {createHash} from "node:crypto";
+import {dirname, join} from "node:path";
+import {fileURLToPath} from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILTINS = join(ROOT, "builtins");
@@ -42,9 +42,23 @@ async function sign() {
 
     const content = await readFile(join(dir, manifest.main));
     const hash = createHash("sha256").update(content).digest("hex");
+      const signature = {algorithm: "sha256", hash};
+
+      // Also sign manifest-referenced auxiliary files (e.g. contributed designer
+      // presets) so the host can reject a tampered file at load (must match the
+      // `files` map PluginHost#verifySignature checks).
+      const auxFiles = [manifest.designerPresets].filter(Boolean);
+      if (auxFiles.length) {
+          signature.files = {};
+          for (const rel of auxFiles) {
+              const aux = await readFile(join(dir, rel));
+              signature.files[rel] = createHash("sha256").update(aux).digest("hex");
+          }
+      }
+
     await writeFile(
       join(dir, SIGNATURE_FILE),
-      JSON.stringify({ algorithm: "sha256", hash }, null, 2) + "\n",
+        JSON.stringify(signature, null, 2) + "\n",
       "utf8",
     );
     count++;

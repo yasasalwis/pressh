@@ -1,4 +1,7 @@
 {
   "algorithm": "sha256",
-  "hash": "cbd0344bd4a45cb89145525fc759c6610fb0f6e324b66bc54ce2910a14903964"
+  "hash": "76fbe46e92dfe6c3ce9f67c645b891205075aca0261c7aac034b80e5a72c7909",
+  "files": {
+    "presets.json": "c8075df685a75119d1289f77ad980594d92f7eaf7f4745469b4658cdc98345d6"
+  }
 }

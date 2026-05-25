@@ -381,6 +381,21 @@ describe("inventory plugin — storefront cart & checkout", () => {
             }, host),
         ).rejects.toThrow(/required/i);
     });
+
+    it("links an order to a GDPR subject via a lowercased subjectRef", async () => {
+        const host = makeHost();
+        const a = await inventory.saveItem({item: {name: "A", price: 10, stock: 5, published: true}}, host);
+        await inventory.checkout(
+            {
+                items: [{itemId: a.item.id, variantId: a.item.variants[0].id, qty: 1}],
+                customer: {name: "Sam", email: "Sam@Example.COM"}
+            },
+            host,
+        );
+        const {orders} = await inventory.listOrders({}, host);
+        // The GDPR service matches a flat field, so the order carries the email at top level.
+        expect(orders[0].subjectRef).toBe("sam@example.com");
+    });
 });
 
 describe("forms plugin", () => {

@@ -142,6 +142,9 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     scopes: [
       { collection: "form_submissions", subjectField: "subjectRef", timestampField: "at" },
       { collection: "media", subjectField: "ownerRef" },
+        // Storefront orders carry customer PII (name/email/address). `subjectRef`
+        // is the lowercased customer email; `createdAt` enables a retention policy.
+        {collection: "inventory_orders", subjectField: "subjectRef", timestampField: "createdAt"},
     ],
   });
   const csrfSecret = opts.csrfSecret

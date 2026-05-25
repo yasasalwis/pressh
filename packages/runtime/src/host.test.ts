@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createHash, randomUUID } from "node:crypto";
-import { createFileAuditLog, createFileSystemStorage } from "@pressh/core";
-import type { AuditLog, StorageAdapter } from "@pressh/core";
-import { PluginHost } from "@pressh/runtime";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {fileURLToPath} from "node:url";
+import {createHash, randomUUID} from "node:crypto";
+import type {AuditLog, StorageAdapter} from "@pressh/core";
+import {createFileAuditLog, createFileSystemStorage} from "@pressh/core";
+import {PluginHost} from "@pressh/runtime";
 
 // The worker must be the COMPILED script (worker_threads cannot run TS source).
 // `npm run build:packages` runs before `npm test` in the acceptance gate.
@@ -48,22 +48,29 @@ let audit: AuditLog;
 async function writePlugin(
   name: string,
   capabilities: string[],
-  opts: { signed?: boolean; endpoints?: unknown[] } = {},
+  opts: { signed?: boolean; endpoints?: unknown[]; presets?: unknown[] } = {},
 ): Promise<string> {
   const pluginDir = join(dir, name);
   await mkdir(pluginDir, { recursive: true });
   await writeFile(join(pluginDir, "index.mjs"), PLUGIN_SRC, "utf8");
   const manifest: Record<string, unknown> = { name, version: "0.0.0", main: "index.mjs", capabilities };
   if (opts.endpoints) manifest["endpoints"] = opts.endpoints;
+    if (opts.presets) {
+        manifest["designerPresets"] = "presets.json";
+        await writeFile(join(pluginDir, "presets.json"), JSON.stringify(opts.presets), "utf8");
+    }
   await writeFile(join(pluginDir, "pressh.plugin.json"), JSON.stringify(manifest), "utf8");
   if (opts.signed) {
     const content = await readFile(join(pluginDir, "index.mjs"));
-    const hash = createHash("sha256").update(content).digest("hex");
-    await writeFile(
-      join(pluginDir, "pressh.signature.json"),
-      JSON.stringify({ algorithm: "sha256", hash }),
-      "utf8",
-    );
+      const sig: { algorithm: string; hash: string; files?: Record<string, string> } = {
+          algorithm: "sha256",
+          hash: createHash("sha256").update(content).digest("hex"),
+      };
+      if (opts.presets) {
+          const presets = await readFile(join(pluginDir, "presets.json"));
+          sig.files = {"presets.json": createHash("sha256").update(presets).digest("hex")};
+      }
+      await writeFile(join(pluginDir, "pressh.signature.json"), JSON.stringify(sig), "utf8");
   }
   return pluginDir;
 }
@@ -142,6 +149,46 @@ describe("PluginHost", () => {
     const tamperHost = new PluginHost({ storage, audit, allowUnsigned: false, workerScript: WORKER });
     await expect(tamperHost.load(pluginDir)).rejects.toMatchObject({ code: "forbidden" });
   });
+
+    it("signs and verifies contributed designer presets, rejecting a tampered presets file", async () => {
+        const preset = [{id: "p", name: "P", icon: "x", category: "C", description: "d", template: []}];
+
+        // A signed plugin whose presets are covered by the signature loads fine.
+        const okHost = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
+        const okDir = await writePlugin("preset-ok", [], {signed: true, presets: preset});
+        await expect(okHost.register(okDir)).resolves.toBeDefined();
+
+        // Tampering presets.json after signing is rejected before load (the main
+        // hash still matches — only the presets file changed).
+        await writeFile(join(okDir, "presets.json"), JSON.stringify([{id: "evil"}]), "utf8");
+        const tamperHost = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
+        await expect(tamperHost.register(okDir)).rejects.toMatchObject({code: "forbidden"});
+
+        // A signed plugin that declares presets but whose signature omits the file
+        // hash is rejected (the signature must cover everything the manifest ships).
+        const dir2 = join(dir, "preset-unsigned-file");
+        await mkdir(dir2, {recursive: true});
+        await writeFile(join(dir2, "index.mjs"), PLUGIN_SRC, "utf8");
+        await writeFile(join(dir2, "presets.json"), JSON.stringify(preset), "utf8");
+        await writeFile(
+            join(dir2, "pressh.plugin.json"),
+            JSON.stringify({
+                name: "p2",
+                version: "0.0.0",
+                main: "index.mjs",
+                capabilities: [],
+                designerPresets: "presets.json"
+            }),
+            "utf8",
+        );
+        const mainHash = createHash("sha256").update(await readFile(join(dir2, "index.mjs"))).digest("hex");
+        await writeFile(join(dir2, "pressh.signature.json"), JSON.stringify({
+            algorithm: "sha256",
+            hash: mainHash
+        }), "utf8");
+        const host3 = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
+        await expect(host3.register(dir2)).rejects.toMatchObject({code: "forbidden"});
+    });
 
   it("kills a hung worker on timeout and respawns for the next call", async () => {
     const host = new PluginHost({
