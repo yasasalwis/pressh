@@ -20,7 +20,28 @@
     "storage.read:inventory_counters",
     "storage.write:inventory_counters"
   ],
-  "endpoints": [{ "method": "GET", "path": "/items", "handler": "publicItems" }],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/items",
+      "handler": "publicItems"
+    },
+    {
+      "method": "POST",
+      "path": "/products",
+      "handler": "feed"
+    },
+    {
+      "method": "POST",
+      "path": "/cart",
+      "handler": "cartPreview"
+    },
+    {
+      "method": "POST",
+      "path": "/checkout",
+      "handler": "checkout"
+    }
+  ],
   "panel": { "title": "Inventory", "entry": "panel.html" },
   "designerPresets": "presets.json",
   "panelActions": [

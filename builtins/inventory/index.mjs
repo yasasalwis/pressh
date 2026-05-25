@@ -587,6 +587,106 @@ export async function publicItems(args, host) {
   return {items: out.items, currency: out.currency};
 }
 
+/**
+ * Public cart preview — resolves a client cart [{itemId, variantId, qty}] to
+ * authoritative, formatted line items + totals. Lenient (never throws): missing
+ * products are flagged `removed`, over-ordered lines are flagged `adjusted` and
+ * counted at the available quantity. The client uses this to render the cart and
+ * checkout summary; checkout re-validates strictly server-side.
+ *
+ * @param {{ items?: Array<{itemId?:string,variantId?:string,qty?:number}> }} args
+ * @param {import('@pressh/sdk').HostApi} host
+ */
+export async function cartPreview(args, host) {
+  const settings = await readSettings(host);
+  const symbol = settings.currencySymbol || "$";
+  const fmt = (n) => symbol + (Number(n) || 0).toFixed(2);
+  const requested = Array.isArray(args?.items) ? args.items.slice(0, 100) : [];
+
+  const lines = [];
+  for (const raw of requested) {
+    const itemId = str(raw?.itemId);
+    let qty = Number(raw?.qty);
+    qty = Number.isInteger(qty) && qty > 0 ? Math.min(qty, 999) : 1;
+    const product = await host.storage.get(ITEMS, itemId);
+    if (!product || typeof product !== "object" || product.published !== true) {
+      lines.push({itemId, variantId: str(raw?.variantId), removed: true, name: "Unavailable item", qty, available: 0});
+      continue;
+    }
+    const variants = product.variants ?? [];
+    const variantId = str(raw?.variantId) || (variants[0]?.id ?? "");
+    const variant = variants.find((v) => v.id === variantId);
+    if (!variant) {
+      lines.push({itemId, variantId, removed: true, name: product.name, qty, available: 0});
+      continue;
+    }
+    const available = Number(variant.stock) || 0;
+    const usableQty = Math.max(0, Math.min(qty, available));
+    const unitPrice = variantPrice(variant, product);
+    const lineTotal = round2(unitPrice * usableQty);
+    lines.push({
+      itemId,
+      variantId,
+      name: product.name,
+      variantLabel: variant.label || variantLabel(variant.optionValues),
+      image: (product.images && product.images[0]) || "",
+      sku: variant.sku || product.sku || "",
+      unitPrice,
+      unitPriceLabel: fmt(unitPrice),
+      qty,
+      usableQty,
+      available,
+      adjusted: usableQty !== qty,
+      lineTotal,
+      lineTotalLabel: fmt(lineTotal),
+    });
+  }
+
+  const subtotal = round2(lines.reduce((s, l) => s + (l.lineTotal || 0), 0));
+  const {tax, shipping, total} = computeTotals(subtotal, settings, {});
+  return {
+    lines,
+    currency: settings.currency,
+    currencySymbol: symbol,
+    subtotal,
+    subtotalLabel: fmt(subtotal),
+    tax,
+    taxLabel: fmt(tax),
+    taxRate: settings.taxRate,
+    shipping,
+    shippingLabel: fmt(shipping),
+    total,
+    totalLabel: fmt(total),
+  };
+}
+
+/**
+ * Public checkout — creates a real order from the client cart + customer
+ * details. Delegates to createOrder (server-authoritative pricing, stock
+ * validation + decrement), tagging the order as storefront-sourced.
+ *
+ * @param {{ items?: unknown[], customer?: Record<string,unknown>, note?: string }} args
+ * @param {import('@pressh/sdk').HostApi} host
+ */
+export async function checkout(args, host) {
+  const items = Array.isArray(args?.items)
+      ? args.items.map((i) => ({itemId: i?.itemId, variantId: i?.variantId, qty: i?.qty}))
+      : [];
+  const {order} = await createOrder(
+      {lines: items, customer: args?.customer, note: args?.note, source: "storefront"},
+      host,
+  );
+  const settings = await readSettings(host);
+  const symbol = settings.currencySymbol || "$";
+  return {
+    ok: true,
+    orderId: order.id,
+    orderNumber: order.number,
+    total: order.total,
+    totalLabel: symbol + Number(order.total).toFixed(2),
+  };
+}
+
 // ── orders ───────────────────────────────────────────────────────────────────
 
 function cleanCustomer(c) {

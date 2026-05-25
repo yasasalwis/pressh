@@ -1,0 +1,163 @@
+/* Storefront cart + checkout widgets (progressive enhancement). Linked as a
+   same-origin stylesheet so it satisfies the site's `style-src 'self'` CSP —
+   the client never sets inline `style` attributes. */
+.ps-cart-empty {
+    color: #64748b;
+    padding: 1rem 0;
+}
+
+.ps-cart-line {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    padding: .85rem 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.ps-cart-line img {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 8px;
+    background: #f1f5f9;
+}
+
+.ps-cl-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.ps-cl-name {
+    font-weight: 600;
+}
+
+.ps-cl-meta {
+    color: #64748b;
+    font-size: .85rem;
+}
+
+.ps-qty {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+.ps-qty button {
+    width: 28px;
+    height: 28px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+}
+
+.ps-cl-total {
+    font-weight: 700;
+    min-width: 84px;
+    text-align: right;
+}
+
+.ps-cl-remove {
+    background: none;
+    border: 0;
+    color: #dc2626;
+    cursor: pointer;
+    font: inherit;
+    padding: .25rem .5rem;
+}
+
+.ps-cart-totals {
+    margin-top: 1.25rem;
+}
+
+.ps-cart-totals .ps-row {
+    display: flex;
+    justify-content: space-between;
+    padding: .25rem 0;
+}
+
+.ps-cart-totals .ps-total {
+    font-weight: 800;
+    font-size: 1.1rem;
+    border-top: 1px solid #e2e8f0;
+    margin-top: .5rem;
+    padding-top: .5rem;
+}
+
+.ps-field {
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    margin-bottom: .85rem;
+}
+
+.ps-field label {
+    font-size: .8rem;
+    color: #475569;
+    font-weight: 600;
+}
+
+.ps-field input, .ps-field textarea {
+    font: inherit;
+    padding: .65rem .8rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ps-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: .85rem 1.6rem;
+    border: 0;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: .5rem;
+}
+
+.ps-btn[disabled] {
+    opacity: .6;
+    cursor: default;
+}
+
+.ps-note {
+    color: #b45309;
+    font-size: .8rem;
+    margin-top: .15rem;
+}
+
+.ps-msg {
+    margin-top: .6rem;
+    min-height: 1.2em;
+}
+
+.ps-msg.ps-err {
+    color: #dc2626;
+}
+
+.ps-success {
+    padding: 1.75rem;
+    border: 1px solid rgba(22, 163, 74, .35);
+    background: rgba(22, 163, 74, .08);
+    border-radius: 12px;
+    text-align: center;
+}
+
+.ps-success h3 {
+    margin: 0 0 .5rem;
+}
+
+.ps-added {
+    animation: none;
+}
+
+.ps-checkout-summary {
+    margin-bottom: 1.5rem;
+}

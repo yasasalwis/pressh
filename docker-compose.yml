@@ -14,9 +14,12 @@ services:
     environment:
       NODE_ENV: production
       PRESSH_CONTENT_ROOT: /data/content
-      # Supply the same key as the Studio: the Site reads sealed database
-      # credentials from the shared vault after a Database-Manager cutover.
-      # PRESSH_MASTER_KEY must be supplied as a secret.
+      # PRESSH_MASTER_KEY / PRESSH_CSRF_SECRET are auto-provisioned on first boot
+      # by the entrypoint and persisted under the shared /data volume, so the Site
+      # and Studio automatically use the same key (the Site reads sealed database
+      # credentials from the shared vault after a Database-Manager cutover).
+      # To manage the key yourself, set PRESSH_MASTER_KEY here (or via a Docker
+      # secret) on BOTH services and it overrides the generated one.
     volumes:
       - pressh-data:/data
     ports:
@@ -35,7 +38,8 @@ services:
       NODE_ENV: production
       PRESSH_CONTENT_ROOT: /data/content
       PRESSH_MEDIA_ROOT: /data/media
-      # PRESSH_MASTER_KEY and PRESSH_CSRF_SECRET must be supplied as secrets.
+      # Auto-provisioned on first boot and persisted under /data (shared with the
+      # Site). Override by setting PRESSH_MASTER_KEY / PRESSH_CSRF_SECRET here.
     volumes:
       - pressh-data:/data
     expose:

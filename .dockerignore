@@ -7,3 +7,9 @@ node_modules
 coverage
 docs
 *.log
+# Never bake secrets or local runtime data into the image (defense-in-depth for
+# local `docker build .`; secrets are provisioned at runtime by the entrypoint).
+.env
+.env.*
+!.env.example
+/data

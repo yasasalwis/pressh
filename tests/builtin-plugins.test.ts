@@ -329,6 +329,60 @@ describe("inventory plugin — orders, payments & returns", () => {
   });
 });
 
+describe("inventory plugin — storefront cart & checkout", () => {
+    it("previews a cart with authoritative pricing and flags over-orders / missing items", async () => {
+        const host = makeHost();
+        const a = await inventory.saveItem({item: {name: "A", price: 10, stock: 2, published: true}}, host);
+        const b = await inventory.saveItem({item: {name: "B", price: 5, stock: 4, published: true}}, host);
+        const preview = await inventory.cartPreview(
+            {
+                items: [
+                    {itemId: a.item.id, variantId: a.item.variants[0].id, qty: 5}, // over stock (2)
+                    {itemId: b.item.id, variantId: b.item.variants[0].id, qty: 2},
+                    {itemId: "ghost", qty: 1},
+                ],
+            },
+            host,
+        );
+        const lineA = preview.lines.find((l: { name: string }) => l.name === "A");
+        expect(lineA.adjusted).toBe(true);
+        expect(lineA.available).toBe(2);
+        expect(lineA.lineTotal).toBe(20); // capped at 2 × $10
+        expect(preview.lines.some((l: { removed?: boolean }) => l.removed)).toBe(true);
+        expect(preview.subtotal).toBe(30); // 20 (A capped) + 10 (B 2×$5)
+        expect(preview.totalLabel).toContain("30");
+    });
+
+    it("checks the cart out into a real storefront order and decrements stock", async () => {
+        const host = makeHost();
+        const a = await inventory.saveItem({item: {name: "A", price: 10, stock: 5, published: true}}, host);
+        const res = await inventory.checkout(
+            {
+                items: [{itemId: a.item.id, variantId: a.item.variants[0].id, qty: 2}],
+                customer: {name: "Sam", email: "s@x.y"}
+            },
+            host,
+        );
+        expect(res.ok).toBe(true);
+        expect(res.orderNumber).toBeGreaterThanOrEqual(1000);
+        expect((await inventory.getItem({id: a.item.id}, host)).item.variants[0].stock).toBe(3);
+        const orders = await inventory.listOrders({}, host);
+        expect(orders.orders).toHaveLength(1);
+        expect(orders.orders[0].source).toBe("storefront");
+    });
+
+    it("rejects checkout without customer details", async () => {
+        const host = makeHost();
+        const a = await inventory.saveItem({item: {name: "A", price: 10, stock: 5, published: true}}, host);
+        await expect(
+            inventory.checkout({
+                items: [{itemId: a.item.id, variantId: a.item.variants[0].id, qty: 1}],
+                customer: {}
+            }, host),
+        ).rejects.toThrow(/required/i);
+    });
+});
+
 describe("forms plugin", () => {
   it("drops honeypot spam silently and stores real submissions with a subjectRef", async () => {
     const host = makeHost();

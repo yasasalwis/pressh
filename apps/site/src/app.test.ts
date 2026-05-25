@@ -1,18 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import {
-  capabilitiesForRoles,
-  createFileAuditLog,
-  createFileSystemStorage,
-} from "@pressh/core";
-import type { StorageAdapter } from "@pressh/core";
-import { createContentService, createQueryResolver } from "@pressh/engine";
-import { createSiteApp } from "./app";
-import type { SitePluginHost } from "./app";
-import { createRenderCache } from "./cache";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {createHash} from "node:crypto";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import type {StorageAdapter} from "@pressh/core";
+import {capabilitiesForRoles, createFileAuditLog, createFileSystemStorage,} from "@pressh/core";
+import {createContentService, createQueryResolver, DESIGNER_LAYOUT_BLOCK} from "@pressh/engine";
+import type {SitePluginHost} from "./app";
+import {createSiteApp} from "./app";
+import {createRenderCache} from "./cache";
 
 const ADMIN = capabilitiesForRoles(["admin"]);
 const EDITOR = capabilitiesForRoles(["editor"]);
@@ -166,6 +162,64 @@ describe("plugin API dispatcher", () => {
     const res = await app.request("/api/p/ghost/greet", { method: "POST" });
     expect(res.status).toBe(404);
   });
+});
+
+describe("storefront product feed binding", () => {
+    // A designer page whose body is a collectionList bound to a plugin data source.
+    async function makeShopPage(): Promise<void> {
+        const type = await content.createType(ADMIN, {
+            name: "Shop",
+            slug: "shoppage",
+            fields: [{id: "1", name: "title", type: "text", required: true}],
+        });
+        const nodes = [
+            {
+                id: "list",
+                type: "collectionList",
+                props: {source: "inventory:products", limit: 4, emptyText: "No products yet."},
+                children: [
+                    {
+                        id: "card",
+                        type: "column",
+                        children: [{id: "nm", type: "heading", props: {level: 3}, bindings: {text: {field: "name"}}}]
+                    },
+                ],
+            },
+        ];
+        const shop = await content.createEntry(EDITOR, {
+            typeId: type.id,
+            slug: "shop",
+            authorId: "u1",
+            fields: {title: "Shop"},
+            blocks: [{type: DESIGNER_LAYOUT_BLOCK, props: {nodes}}],
+        });
+        await content.transition(EDITOR, shop.id, "published");
+    }
+
+    it("renders products from the enabled inventory plugin's feed", async () => {
+        await makeShopPage();
+        const invHost: SitePluginHost = {
+            has: (n) => n === "inventory",
+            endpoints: () => [],
+            invoke: async (_n, method) =>
+                method === "feed" ? {items: [{id: "p1", name: "Test Mug", priceLabel: "$9.50"}]} : {},
+        };
+        const invApp = createSiteApp({
+            resolver: createQueryResolver({content}),
+            pluginHost: invHost,
+            cache: createRenderCache(),
+        });
+        const body = await (await invApp.request("/shop")).text();
+        expect(body).toContain("Test Mug");
+    });
+
+    it("shows the empty state when the plugin is disabled (source unresolved)", async () => {
+        await makeShopPage();
+        // The default `app` host only knows "hello" → has("inventory") is false.
+        const body = await (await app.request("/shop")).text();
+        expect(body).toContain("No products yet.");
+        expect(body).not.toContain("Test Mug");
+    });
 });
 
 describe("SEO endpoints", () => {

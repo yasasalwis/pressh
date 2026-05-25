@@ -13,7 +13,11 @@ FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app ./
+RUN chmod +x /app/scripts/docker-entrypoint.sh
 # `site` (public) and `studio` (admin) are started via docker-compose with
 # different commands. Defaults to the public site.
 EXPOSE 3000 4000
+# The entrypoint provisions PRESSH_MASTER_KEY/CSRF on first boot (see the script)
+# then exec's the command below (or the docker-compose `command:` override).
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 CMD ["node", "apps/site/dist/server.js"]

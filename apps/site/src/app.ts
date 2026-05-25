@@ -144,9 +144,31 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
  * slug/publishedAt; the displayable fields (title, …) live in the current
  * revision, so each entry is resolved to flatten its fields for binding.
  */
-function makeSiteContext(resolver: QueryResolver, storage?: StorageAdapter): PrimitiveRenderContext {
+function makeSiteContext(
+    resolver: QueryResolver,
+    storage?: StorageAdapter,
+    pluginHost?: SitePluginHost,
+): PrimitiveRenderContext {
   return {
     async listPublished(query) {
+      // A `source` of the form "<plugin>:<resource>" (e.g. "inventory:products")
+      // is served by that plugin's `feed` handler — but only while it's enabled
+      // (has() is true only for a running worker). This keeps plugin-owned data
+      // (products) out of the engine's content store yet bindable in the designer.
+      const source = query.source;
+      if (source && source.includes(":") && pluginHost) {
+        const plugin = source.split(":")[0] ?? "";
+        if (!plugin || !pluginHost.has(plugin)) return [];
+        try {
+          const res = (await pluginHost.invoke(plugin, "feed", {
+            limit: query.limit,
+            sort: query.sortBy,
+          })) as { items?: unknown[] } | null;
+          return Array.isArray(res?.items) ? (res!.items as Record<string, unknown>[]) : [];
+        } catch {
+          return [];
+        }
+      }
       if (!storage) return [];
       const limit = Math.min(Math.max(1, query.limit ?? 10), 50);
       const result = await storage.query(
@@ -251,7 +273,7 @@ async function renderMaintenancePage(deps: SiteAppDeps): Promise<string> {
  */
 async function renderSystemDocument(deps: SiteAppDeps, slug: string): Promise<string | null> {
   try {
-    const ctx = makeSiteContext(deps.resolver, deps.storage);
+    const ctx = makeSiteContext(deps.resolver, deps.storage, deps.pluginHost);
     const resolved = await deps.resolver.resolve({slug, scope: "public"});
     const title =
         typeof resolved.fields["title"] === "string" ? (resolved.fields["title"] as string) : resolved.slug;
@@ -495,7 +517,7 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   app.get("*", async (c) => {
     const path = c.req.path;
     try {
-      const ctx = makeSiteContext(deps.resolver, deps.storage);
+      const ctx = makeSiteContext(deps.resolver, deps.storage, deps.pluginHost);
 
       // Fetch system layout pages. Done before cache check so their revision
       // can be included in the version key — a header/footer save invalidates
