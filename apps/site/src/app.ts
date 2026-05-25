@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { extname, join, resolve as resolvePath } from "node:path";
+import { extname, resolve as resolvePath } from "node:path";
 import { Readable } from "node:stream";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { Hono } from "hono";
-import { PressError, createMetrics, requestId } from "@pressh/core";
+import type { Context } from "hono";
+import { PressError, createMetrics, createRateLimiter, requestId } from "@pressh/core";
 import type { Metrics, StorageAdapter } from "@pressh/core";
 import { DESIGNER_LAYOUT_BLOCK, SYSTEM_SLUGS, renderTree } from "@pressh/engine";
 import type {
@@ -33,6 +34,12 @@ export interface SitePluginHost {
 export interface SiteAppDeps {
   resolver: QueryResolver;
   pluginHost: SitePluginHost;
+  /**
+   * Per-request enabled gate. The Site loads only enabled plugins at boot, but
+   * this lets a Studio-side disable take effect publicly without a Site restart:
+   * a running worker still won't serve once its persisted state flips off.
+   */
+  isPluginEnabled?: (name: string) => Promise<boolean>;
   cache: RenderCache;
   themeService?: ThemeService;
   gdpr?: GdprService;
@@ -99,6 +106,26 @@ function injectAssetsIntoThemeHtml(
   return html
     .replace("</head>", `${linkTags}</head>`)
     .replace("</body>", `${dataTag}${scriptTag}</body>`);
+}
+
+interface SeoMeta {
+  description?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  robots?: string;
+}
+
+/** Builds escaped <meta>/OpenGraph tags from the SEO plugin's resolved meta. */
+function seoMetaTags(meta: SeoMeta): string {
+  const tags: string[] = [];
+  if (meta.description) tags.push(`<meta name="description" content="${escapeHtml(meta.description)}">`);
+  if (meta.robots) tags.push(`<meta name="robots" content="${escapeHtml(meta.robots)}">`);
+  if (meta.ogTitle) tags.push(`<meta property="og:title" content="${escapeHtml(meta.ogTitle)}">`);
+  if (meta.ogDescription)
+    tags.push(`<meta property="og:description" content="${escapeHtml(meta.ogDescription)}">`);
+  if (meta.ogImage) tags.push(`<meta property="og:image" content="${escapeHtml(meta.ogImage)}">`);
+  return tags.join("");
 }
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
@@ -183,9 +210,52 @@ async function renderSystemFragment(
   }
 }
 
+/**
+ * Renders the operator's "maintenance" system page for a 503 response. Used
+ * while the Database Manager copies records (a migration window): the public
+ * site is read-only/offline so no write lands in the store being replaced.
+ * Falls back to a minimal static page if the system page can't be resolved.
+ */
+async function renderMaintenancePage(deps: SiteAppDeps): Promise<string> {
+  try {
+    const resolved = await deps.resolver.resolve({ slug: SYSTEM_SLUGS.maintenance, scope: "public" });
+    const title =
+      typeof resolved.fields["title"] === "string" ? (resolved.fields["title"] as string) : "Down for maintenance";
+    const blocks = resolved.blocks as BlockNode[];
+    const bodyHtml = renderToString(createElement(Blocks, { blocks }));
+    if (deps.themeService) {
+      const t = await deps.themeService.resolve();
+      return t.theme.layout({
+        title,
+        body: `<div id="root">${bodyHtml}</div>`,
+        locale: resolved.locale,
+        cssVars: t.cssVars,
+        siteName: t.siteName,
+      });
+    }
+    return renderPage({ title, body: bodyHtml, locale: resolved.locale });
+  } catch {
+    return renderPage({
+      title: "Down for maintenance",
+      body: "<h1>We&rsquo;ll be right back</h1><p>The site is temporarily offline for scheduled maintenance. Please check back shortly.</p>",
+    });
+  }
+}
+
 export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   const app = new Hono<SiteEnv>();
   const metrics = deps.metrics ?? createMetrics();
+
+  // Per-IP throttle for the public write/compute endpoints (consent capture and
+  // plugin dispatch) so a single source can't flood storage or worker invokes
+  // (baseline #12). Behind a proxy, x-forwarded-for identifies the client.
+  const publicLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
+  const clientKey = (c: Context<SiteEnv>): string => {
+    const xff = c.req.header("x-forwarded-for");
+    return (xff ? (xff.split(",")[0] ?? "").trim() : "") || c.req.header("x-real-ip") || "unknown";
+  };
+  // /metrics requires a bearer token when PRESSH_METRICS_TOKEN is set.
+  const metricsToken = process.env["PRESSH_METRICS_TOKEN"];
 
   // Request-id correlation + request metrics (TDD §9).
   app.use("*", async (c, next) => {
@@ -204,7 +274,12 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     const probe = await deps.storage.listCollections();
     return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
   });
-  app.get("/metrics", (c) => c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" }));
+  app.get("/metrics", (c) => {
+    if (metricsToken && c.req.header("authorization") !== `Bearer ${metricsToken}`) {
+      return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
+    }
+    return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
+  });
 
   // Strict security headers on every response (baseline #9/#10). The HTML
   // handlers set `styleCsp` to a hashed `style-src` so the SSR'd theme/component
@@ -244,6 +319,34 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     });
   }
 
+  // Maintenance mode (settings.maintenanceMode): serve the maintenance system
+  // page with HTTP 503 for every public route below — including form/plugin
+  // writes — so a DB migration window loses no data. Health checks and /assets
+  // are registered above this guard and stay reachable. A short TTL avoids a
+  // settings read on every request while still reacting within seconds.
+  let maintCache: { on: boolean; at: number } | null = null;
+  const MAINT_TTL_MS = 3000;
+  const maintenanceOn = async (): Promise<boolean> => {
+    if (!deps.storage) return false;
+    const now = Date.now();
+    if (maintCache && now - maintCache.at < MAINT_TTL_MS) return maintCache.on;
+    const res = await deps.storage.get<{ id: string; maintenanceMode?: boolean }>("settings", "general");
+    const on = res.ok && res.value ? res.value.maintenanceMode === true : false;
+    maintCache = { on, at: now };
+    return on;
+  };
+  app.use("*", async (c, next) => {
+    if (await maintenanceOn()) {
+      const html = await renderMaintenancePage(deps);
+      c.set("styleCsp", styleSrcDirective(html));
+      c.header("Retry-After", "120");
+      c.header("Cache-Control", "no-store");
+      return c.html(html, 503);
+    }
+    await next();
+    return undefined;
+  });
+
   app.get("/robots.txt", (c) =>
     c.text(`User-agent: *\nAllow: /\nSitemap: ${deps.baseUrl ?? ""}/sitemap.xml\n`),
   );
@@ -261,9 +364,16 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
 
   // Dynamic plugin endpoints — runtime dispatch, manifest-enforced (FR-024).
   app.all("/api/p/:plugin/:action", async (c) => {
+    if (!publicLimiter.check(clientKey(c))) {
+      return c.json({ error: { code: "rate_limited", message: "Too many requests" } }, 429);
+    }
     const plugin = c.req.param("plugin");
     const action = c.req.param("action");
     if (!deps.pluginHost.has(plugin)) {
+      return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
+    }
+    // Honor a runtime disable even before this process restarts (see deps doc).
+    if (deps.isPluginEnabled && !(await deps.isPluginEnabled(plugin))) {
       return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
     }
     const endpoint = deps.pluginHost
@@ -295,6 +405,9 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
 
   // Public consent capture (Art. 6/7). Anonymous, no auth — the data subject acts.
   app.post("/api/consent", async (c) => {
+    if (!publicLimiter.check(clientKey(c))) {
+      return c.json({ error: { code: "rate_limited", message: "Too many requests" } }, 429);
+    }
     if (!deps.gdpr) return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
     const body = await c.req
       .json<{ subjectRef?: string; scope?: string; granted?: boolean }>()
@@ -322,6 +435,14 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       ]);
 
       const resolved = await deps.resolver.resolvePath(path, { scope: "public" });
+
+      // Privacy-friendly analytics: server-side page-view count, fire-and-forget
+      // so it never blocks the response. No cookies, no client JS, no third
+      // parties — only counts when the analytics plugin is enabled.
+      if (deps.pluginHost.has("analytics")) {
+        void deps.pluginHost.invoke("analytics", "collect", { path }).catch(() => undefined);
+      }
+
       // Serve cached HTML only while it matches the current content version.
       // Resolving is cheap (local reads); this lets a Studio publish go live on
       // the separate Site process without restart (see cache.ts).
@@ -405,6 +526,20 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
               clientStyles: assets.styles,
             }),
           );
+      }
+
+      // SEO plugin: inject per-page <meta>/OpenGraph tags. Done on the miss path
+      // so the cached HTML already carries them (no plugin call on cache hits).
+      if (deps.pluginHost.has("seo")) {
+        try {
+          const meta = (await deps.pluginHost.invoke("seo", "metaFor", {
+            slug: resolved.slug,
+          })) as SeoMeta;
+          const tags = seoMetaTags(meta);
+          if (tags) html = html.replace("</head>", `${tags}</head>`);
+        } catch {
+          // SEO is best-effort — never block a page render on it.
+        }
       }
 
       deps.cache.set(path, html, version, [`content:${resolved.id}`]);

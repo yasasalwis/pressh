@@ -2,7 +2,7 @@ import { Worker } from "node:worker_threads";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, resolve as resolvePath, sep } from "node:path";
 import { CapabilityGate, PressError } from "@pressh/core";
 import type { AuditLog, Logger, Result, SecretsBackend, StorageAdapter } from "@pressh/core";
 import type {
@@ -12,10 +12,34 @@ import type {
   WorkerToHost,
 } from "@pressh/sdk";
 import type { CveChecker } from "./cve.js";
+import type { PluginStateStore } from "./plugin-state.js";
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 5000;
 const MANIFEST_FILE = "pressh.plugin.json";
 const SIGNATURE_FILE = "pressh.signature.json";
+
+/**
+ * Collections that hold auth-critical data (password hashes, live session
+ * tokens, invite tokens). No plugin capability — however the manifest is
+ * worded — may ever reach these, since manifest capabilities are
+ * self-asserted by the (untrusted) plugin author.
+ */
+const RESERVED_COLLECTIONS = new Set(["users", "sessions", "invites"]);
+
+/**
+ * Resolves a plugin-supplied relative path and asserts it stays inside the
+ * plugin's own directory. `manifest.main`/`panel.entry` are attacker-controlled,
+ * so without this a value like "../../../../etc/passwd" would let the host read
+ * (or import) files anywhere on disk.
+ */
+function resolveWithin(baseDir: string, relative: string): string {
+  const base = resolvePath(baseDir);
+  const target = resolvePath(base, relative);
+  if (target !== base && !target.startsWith(base + sep)) {
+    throw new PressError("forbidden", `Plugin path escapes its directory: ${relative}`);
+  }
+  return target;
+}
 
 export interface PluginHostOptions {
   storage: StorageAdapter;
@@ -30,6 +54,25 @@ export interface PluginHostOptions {
   maxMemoryMb?: number;
   /** When set, plugins flagged by the CVE feed are refused at load (baseline #11). */
   cve?: CveChecker;
+  /**
+   * Persists the enabled set. When provided, `register` auto-starts a plugin
+   * whose persisted state is enabled, and `enable`/`disable` write through. A
+   * disabled plugin spawns no worker, so the app stays lean.
+   */
+  state?: PluginStateStore;
+}
+
+/** Installed-plugin metadata for the Studio Plugins screen. */
+export interface PluginInfo {
+  name: string;
+  version: string;
+  capabilities: string[];
+  endpoints: number;
+  hasPanel: boolean;
+  /** True when a worker is currently running for this plugin. */
+  enabled: boolean;
+  /** True for first-party plugins shipped with Pressh (cannot be uninstalled). */
+  builtin: boolean;
 }
 
 export interface LoadedEndpoint {
@@ -166,12 +209,20 @@ class PluginInstance {
   }
 }
 
+interface PluginRecord {
+  dir: string;
+  manifest: PluginManifest;
+  builtin: boolean;
+  /** Non-null only while a worker is running (i.e. the plugin is enabled). */
+  instance: PluginInstance | null;
+}
+
 export class PluginHost {
   readonly #opts: PluginHostOptions;
   readonly #gate = new CapabilityGate();
   readonly #workerScript: string;
   readonly #timeout: number;
-  readonly #registry = new Map<string, { dir: string; manifest: PluginManifest; instance: PluginInstance }>();
+  readonly #registry = new Map<string, PluginRecord>();
 
   constructor(opts: PluginHostOptions) {
     this.#opts = opts;
@@ -179,7 +230,13 @@ export class PluginHost {
     this.#workerScript = opts.workerScript ?? fileURLToPath(new URL("./worker-entry.js", import.meta.url));
   }
 
-  async load(pluginDir: string): Promise<PluginManifest> {
+  /**
+   * Validates a plugin (manifest, signature, CVE feed) and registers it WITHOUT
+   * spawning a worker. If a state store reports it as enabled, it is started.
+   * This is how both processes discover plugins at boot: disabled ones cost
+   * nothing beyond the metadata read.
+   */
+  async register(pluginDir: string, opts: { builtin?: boolean } = {}): Promise<PluginManifest> {
     const manifest = await this.#readManifest(pluginDir);
     await this.#verifySignature(pluginDir, manifest);
     if (this.#opts.cve && (await this.#opts.cve.isFlagged(manifest.name, manifest.version))) {
@@ -188,18 +245,61 @@ export class PluginHost {
         `Plugin "${manifest.name}@${manifest.version}" has a known vulnerability and was refused`,
       );
     }
-    const instance = await this.#spawn(pluginDir, manifest);
-    this.#registry.set(manifest.name, { dir: pluginDir, manifest, instance });
+    const record: PluginRecord = { dir: pluginDir, manifest, builtin: opts.builtin ?? false, instance: null };
+    this.#registry.set(manifest.name, record);
+    if (this.#opts.state && (await this.#opts.state.isEnabled(manifest.name))) {
+      record.instance = await this.#spawn(record.dir, record.manifest);
+    }
     return manifest;
   }
 
+  /** Registers and immediately starts a plugin (used by tests and one-shot loads). */
+  async load(pluginDir: string, opts: { builtin?: boolean } = {}): Promise<PluginManifest> {
+    const manifest = await this.register(pluginDir, opts);
+    await this.enable(manifest.name);
+    return manifest;
+  }
+
+  /** Spawns the worker for a registered plugin and persists the enabled state. Idempotent. */
+  async enable(name: string): Promise<void> {
+    const record = this.#registry.get(name);
+    if (!record) throw new PressError("not_found", `Plugin not registered: ${name}`);
+    if (!record.instance) {
+      record.instance = await this.#spawn(record.dir, record.manifest);
+    }
+    await this.#opts.state?.setEnabled(name, true);
+  }
+
+  /** Terminates the worker (zero footprint) and persists the disabled state. Idempotent. */
+  async disable(name: string): Promise<void> {
+    const record = this.#registry.get(name);
+    if (!record) return;
+    if (record.instance) {
+      await record.instance.terminate();
+      record.instance = null;
+    }
+    await this.#opts.state?.setEnabled(name, false);
+  }
+
+  /** True only while a worker is running for the plugin (registered AND enabled). */
   has(name: string): boolean {
+    return this.#registry.get(name)?.instance != null;
+  }
+
+  /** True when the plugin is known to the host, regardless of enabled state. */
+  isRegistered(name: string): boolean {
     return this.#registry.has(name);
+  }
+
+  /** Handler names the plugin's panel may invoke (default-deny allowlist). */
+  panelActions(name: string): string[] {
+    return this.#registry.get(name)?.manifest.panelActions ?? [];
   }
 
   endpoints(): LoadedEndpoint[] {
     const out: LoadedEndpoint[] = [];
     for (const [, record] of this.#registry) {
+      if (!record.instance) continue; // disabled plugins serve no endpoints
       for (const ep of record.manifest.endpoints ?? []) {
         out.push({ plugin: record.manifest.name, method: ep.method, path: ep.path, handler: ep.handler });
       }
@@ -207,9 +307,9 @@ export class PluginHost {
     return out;
   }
 
-  /** Installed plugins with their declared capabilities, for the Studio Plugins screen. */
-  plugins(): { name: string; version: string; capabilities: string[]; endpoints: number; hasPanel: boolean }[] {
-    const out: { name: string; version: string; capabilities: string[]; endpoints: number; hasPanel: boolean }[] = [];
+  /** All registered plugins with their state, for the Studio Plugins screen. */
+  plugins(): PluginInfo[] {
+    const out: PluginInfo[] = [];
     for (const [, record] of this.#registry) {
       out.push({
         name: record.manifest.name,
@@ -217,37 +317,42 @@ export class PluginHost {
         capabilities: record.manifest.capabilities ?? [],
         endpoints: (record.manifest.endpoints ?? []).length,
         hasPanel: Boolean(record.manifest.panel),
+        enabled: record.instance != null,
+        builtin: record.builtin,
       });
     }
     return out;
   }
 
-  /** Plugins that declare an admin panel, for the Studio panel list. */
+  /** Enabled plugins that declare an admin panel, for the Studio panel list. */
   panels(): { plugin: string; title: string }[] {
     const out: { plugin: string; title: string }[] = [];
     for (const [, record] of this.#registry) {
-      if (record.manifest.panel) out.push({ plugin: record.manifest.name, title: record.manifest.panel.title });
+      if (record.instance && record.manifest.panel) {
+        out.push({ plugin: record.manifest.name, title: record.manifest.panel.title });
+      }
     }
     return out;
   }
 
-  /** Reads a plugin's admin panel HTML (served into a sandboxed iframe). */
+  /** Reads an enabled plugin's admin panel HTML (served into a sandboxed iframe). */
   async panel(name: string): Promise<{ title: string; html: string } | null> {
     const record = this.#registry.get(name);
-    if (!record || !record.manifest.panel) return null;
-    const html = await readFile(join(record.dir, record.manifest.panel.entry), "utf8");
+    if (!record || !record.instance || !record.manifest.panel) return null;
+    const html = await readFile(resolveWithin(record.dir, record.manifest.panel.entry), "utf8");
     return { title: record.manifest.panel.title, html };
   }
 
   async invoke(name: string, method: string, args: unknown): Promise<unknown> {
     const record = this.#registry.get(name);
-    if (!record) throw new PressError("not_found", `Plugin not loaded: ${name}`);
+    if (!record || !record.instance) throw new PressError("not_found", `Plugin not enabled: ${name}`);
+    const instance = record.instance;
     try {
-      return await record.instance.invoke(method, args, this.#timeout);
+      return await instance.invoke(method, args, this.#timeout);
     } catch (e) {
       if (isTimeout(e)) {
         // Kill the (possibly wedged) worker and respawn so the next call works.
-        await record.instance.terminate().catch(() => undefined);
+        await instance.terminate().catch(() => undefined);
         record.instance = await this.#spawn(record.dir, record.manifest);
       }
       throw e;
@@ -257,7 +362,7 @@ export class PluginHost {
   async stop(name: string): Promise<void> {
     const record = this.#registry.get(name);
     if (!record) return;
-    await record.instance.terminate();
+    if (record.instance) await record.instance.terminate();
     this.#registry.delete(name);
   }
 
@@ -278,7 +383,7 @@ export class PluginHost {
       (m, msg) => this.#handleServiceCall(m, msg),
       this.#opts.logger,
     );
-    await instance.start(join(pluginDir, manifest.main));
+    await instance.start(resolveWithin(pluginDir, manifest.main));
     return instance;
   }
 
@@ -314,7 +419,7 @@ export class PluginHost {
       throw new PressError("forbidden", `Plugin "${manifest.name}" is unsigned`);
     }
 
-    const content = await readFile(join(dir, manifest.main));
+    const content = await readFile(resolveWithin(dir, manifest.main));
     const actual = createHash("sha256").update(content).digest("hex");
     if (actual !== signature.hash) {
       throw new PressError("forbidden", `Plugin "${manifest.name}" failed signature verification`);
@@ -349,7 +454,22 @@ export class PluginHost {
     const { service, method, args } = message;
 
     if (service === "storage") {
+      if (method === "list") {
+        // Read-only collection enumeration for the data browser. Gated behind
+        // the broad `storage.read:*` grant — there is no raw-query escape hatch
+        // (baseline #14): a plugin can list and read, never run SQL or write.
+        this.#gate.assert(caps, "storage.read:*");
+        return unwrap(await this.#opts.storage.listCollections());
+      }
       const collection = String(args[0]);
+      // Auth-critical collections are off-limits to plugins regardless of their
+      // self-asserted capabilities (no `storage.read:*` / `storage.write:users`
+      // can reach password hashes, session tokens, or invite tokens).
+      if (RESERVED_COLLECTIONS.has(collection)) {
+        throw new PressError("capability_denied", `Capability denied: ${collection} is reserved`, {
+          required: `storage:${collection}`,
+        });
+      }
       if (method === "get") {
         this.#gate.assert(caps, `storage.read:${collection}`);
         return unwrap(await this.#opts.storage.get(collection, String(args[1])));
@@ -359,10 +479,17 @@ export class PluginHost {
         const doc = args[1] as { id: string; [key: string]: unknown };
         return unwrap(await this.#opts.storage.put(collection, doc));
       }
+      if (method === "delete") {
+        this.#gate.assert(caps, `storage.write:${collection}`);
+        return unwrap(await this.#opts.storage.delete(collection, String(args[1])));
+      }
       if (method === "query") {
         this.#gate.assert(caps, `storage.read:${collection}`);
         const where = args[1] as Record<string, string | number | boolean> | undefined;
-        const page = unwrap(await this.#opts.storage.query(collection, where ? { where } : {}));
+        const cursor = args[2] as { limit?: number; after?: string | null } | undefined;
+        const page = unwrap(
+          await this.#opts.storage.query(collection, where ? { where } : {}, cursor ?? {}),
+        );
         return { items: page.items, nextCursor: page.nextCursor };
       }
     }

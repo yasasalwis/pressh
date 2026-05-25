@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 export const imageBlockComponent: ComponentDef = {
   id: "image-block",
@@ -25,9 +25,9 @@ export const imageBlockComponent: ComponentDef = {
     const shadow = props["shadow"] ? "box-shadow:0 20px 60px -20px rgba(15,23,42,.22);" : "";
     const src = safeUrl(props["src"]);
     if (!src) {
-      return `<section class="ps-img" style="background:${e(props["bgColor"])}"><div class="ps-img-inner" style="max-width:${e(maxW)}"><div class="ps-img-placeholder">No image selected</div></div></section>`;
+      return `<section class="ps-img" style="background:${cssColor(props["bgColor"], "#f6f7fb")}"><div class="ps-img-inner" style="max-width:${e(maxW)}"><div class="ps-img-placeholder">No image selected</div></div></section>`;
     }
-    return `<section class="ps-img" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-img" style="background:${cssColor(props["bgColor"], "#f6f7fb")}">
   <div class="ps-img-inner" style="max-width:${e(maxW)}">
     <img src="${e(src)}" alt="${e(props["alt"])}" loading="lazy" style="width:100%;display:block;${radius}${shadow}">
     ${props["caption"] ? `<p class="ps-img-caption">${e(props["caption"])}</p>` : ""}

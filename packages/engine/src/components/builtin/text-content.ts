@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e, richtext } from "./utils.js";
 
 export const textContentComponent: ComponentDef = {
   id: "text-content",
@@ -32,14 +32,15 @@ export const textContentComponent: ComponentDef = {
     const fs  = fsMap[String(props["fontSize"] ?? "md")] ?? "1rem";
     const padMap: Record<string,string> = { sm:"2rem 1.25rem", md:"3.5rem 1.25rem", lg:"5.5rem 1.25rem" };
     const pad = padMap[String(props["padding"] ?? "md")] ?? "3.5rem 1.25rem";
+    const align = ["left", "center", "right"].includes(String(props["align"])) ? String(props["align"]) : "left";
     const divider = props["divider"]
-      ? `<hr class="ps-txt-div" style="border-color:${e(props["accentColor"])}">` : "";
-    return `<section class="ps-txt" style="background:${e(props["bgColor"])};color:${e(props["textColor"])};text-align:${e(props["align"])};padding:${pad}">
+      ? `<hr class="ps-txt-div" style="border-color:${cssColor(props["accentColor"])}">` : "";
+    return `<section class="ps-txt" style="background:${cssColor(props["bgColor"])};color:${cssColor(props["textColor"])};text-align:${align};padding:${pad}">
   <div class="ps-txt-inner" style="max-width:${w}px">
     ${divider}
-    ${props["heading"] ? `<h2 class="ps-txt-h" style="color:${e(props["textColor"])}">${e(props["heading"])}</h2>` : ""}
+    ${props["heading"] ? `<h2 class="ps-txt-h" style="color:${cssColor(props["textColor"])}">${e(props["heading"])}</h2>` : ""}
     ${props["lead"] ? `<p class="ps-txt-lead">${e(props["lead"])}</p>` : ""}
-    <div class="ps-txt-body" style="font-size:${fs}">${props["body"] ?? ""}</div>
+    <div class="ps-txt-body" style="font-size:${fs}">${richtext(props["body"])}</div>
   </div>
 </section>`;
   },

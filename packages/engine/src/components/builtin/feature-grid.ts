@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e } from "./utils.js";
 
 function featureCard(
   icon: unknown, title: unknown, body: unknown,
@@ -64,12 +64,12 @@ export const featureGridComponent: ComponentDef = {
   render(props) {
     const cols    = Number(props["columns"] ?? 3);
     const style   = String(props["cardStyle"] ?? "shadow");
-    const acc     = e(props["accentColor"] ?? "#6d28d9");
-    const iconBg  = e(props["iconBg"] ?? "#ede9fe");
+    const acc     = cssColor(props["accentColor"], "#6d28d9");
+    const iconBg  = cssColor(props["iconBg"], "#ede9fe");
     const cards   = [1,2,3,4,5,6].map(i =>
       featureCard(props[`icon${i}`], props[`title${i}`], props[`body${i}`], style, acc, iconBg)
     ).join("");
-    return `<section class="ps-fg" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-fg" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-fg-inner">
     ${props["heading"] ? `<h2 class="ps-fg-heading">${e(props["heading"])}</h2>` : ""}
     ${props["subheading"] ? `<p class="ps-fg-sub">${e(props["subheading"])}</p>` : ""}

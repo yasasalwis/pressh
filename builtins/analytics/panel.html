@@ -1,0 +1,49 @@
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; color: #1f2937; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e5e7eb; background: #0b1220; } .bar { background:#1f2a44 !important; } th,td { border-color:#1f2a44 !important; } }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; }
+  .big { font-size: 30px; font-weight: 700; }
+  .muted { color: #6b7280; } .err { color: #dc2626; }
+  .day { display: grid; grid-template-columns: 96px 1fr 56px; gap: 8px; align-items: center; margin: 3px 0; font-size: 12px; }
+  .bar { background: #e5e7eb; border-radius: 4px; height: 14px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: #2563eb; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+  td.num, th.num { text-align: right; }
+</style>
+
+<h2>Analytics</h2>
+<p class="muted">Cookieless, privacy-friendly page views. No cookies, no IPs, no third parties.</p>
+
+<div id="out"><p class="muted">Loading…</p></div>
+
+<script>
+  function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  async function load(){
+    var out = document.getElementById("out");
+    try {
+      var r = await window.presshPanel.request("summary", { days: 30 });
+      var days = r.days || [];
+      var max = days.reduce(function(m,d){ return Math.max(m, d.total||0); }, 1);
+      var bars = days.length
+        ? days.map(function(d){
+            var pct = Math.round(((d.total||0)/max)*100);
+            return '<div class="day"><span>'+esc(d.date)+'</span><span class="bar"><span style="width:'+pct+'%"></span></span><span class="num">'+esc(d.total||0)+'</span></div>';
+          }).join("")
+        : '<p class="muted">No views recorded yet.</p>';
+      var top = (r.topPaths||[]);
+      var topTbl = top.length
+        ? '<table><thead><tr><th>Path</th><th class="num">Views</th></tr></thead><tbody>'+
+          top.map(function(p){ return "<tr><td>"+esc(p.path)+'</td><td class="num">'+esc(p.count)+"</td></tr>"; }).join("")+"</tbody></table>"
+        : '<p class="muted">No paths yet.</p>';
+      out.innerHTML =
+        '<div class="big">'+esc(r.total||0)+'</div><div class="muted">views over the last 30 days</div>'+
+        '<h3>By day</h3>'+bars+
+        '<h3>Top pages</h3>'+topTbl;
+    } catch(e){ out.innerHTML = '<p class="err">Could not load analytics: '+esc(e.message)+"</p>"; }
+  }
+  load();
+</script>

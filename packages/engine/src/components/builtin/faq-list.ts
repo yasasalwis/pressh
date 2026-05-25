@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e, richtext } from "./utils.js";
 
 export const faqListComponent: ComponentDef = {
   id: "faq-list",
@@ -37,15 +37,15 @@ export const faqListComponent: ComponentDef = {
     bgColor: "#ffffff", accentColor: "#6d28d9", maxWidth: 760,
   },
   render(props) {
-    const acc = e(props["accentColor"]);
+    const acc = cssColor(props["accentColor"], "#6d28d9");
     const w   = Number(props["maxWidth"] ?? 760);
     const items = [1,2,3,4,5,6]
       .filter(i => props[`q${i}`])
       .map(i => `<details class="ps-fq-item">
   <summary class="ps-fq-q" style="--fq-acc:${acc}">${e(props[`q${i}`])}<span class="ps-fq-icon">+</span></summary>
-  <div class="ps-fq-a">${props[`a${i}`] ?? ""}</div>
+  <div class="ps-fq-a">${richtext(props[`a${i}`])}</div>
 </details>`).join("");
-    return `<section class="ps-fq" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-fq" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-fq-inner" style="max-width:${w}px">
     <div class="ps-fq-head">
       <h2>${e(props["heading"])}</h2>

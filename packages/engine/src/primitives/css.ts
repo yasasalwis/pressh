@@ -384,10 +384,10 @@ export function compileNodeCss(node: PrimitiveNode): string {
       // header fragment plus the page, where source order alone is unreliable.
       // Type defaults stay single-class (0,1,0) so they still beat the theme's
       // bare element selectors (`h2`, `p`, `img` … 0,0,1) and reset their leak.
-      // A column inside a row is force-flexed by COLUMN_FLEX_CSS
-      // (`.pst-row>.pst-column{flex:1 1 <basis>}`, also 0,2,0): when a designer
-      // sets an explicit width, opt the column out of equal distribution (the
-      // doubled class wins on source order) so its width takes effect.
+      // A column inside a row is force-flexed by COLUMN_FLEX_CSS (now zero-spec
+      // `:where(...)`), whose `flex:1 1 <basis>` sets flex-basis: when a designer
+      // sets an explicit width, reset flex (→ flex-basis:auto) so the width — not
+      // the basis — drives the column's size.
       const base = `.${cls}.${cls}`;
       if (node.type === "column" && /(?:^|;)width:/.test(decl)) {
         decl += ";flex:0 0 auto";
@@ -437,7 +437,11 @@ const FIELD_INPUT_CSS = `.${TYPE_CLASS_PREFIX}input input,.${TYPE_CLASS_PREFIX}t
 // narrow to fit them at a readable width — responsive with no breakpoint needed.
 const COL_FLEX_BASIS = "220px";
 const FLOW_ROW_CSS = `.ps-flow-row{display:flex;flex-direction:row;flex-wrap:wrap;align-items:stretch}`;
-const COLUMN_FLEX_CSS = `.${TYPE_CLASS_PREFIX}row>.${TYPE_CLASS_PREFIX}column,.ps-flow-row>.${TYPE_CLASS_PREFIX}column{flex:1 1 ${COL_FLEX_BASIS}}`;
+// `:where()` (zero specificity) so an explicit per-node column style — width,
+// flex, etc. (doubled class, 0,2,0) — always wins, even when the page's own
+// stylesheet re-emits this same descendant rule (also a class-tuple) later in
+// the document than a header/footer fragment's per-node override.
+const COLUMN_FLEX_CSS = `:where(.${TYPE_CLASS_PREFIX}row>.${TYPE_CLASS_PREFIX}column,.ps-flow-row>.${TYPE_CLASS_PREFIX}column){flex:1 1 ${COL_FLEX_BASIS}}`;
 
 /**
  * Shared auto-responsive rules emitted once for the whole tree. They sit in the
@@ -451,8 +455,10 @@ function responsiveBaseCss(types: Set<PrimitiveType>): string {
   if (types.has("row")) mobile.push(`.${C}row{flex-direction:column}`);
   if (types.has("column")) {
     mobile.push(`.ps-flow-row{flex-direction:column}`);
-    // Stacked columns size to content instead of sharing space / forcing a min height.
-    mobile.push(`.ps-flow-row>.${C}column,.${C}row>.${C}column{flex-basis:auto}`);
+    // Stacked columns size to content instead of sharing space / forcing a min
+    // height. `:where()` for the same reason as COLUMN_FLEX_CSS — an explicit
+    // per-node column override must out-rank this default across stylesheets.
+    mobile.push(`:where(.ps-flow-row>.${C}column,.${C}row>.${C}column){flex-basis:auto}`);
   }
   return mobile.length ? `@media(max-width:480px){${mobile.join("")}}` : "";
 }

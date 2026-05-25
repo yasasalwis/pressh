@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { cssColor, e, safeUrl } from "./utils.js";
 
 function tier(
   name: unknown, price: unknown, period: unknown, desc: unknown,
@@ -60,12 +60,12 @@ export const pricingTableComponent: ComponentDef = {
     t3Name: "Enterprise", t3Price: "Custom", t3Desc: "Tailored for large organisations.", t3Features: "Everything in Pro\nSSO / SAML\nSLA guarantee\nDedicated support\nCustom integrations", t3Cta: "Contact sales", t3CtaUrl: "/contact",
   },
   render(props) {
-    const acc = e(props["accentColor"] as string ?? "#6d28d9");
+    const acc = cssColor(props["accentColor"], "#6d28d9");
     const period = String(props["period"] ?? "month");
     function features(raw: unknown): string {
       return String(raw ?? "").split("\n").filter(Boolean).map(f => `<li>&#10003; ${e(f.trim())}</li>`).join("");
     }
-    return `<section class="ps-pt" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-pt" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-pt-inner">
     <div class="ps-pt-head">
       <h2>${e(props["heading"])}</h2>

@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { cssColor, e, richtext, safeUrl } from "./utils.js";
 
 function stars(rating: number): string {
   return Array.from({ length: 5 }, (_, i) =>
@@ -33,7 +33,7 @@ export const testimonialComponent: ComponentDef = {
   render(props) {
     const avatar = safeUrl(props["avatar"]);
     const initials = String(props["author"] ?? "?").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-    const acc = e(props["accentColor"] ?? "#6d28d9");
+    const acc = cssColor(props["accentColor"], "#6d28d9");
     const rating = Math.min(5, Math.max(0, Math.round(Number(props["starRating"] ?? 5))));
     const layout = String(props["layout"] ?? "card");
     const logo = safeUrl(props["companyLogo"]);
@@ -49,7 +49,7 @@ export const testimonialComponent: ComponentDef = {
     const inner = `
     ${logoEl}
     ${ratingEl}
-    <blockquote class="ps-tmn-q">&ldquo;${props["quote"] ?? ""}&rdquo;</blockquote>
+    <blockquote class="ps-tmn-q">&ldquo;${richtext(props["quote"])}&rdquo;</blockquote>
     <div class="ps-tmn-author${layout === "centered" ? " ps-tmn-author-c" : ""}">
       ${avatarEl}
       <div>
@@ -59,16 +59,16 @@ export const testimonialComponent: ComponentDef = {
     </div>`;
 
     if (layout === "minimal") {
-      return `<section class="ps-tmn" style="background:${e(props["bgColor"])}">
+      return `<section class="ps-tmn" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-tmn-min" style="border-left:3px solid ${acc}">${inner}</div>
 </section>`;
     }
     if (layout === "centered") {
-      return `<section class="ps-tmn ps-tmn-cen" style="background:${e(props["bgColor"])}">
+      return `<section class="ps-tmn ps-tmn-cen" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-tmn-card" style="${accentBorder}">${inner}</div>
 </section>`;
     }
-    return `<section class="ps-tmn" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-tmn" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-tmn-card" style="${accentBorder}">${inner}</div>
 </section>`;
   },

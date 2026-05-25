@@ -17,6 +17,10 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
+    "@pressh/adapter-mongo": "*",
+    "@pressh/adapter-mysql": "*",
+    "@pressh/adapter-postgres": "*",
+    "@pressh/adapter-sqlite": "*",
     "@pressh/core": "*",
     "@pressh/engine": "*",
     "@pressh/runtime": "*",

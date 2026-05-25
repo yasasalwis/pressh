@@ -83,8 +83,10 @@ export interface ContentService {
     opts?: { publicOnly?: boolean },
   ): Promise<ContentEntry | null>;
   /**
-   * Idempotent: creates the built-in header and footer layout pages if they do
-   * not yet exist, then publishes them. Safe to call on every startup.
+   * Idempotent: creates the built-in system pages (header, footer, home, 404,
+   * 500, maintenance) if they do not yet exist, published and marked
+   * non-deletable. A pre-existing page sharing a system slug (e.g. a seeded
+   * "home") is adopted in place, keeping its content. Safe to call on every startup.
    */
   ensureSystemPages(ownerId: string): Promise<void>;
 }
@@ -358,14 +360,63 @@ class ContentServiceImpl implements ContentService {
       typeId = t.id;
     }
 
-    const systemPages: Array<{ slug: string; label: string }> = [
-      { slug: SYSTEM_SLUGS.header, label: "Header" },
-      { slug: SYSTEM_SLUGS.footer, label: "Footer" },
+    // Layout fragments (header/footer) start empty — they only matter once the
+    // operator designs them. Standalone pages (home/404/500/maintenance) ship
+    // with sensible starter content so they render meaningfully out of the box.
+    const systemPages: Array<{ slug: string; label: string; blocks: unknown[] }> = [
+      { slug: SYSTEM_SLUGS.header, label: "Header", blocks: [] },
+      { slug: SYSTEM_SLUGS.footer, label: "Footer", blocks: [] },
+      {
+        slug: SYSTEM_SLUGS.home,
+        label: "Home",
+        blocks: [
+          { type: "heading", props: { level: 1 }, content: "Welcome to Pressh" },
+          { type: "paragraph", content: "The secure-first CMS built for the modern web. Publish content with confidence — no compromises." },
+        ],
+      },
+      {
+        slug: SYSTEM_SLUGS.notFound,
+        label: "Page not found",
+        blocks: [
+          { type: "heading", props: { level: 1 }, content: "404 — Page not found" },
+          { type: "paragraph", content: "The page you are looking for does not exist or may have moved." },
+        ],
+      },
+      {
+        slug: SYSTEM_SLUGS.serverError,
+        label: "Server error",
+        blocks: [
+          { type: "heading", props: { level: 1 }, content: "500 — Something went wrong" },
+          { type: "paragraph", content: "An unexpected error occurred on our side. Please try again in a moment." },
+        ],
+      },
+      {
+        slug: SYSTEM_SLUGS.maintenance,
+        label: "Down for maintenance",
+        blocks: [
+          { type: "heading", props: { level: 1 }, content: "We will be right back" },
+          { type: "paragraph", content: "The site is temporarily offline for scheduled maintenance. Please check back shortly." },
+        ],
+      },
     ];
 
-    for (const { slug, label } of systemPages) {
+    for (const { slug, label, blocks } of systemPages) {
       const existing = await this.resolveBySlug(slug, DEFAULT_LOCALE);
-      if (existing) continue;
+      if (existing) {
+        // Adopt a page that predates the system-page set (e.g. a seeded "home")
+        // as non-deletable, leaving its author-edited content untouched.
+        if (!existing.system) {
+          existing.system = true;
+          existing.updatedAt = this.#iso();
+          must(await this.#storage.put(ENTRIES, existing));
+          await this.#audit.append({
+            action: "content.system.adopt",
+            actorId: ownerId,
+            detail: { slug, entryId: existing.id },
+          });
+        }
+        continue;
+      }
 
       const entryId = randomUUID();
       const entry: ContentEntry = {
@@ -389,7 +440,7 @@ class ContentServiceImpl implements ContentService {
         entryId,
         version: 1,
         fields: { title: label },
-        blocks: [],
+        blocks,
         editorId: ownerId,
         createdAt: this.#iso(),
       };

@@ -113,7 +113,12 @@ export type {
   CreateTypeInput,
   SaveEntryInput,
 } from "./content-service.js";
-export { SYSTEM_SLUGS } from "./types.js";
+export {
+  SYSTEM_SLUGS,
+  LAYOUT_FRAGMENT_SLUGS,
+  SYSTEM_PAGE_SLUGS,
+  isLayoutFragmentSlug,
+} from "./types.js";
 export type {
   ContentEntry,
   ContentStatus,

@@ -8,7 +8,10 @@
 export const PRESSH_RUNTIME_VERSION = "0.0.0";
 
 export { PluginHost } from "./host.js";
-export type { LoadedEndpoint, PluginHostOptions } from "./host.js";
+export type { LoadedEndpoint, PluginHostOptions, PluginInfo } from "./host.js";
+
+export { createPluginStateStore } from "./plugin-state.js";
+export type { PluginStateStore } from "./plugin-state.js";
 
 export {
   PANEL_SHIM_JS,

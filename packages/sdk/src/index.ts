@@ -27,6 +27,12 @@ export interface PluginManifest {
   capabilities: string[];
   endpoints?: EndpointDef[];
   panel?: PluginPanelDef;
+  /**
+   * Handler names the sandboxed admin panel may invoke via the host bridge.
+   * Default-deny: a panel can only call handlers listed here, never arbitrary
+   * exports. Omit (or leave empty) for a display-only panel.
+   */
+  panelActions?: string[];
 }
 
 /** The capability-gated services a plugin handler may use. */
@@ -39,10 +45,14 @@ export interface HostApi {
   storage: {
     get(collection: string, id: string): Promise<unknown>;
     put(collection: string, doc: { id: string; [key: string]: unknown }): Promise<void>;
+    delete(collection: string, id: string): Promise<void>;
     query(
       collection: string,
       where?: Record<string, string | number | boolean>,
+      page?: { limit?: number; after?: string | null },
     ): Promise<{ items: unknown[]; nextCursor: string | null }>;
+    /** Lists collection names that hold records. Requires `storage.read:*`. */
+    list(): Promise<string[]>;
   };
   secrets: {
     get(name: string): Promise<string>;

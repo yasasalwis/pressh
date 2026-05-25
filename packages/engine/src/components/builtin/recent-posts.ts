@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { e, cssColor } from "./utils.js";
 
 export const recentPostsComponent: ComponentDef = {
   id: "recent-posts",
@@ -43,7 +43,7 @@ export const recentPostsComponent: ComponentDef = {
         }).join("\n")
       : '<p class="ps-rp-empty">No posts published yet.</p>';
 
-    return `<section class="ps-rp" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-rp" style="background:${cssColor(props["bgColor"], "#f6f7fb")}">
   <div class="ps-rp-inner">
     ${props["heading"] ? `<h2 class="ps-rp-heading">${e(props["heading"])}</h2>` : ""}
     <div class="ps-rp-grid" style="grid-template-columns:repeat(${cols},1fr)">${cards}</div>

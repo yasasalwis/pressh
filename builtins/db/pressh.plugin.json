@@ -1,0 +1,8 @@
+{
+  "name": "db",
+  "version": "1.0.0",
+  "main": "index.mjs",
+  "capabilities": ["storage.read:*"],
+  "panel": { "title": "Data Manager", "entry": "panel.html" },
+  "panelActions": ["listCollections", "queryCollection", "exportAll"]
+}

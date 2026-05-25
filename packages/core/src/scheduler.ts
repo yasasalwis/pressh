@@ -97,7 +97,13 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
     let ran = 0;
     let failed = 0;
 
-    for (const job of due) {
+    for (const queued of due) {
+      // Re-read immediately before claiming: if another overlapping tick (or a
+      // second process sharing the store) already moved this job out of
+      // `pending`, skip it so its handler isn't run twice. Best-effort — there
+      // is no atomic compare-and-set, so handlers must still be idempotent.
+      const job = must(await opts.storage.get<JobRecord>(JOBS, queued.id));
+      if (!job || job.status !== "pending") continue;
       const handler = handlers.get(job.type);
       job.status = "running";
       must(await opts.storage.put(JOBS, job));

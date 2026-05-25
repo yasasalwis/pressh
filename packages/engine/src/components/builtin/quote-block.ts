@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e, richtext } from "./utils.js";
 
 export const quoteBlockComponent: ComponentDef = {
   id: "quote-block",
@@ -23,12 +23,12 @@ export const quoteBlockComponent: ComponentDef = {
     size: "lg", variant: "default", accentColor: "#6d28d9", bgColor: "#f6f7fb", align: "center",
   },
   render(props) {
-    const acc = e(props["accentColor"]);
+    const acc = cssColor(props["accentColor"], "#6d28d9");
     const sizeMap: Record<string,string> = { sm:".95rem", md:"1.1rem", lg:"1.35rem", xl:"1.65rem" };
     const qSize = sizeMap[String(props["size"] ?? "lg")] ?? "1.35rem";
     const variant = String(props["variant"] ?? "default");
-    const align = e(props["align"] ?? "center");
-    let extraStyle = `text-align:${align};background:${e(props["bgColor"])};`;
+    const align = props["align"] === "left" ? "left" : "center";
+    let extraStyle = `text-align:${align};background:${cssColor(props["bgColor"])};`;
     let extraClass = "";
     if (variant === "bordered") { extraStyle += `border-left:5px solid ${acc};`; extraClass = " ps-qb-bordered"; }
     if (variant === "card")     { extraClass = " ps-qb-card"; }
@@ -36,7 +36,7 @@ export const quoteBlockComponent: ComponentDef = {
     return `<section class="ps-qb${extraClass}" style="${extraStyle}">
   <div class="ps-qb-inner">
     <div class="ps-qb-mark" style="color:${acc}">&ldquo;</div>
-    <blockquote class="ps-qb-text" style="font-size:${qSize}">${props["quote"] ?? ""}</blockquote>
+    <blockquote class="ps-qb-text" style="font-size:${qSize}">${richtext(props["quote"])}</blockquote>
     <div class="ps-qb-attr">
       ${props["author"] ? `<strong style="color:${variant==="dark"?"#e2e8f0":"#0f172a"}">${e(props["author"])}</strong>` : ""}
       ${props["role"] ? `<span>${e(props["role"])}</span>` : ""}

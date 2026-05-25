@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { e, cssColor } from "./utils.js";
 
 export const newsletterSignupComponent: ComponentDef = {
   id: "newsletter-signup",
@@ -28,7 +28,7 @@ export const newsletterSignupComponent: ComponentDef = {
     const layout = String(props["layout"] ?? "center");
     const isCard = layout === "card";
     const align  = layout === "left" ? "left" : "center";
-    const acc = e(props["accentColor"]);
+    const acc = cssColor(props["accentColor"], "#6d28d9");
     const inner = `
     <h2 class="ps-nl-h">${e(props["heading"])}</h2>
     <p class="ps-nl-sub">${e(props["sub"])}</p>
@@ -37,9 +37,10 @@ export const newsletterSignupComponent: ComponentDef = {
       <button type="submit" class="ps-nl-btn" style="background:${acc}">${e(props["btnLabel"])}</button>
     </form>
     ${props["privacy"] ? `<p class="ps-nl-privacy">${e(props["privacy"])}</p>` : ""}`;
+    const bg = cssColor(props["bgColor"], "#f6f7fb");
     return isCard
-      ? `<section class="ps-nl" style="background:${e(props["bgColor"])}"><div class="ps-nl-inner ps-nl-card">${inner}</div></section>`
-      : `<section class="ps-nl" style="background:${e(props["bgColor"])};text-align:${align}"><div class="ps-nl-inner">${inner}</div></section>`;
+      ? `<section class="ps-nl" style="background:${bg}"><div class="ps-nl-inner ps-nl-card">${inner}</div></section>`
+      : `<section class="ps-nl" style="background:${bg};text-align:${align}"><div class="ps-nl-inner">${inner}</div></section>`;
   },
   styles: `
 .ps-nl{padding:clamp(3rem,7vw,5.5rem) 1.25rem}

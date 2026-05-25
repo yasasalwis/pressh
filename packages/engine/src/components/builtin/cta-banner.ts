@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor, cssUrl } from "./utils.js";
 
 export const ctaBannerComponent: ComponentDef = {
   id: "cta-banner",
@@ -31,24 +31,26 @@ export const ctaBannerComponent: ComponentDef = {
   },
   render(props) {
     const align   = String(props["align"] ?? "split");
-    const bgImg   = safeUrl(props["bgImage"]);
+    const bgImg   = cssUrl(props["bgImage"]);
     const rounded = props["rounded"] ? "border-radius:20px;overflow:hidden;" : "";
+    const tc      = cssColor(props["textColor"], "#ffffff");
+    const bg      = cssColor(props["bgColor"], "#0f172a");
     const bgStyle = bgImg
-      ? `background:url('${e(bgImg)}') center/cover no-repeat;`
-      : `background:${e(props["bgColor"])};`;
+      ? `background:${bgImg} center/cover no-repeat;`
+      : `background:${bg};`;
     const btn2 = props["btn2Label"]
-      ? `<a href="${e(safeUrl(props["btn2Url"]))}" class="ps-cta-btn ps-cta-ghost" style="border-color:${e(props["textColor"])};color:${e(props["textColor"])}">${e(props["btn2Label"])}</a>`
+      ? `<a href="${e(safeUrl(props["btn2Url"]))}" class="ps-cta-btn ps-cta-ghost" style="border-color:${tc};color:${tc}">${e(props["btn2Label"])}</a>`
       : "";
     const isCentered = align === "centered";
-    return `<section class="ps-cta${isCentered ? " ps-cta-centered" : ""}" style="${bgStyle}color:${e(props["textColor"])};${rounded}">
-  ${bgImg ? `<div class="ps-cta-overlay" style="background:${e(props["bgColor"])};opacity:.75"></div>` : ""}
+    return `<section class="ps-cta${isCentered ? " ps-cta-centered" : ""}" style="${bgStyle}color:${tc};${rounded}">
+  ${bgImg ? `<div class="ps-cta-overlay" style="background:${bg};opacity:.75"></div>` : ""}
   <div class="ps-cta-inner${isCentered ? " ps-cta-inner-c" : ""}">
     <div class="ps-cta-text">
       <h2>${e(props["heading"])}</h2>
       ${props["sub"] ? `<p>${e(props["sub"])}</p>` : ""}
     </div>
     <div class="ps-cta-btns">
-      ${props["btnLabel"] ? `<a href="${e(safeUrl(props["btnUrl"]))}" class="ps-cta-btn ps-cta-primary" style="background:${e(props["btnColor"])}">${e(props["btnLabel"])}</a>` : ""}
+      ${props["btnLabel"] ? `<a href="${e(safeUrl(props["btnUrl"]))}" class="ps-cta-btn ps-cta-primary" style="background:${cssColor(props["btnColor"], "#6d28d9")}">${e(props["btnLabel"])}</a>` : ""}
       ${btn2}
     </div>
   </div>

@@ -9,7 +9,11 @@
   "references": [
     { "path": "../../packages/core" },
     { "path": "../../packages/engine" },
-    { "path": "../../packages/runtime" }
+    { "path": "../../packages/runtime" },
+    { "path": "../../adapters/sqlite" },
+    { "path": "../../adapters/postgres" },
+    { "path": "../../adapters/mysql" },
+    { "path": "../../adapters/mongo" }
   ],
   "include": ["src/**/*"],
   "exclude": ["**/*.test.ts", "**/*.spec.ts", "dist", "src/client/**"]

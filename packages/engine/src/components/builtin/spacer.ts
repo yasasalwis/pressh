@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor } from "./utils.js";
 
 export const spacerComponent: ComponentDef = {
   id: "spacer",
@@ -16,6 +16,6 @@ export const spacerComponent: ComponentDef = {
   render(props) {
     const h = Number(props["height"] ?? 60);
     const line = props["divider"] ? '<hr style="border:none;border-top:1px solid rgba(15,23,42,.1);margin:0">' : "";
-    return `<div class="ps-spacer" style="height:${h}px;background:${e(props["bgColor"])};display:flex;align-items:center">${line}</div>`;
+    return `<div class="ps-spacer" style="height:${h}px;background:${cssColor(props["bgColor"], "transparent")};display:flex;align-items:center">${line}</div>`;
   },
 };

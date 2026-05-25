@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 export const logoCloudComponent: ComponentDef = {
   id: "logo-cloud",
@@ -40,7 +40,7 @@ export const logoCloudComponent: ComponentDef = {
           ? `<span class="ps-lc-text" style="${filter}">${e(name)}</span>`
           : "";
     }).join("");
-    return `<section class="ps-lc" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-lc" style="background:${cssColor(props["bgColor"], "#ffffff")}">
   <div class="ps-lc-inner">
     ${props["label"] ? `<p class="ps-lc-label">${e(props["label"])}</p>` : ""}
     <div class="ps-lc-logos">${logos}</div>

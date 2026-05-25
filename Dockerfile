@@ -5,7 +5,9 @@ COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY adapters ./adapters
 COPY apps ./apps
-RUN npm ci && npm run build:packages
+COPY scripts ./scripts
+COPY builtins ./builtins
+RUN npm ci && npm run build
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app

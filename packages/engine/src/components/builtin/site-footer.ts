@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 function col(head: unknown, links: [string, string][]): string {
   return `<div class="ps-ft-col">
@@ -51,9 +51,9 @@ export const siteFooterComponent: ComponentDef = {
     bgColor: "#0f172a", textColor: "#94a3b8", headingColor: "#e2e8f0", accentColor: "#6d28d9",
   },
   render(props) {
-    const tc = e(props["textColor"]);
-    const hc = e(props["headingColor"]);
-    return `<footer class="ps-ft" style="background:${e(props["bgColor"])};color:${tc}">
+    const tc = cssColor(props["textColor"], "#94a3b8");
+    const hc = cssColor(props["headingColor"], "#e2e8f0");
+    return `<footer class="ps-ft" style="background:${cssColor(props["bgColor"], "#0f172a")};color:${tc}">
   <div class="ps-ft-inner">
     <div class="ps-ft-brand">
       <div class="ps-ft-logo" style="color:${hc}">${e(props["brand"])}</div>

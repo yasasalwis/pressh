@@ -27,7 +27,7 @@ function toggleTheme(){
 // ── Tiny helpers ──────────────────────────────────
 function el(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function escAttr(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
+function escAttr(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/'/g,"&#39;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function show(id){ ["setup","login","accept","app","designer"].forEach(function(s){ el(s).classList.add("hide"); }); el(id).classList.remove("hide"); }
 function err(id,msg){ var e=el(id); if(!e) return; e.textContent=msg; e.classList.remove("hide"); }
 function clearErr(id){ var e=el(id); if(e) e.classList.add("hide"); }

@@ -109,32 +109,227 @@ Need just one process? Use `npm run studio` or `npm run site` (build first with 
 
 Open Studio at `http://localhost:4000` to create your first content type.
 
-### Docker (recommended for production)
+---
+
+## Deployment
+
+Pressh is a **long-running, stateful server** — not a serverless app. It needs a host that
+runs persistent Node processes and a **persistent disk**. Serverless platforms (Vercel,
+Netlify Functions, Cloudflare Workers) are not supported: the plugin runtime relies on
+long-lived worker threads, and content, media, and the audit log are written to disk.
+
+Every deployment target below shares the same three requirements:
+
+**1. Two processes, one trust boundary (ADR-002).** Site (`:3000`, public) and Studio
+(`:4000`, admin) run as separate processes. **Studio must never be reachable from the public
+internet** — firewall the port and/or front it with a reverse proxy + IP allowlist.
+
+**2. A persistent `/data` volume.** Content, uploaded media, and the audit log live on disk
+under `PRESSH_CONTENT_ROOT` and `PRESSH_MEDIA_ROOT`. Both processes share it. Back it up.
+
+**3. Two secrets, generated once.** Required when `NODE_ENV=production`:
 
 ```bash
-# Copy and fill in the required secrets
-cp .env.example .env
+# Run twice — once for each secret
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
-docker compose up
+```env
+PRESSH_MASTER_KEY=<32-byte hex>   # seals the secrets vault (AES-256-GCM)
+PRESSH_CSRF_SECRET=<32-byte hex>  # signs CSRF tokens
+```
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `NODE_ENV` | `production` enforces TLS, signed plugins, and the master key | `development` |
+| `PRESSH_MASTER_KEY` | Encryption-vault seal (**required in prod**) | — |
+| `PRESSH_CSRF_SECRET` | CSRF token signing (**required in prod**) | — |
+| `PRESSH_CONTENT_ROOT` | Content + audit log directory | `./data/content` |
+| `PRESSH_MEDIA_ROOT` | Uploaded media directory | `./data/media` |
+| `PRESSH_SITE_PORT` | Public site port | `3000` |
+| `PRESSH_STUDIO_PORT` | Admin studio port | `4000` |
+
+Both processes expose `GET /healthz` (liveness) and `GET /readyz` (readiness) for health checks.
+
+---
+
+### Option A — Self-hosted, no Docker
+
+For a VM or bare-metal host with Node.js 24+ installed.
+
+```bash
+git clone https://github.com/your-org/pressh.git
+cd pressh
+
+npm ci
+npm run build          # signs built-in plugins, compiles, bundles the site
+```
+
+Export the environment and storage roots, then start both processes:
+
+```bash
+export NODE_ENV=production
+export PRESSH_MASTER_KEY=<32-byte hex>
+export PRESSH_CSRF_SECRET=<32-byte hex>
+export PRESSH_CONTENT_ROOT=/var/lib/pressh/content
+export PRESSH_MEDIA_ROOT=/var/lib/pressh/media
+
+npm start              # launches Site (:3000) and Studio (:4000) together
+```
+
+For production, run each process under `systemd` so they restart on failure and survive
+reboots. Create `/etc/pressh.env` with the variables above, then two units:
+
+```ini
+# /etc/systemd/system/pressh-site.service
+[Unit]
+Description=Pressh Site (public)
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/pressh
+EnvironmentFile=/etc/pressh.env
+ExecStart=/usr/bin/node apps/site/dist/server.js
+Restart=on-failure
+User=pressh
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
+# /etc/systemd/system/pressh-studio.service
+[Unit]
+Description=Pressh Studio (admin)
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/pressh
+EnvironmentFile=/etc/pressh.env
+ExecStart=/usr/bin/node apps/studio/dist/server.js
+Restart=on-failure
+User=pressh
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now pressh-site pressh-studio
+```
+
+Front the **site** with a reverse proxy for TLS (Caddy auto-provisions certificates):
+
+```caddy
+yourdomain.com {
+    reverse_proxy localhost:3000
+}
+```
+
+Keep **Studio off the public internet** — do not proxy port 4000. Reach it over a VPN, an
+SSH tunnel (`ssh -L 4000:localhost:4000 host`), or a reverse proxy locked to your office IP.
+
+---
+
+### Option B — Self-hosted with Docker
+
+The repo ships a [`Dockerfile`](./Dockerfile) and [`docker-compose.yml`](./docker-compose.yml)
+that run Site and Studio as two services sharing a named volume. This is the simplest
+production setup on a single host.
+
+```bash
+cp .env.example .env     # fill in PRESSH_MASTER_KEY and PRESSH_CSRF_SECRET
+
+docker compose up -d --build
 ```
 
 | Service | Port | Exposure |
 |---|---|---|
-| Site | 3000 | Public |
-| Studio | 4000 | **Internal only** — firewall before deploying |
+| `site` | `3000` | Published to the host |
+| `studio` | `4000` | `expose`d on the internal network only — **not** published |
 
-Required secrets:
+The compose file mounts a `pressh-data` volume at `/data` for both services and sets
+`NODE_ENV=production`. Studio is intentionally not port-mapped to the host; put a reverse
+proxy + IP allowlist in front of it before exposing it anywhere (see
+[`RUNBOOK-pressh.md`](docs/RUNBOOK-pressh.md)).
 
-```env
-PRESSH_MASTER_KEY=<32-byte hex>   # Derives all encryption keys
-PRESSH_CSRF_SECRET=<32-byte hex>  # CSRF token signing
-```
-
-Generate them with:
+Health, logs, and shutdown:
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+docker compose ps                  # health status of both services
+docker compose logs -f site        # follow site logs
+docker compose down                # stop (volume is preserved)
 ```
+
+---
+
+### Option C — Railway
+
+Railway gives the closest push-to-deploy experience while keeping the architecture intact.
+Run **both processes in one service** with a single attached volume — Railway volumes bind to
+one service, so this preserves the shared `/data` disk.
+
+1. **New Project → Deploy from GitHub repo**, select this repo. Railway detects the
+   [`Dockerfile`](./Dockerfile) and builds from it.
+2. **Settings → Deploy → Custom Start Command:** `node scripts/run.mjs`
+   (launches Site and Studio together).
+3. **Variables:** add `NODE_ENV=production`, `PRESSH_MASTER_KEY`, `PRESSH_CSRF_SECRET`,
+   `PRESSH_CONTENT_ROOT=/data/content`, `PRESSH_MEDIA_ROOT=/data/media`,
+   and `PRESSH_SITE_PORT=3000`.
+4. **Storage → Add Volume**, mount path `/data`.
+5. **Settings → Networking:** generate a public domain and set the target port to `3000`
+   (the public site). Leave Studio's `4000` unpublished — reach it via Railway private
+   networking or a TCP proxy locked down to you.
+6. Set the healthcheck path to `/healthz`.
+
+> Note: a single Railway volume cannot be shared across two separate services, so the
+> two-process split runs as two processes inside one container here rather than two
+> containers. The trust boundary (Studio not publicly routed) is still enforced.
+
+---
+
+### Option D — Hetzner (VPS)
+
+A Hetzner Cloud server (or any VPS) running the Docker setup from **Option B**, hardened with
+a firewall and TLS.
+
+```bash
+# On a fresh Ubuntu/Debian server, as root or with sudo:
+apt-get update && apt-get install -y docker.io docker-compose-plugin git
+git clone https://github.com/your-org/pressh.git /opt/pressh
+cd /opt/pressh
+cp .env.example .env     # fill in the two secrets
+
+docker compose up -d --build
+```
+
+Lock down the firewall so only the public site and SSH are reachable — **block Studio's port**:
+
+```bash
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw deny 4000/tcp        # Studio: never public
+ufw enable
+```
+
+Terminate TLS with a reverse proxy on the host (Caddy shown; nginx works too):
+
+```caddy
+yourdomain.com {
+    reverse_proxy localhost:3000
+}
+```
+
+Reach Studio over an SSH tunnel from your machine, keeping it entirely off the public net:
+
+```bash
+ssh -L 4000:localhost:4000 user@your-server   # then open http://localhost:4000
+```
+
+For backups, snapshot the `pressh-data` Docker volume (or the Hetzner block volume backing
+it) on a schedule, and store snapshots off-host. See
+[`RUNBOOK-pressh.md`](docs/RUNBOOK-pressh.md) for backup/restore procedures.
 
 ---
 
@@ -181,6 +376,20 @@ export async function handle(args: unknown, host: HostApi): Promise<unknown> {
 3. Drop the plugin folder into `plugins/` — Pressh loads it on next restart.
 
 Capabilities not listed in the manifest are rejected at the RPC boundary. The admin panel runs in a sandboxed iframe; it cannot touch the host DOM or parent window.
+
+### Built-in plugins
+
+Pressh ships five first-party plugins in `builtins/` — same security model as any plugin (own worker, declared capabilities, signed at build). **All ship disabled**; enable only what you need from **Studio → Plugins** so the app stays lean. A disabled plugin spawns no worker at all.
+
+| Plugin | What it does | Capabilities |
+|---|---|---|
+| **DB** (Data Manager) | Read-only data browser + JSON export. No raw queries. | `storage.read:*` |
+| **Inventory** | Product/stock CRUD; public listing at `GET /api/p/inventory/items`. | `storage.read/write:inventory_items` |
+| **Forms** | Submissions → `form_submissions` (GDPR-linked); honeypot + per-IP rate limit. | `storage.read/write:form_submissions` |
+| **SEO** | Per-page + site meta/OpenGraph tags injected into the public `<head>`. | `storage.read/write:seo_meta` |
+| **Analytics** | Cookieless server-side page-view counts. No cookies, IPs, or third parties. | `storage.read/write:analytics_daily` |
+
+Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. Re-run `npm run sign:builtins` after editing a built-in's code (it also runs as part of `npm run build`).
 
 ---
 

@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e, richtext } from "./utils.js";
 
 export const columnsComponent: ComponentDef = {
   id: "columns",
@@ -32,11 +32,11 @@ export const columnsComponent: ComponentDef = {
     const gapMap: Record<string, string> = { compact: "1rem", normal: "2.5rem", wide: "4rem" };
     const gap = gapMap[String(props["gap"] ?? "normal")] ?? "2.5rem";
     function col(i: number): string {
-      return `<div class="ps-col-item"><div class="ps-col-icon">${e(props[`icon${i}`])}</div><h3>${e(props[`head${i}`])}</h3><div>${props[`body${i}`] ?? ""}</div></div>`;
+      return `<div class="ps-col-item"><div class="ps-col-icon">${e(props[`icon${i}`])}</div><h3>${e(props[`head${i}`])}</h3><div>${richtext(props[`body${i}`])}</div></div>`;
     }
     let cols = col(1) + col(2);
     if (n >= 3) cols += col(3);
-    return `<section class="ps-cols" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-cols" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-cols-inner" style="grid-template-columns:repeat(${n},1fr);gap:${gap}">
     ${cols}
   </div>

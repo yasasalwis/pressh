@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e } from "./utils.js";
 
 function item(icon: unknown, title: unknown, body: unknown, acc: string): string {
   if (!title) return "";
@@ -49,10 +49,10 @@ export const iconListComponent: ComponentDef = {
     icon6:"🛠",title6:"Open source",      body6:"Every line is auditable. Contribute, fork, or self-host with full control.",
   },
   render(props) {
-    const acc = e(props["accent"] as string ?? "#6d28d9");
+    const acc = cssColor(props["accent"], "#6d28d9");
     const cols = Number(props["columns"] ?? 2);
     const items = [1,2,3,4,5,6].map(i => item(props[`icon${i}`],props[`title${i}`],props[`body${i}`],acc)).join("");
-    return `<section class="ps-il" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-il" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-il-inner">
     ${props["heading"] ? `<h2 class="ps-il-heading">${e(props["heading"])}</h2>` : ""}
     <div class="ps-il-grid" style="--il-cols:${cols}">${items}</div>

@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { cssColor, e } from "./utils.js";
 
 export const contactFormComponent: ComponentDef = {
   id: "contact-form",
@@ -30,7 +30,7 @@ export const contactFormComponent: ComponentDef = {
     infoPhone: "+1 (555) 000-0000", infoAddress: "123 Main St, San Francisco CA",
   },
   render(props) {
-    const acc = e(props["accentColor"]);
+    const acc = cssColor(props["accentColor"], "#6d28d9");
     const layout = String(props["layout"] ?? "centered");
     const subjectField = props["showSubject"]
       ? `<div class="ps-cf-field"><label class="ps-cf-label">Subject</label><input type="text" class="ps-cf-input" placeholder="How can we help?" required></div>`
@@ -41,7 +41,7 @@ export const contactFormComponent: ComponentDef = {
       <h2>${e(props["heading"])}</h2>
       ${props["sub"] ? `<p>${e(props["sub"])}</p>` : ""}
     </div>
-    <form class="ps-cf-form" onsubmit="event.preventDefault();this.style.display='none';this.insertAdjacentHTML('afterend','<div class=ps-cf-ok><span>&#10003;</span>${e(props["successMsg"])}</div>')">
+    <form class="ps-cf-form" onsubmit="event.preventDefault();this.hidden=true;this.nextElementSibling.hidden=false">
       <div class="ps-cf-row">
         <div class="ps-cf-field"><label class="ps-cf-label">Name *</label><input type="text" class="ps-cf-input" placeholder="Your name" required></div>
         <div class="ps-cf-field"><label class="ps-cf-label">Email *</label><input type="email" class="ps-cf-input" placeholder="you@example.com" required></div>
@@ -50,6 +50,7 @@ export const contactFormComponent: ComponentDef = {
       <div class="ps-cf-field"><label class="ps-cf-label">Message *</label><textarea class="ps-cf-input ps-cf-ta" placeholder="Tell us more…" rows="5" required></textarea></div>
       <button type="submit" class="ps-cf-btn" style="background:${acc}">${e(props["btnLabel"])}</button>
     </form>
+    <div class="ps-cf-ok" hidden><span>&#10003;</span> ${e(props["successMsg"])}</div>
   </div>`;
     const info = layout === "split" ? `
   <div class="ps-cf-info">
@@ -60,7 +61,7 @@ export const contactFormComponent: ComponentDef = {
   </div>` : "";
     const isCard = layout === "card";
     const isSplit = layout === "split";
-    return `<section class="ps-cf" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-cf" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-cf-inner${isSplit ? " ps-cf-split" : isCard ? " ps-cf-card" : ""}">
     ${isSplit ? info : ""}
     ${form}

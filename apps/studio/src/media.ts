@@ -15,6 +15,9 @@ interface AllowedType {
   magic: number[][];
 }
 
+/** Hard cap on a single upload (bytes). Rejects before the blob is persisted. */
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
+
 const ALLOWED: AllowedType[] = [
   { ext: "png", mimes: ["image/png"], magic: [[0x89, 0x50, 0x4e, 0x47]] },
   { ext: "jpg", mimes: ["image/jpeg"], magic: [[0xff, 0xd8, 0xff]] },
@@ -42,6 +45,9 @@ export function validateUpload(
   declaredMime: string,
   bytes: Uint8Array,
 ): { ext: string; mime: string } {
+  if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+    throw new PressError("validation", `File exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB limit`);
+  }
   const ext = extensionOf(filename);
   const allowed = ALLOWED.find((a) => a.ext === ext);
   if (!allowed) {

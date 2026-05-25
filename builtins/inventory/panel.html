@@ -1,0 +1,102 @@
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; color: #1f2937; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e5e7eb; background: #0b1220; } th,td { border-color:#1f2a44 !important; } input,textarea { background:#0b1220; color:#e5e7eb; border-color:#1f2a44; } }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+  label { display: block; font-size: 12px; color: #6b7280; margin: 8px 0 2px; }
+  input, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; color: inherit; background: #fff; }
+  .grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 8px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; background: #f8fafc; color: inherit; cursor: pointer; }
+  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  button.danger { color: #dc2626; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+  .muted { color: #6b7280; }
+  .err { color: #dc2626; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #16a34a22; color: #16a34a; }
+  .tag.off { background: #64748b22; color: #64748b; }
+  .num { text-align: right; }
+</style>
+
+<h2>Inventory</h2>
+
+<div class="card">
+  <strong id="formTitle">Add item</strong>
+  <input type="hidden" id="id">
+  <div class="grid">
+    <div><label>Name *</label><input id="name"></div>
+    <div><label>SKU</label><input id="sku"></div>
+    <div><label>Price</label><input id="price" type="number" min="0" step="0.01" value="0"></div>
+    <div><label>Stock</label><input id="stock" type="number" min="0" step="1" value="0"></div>
+  </div>
+  <label>Description</label><textarea id="description" rows="2"></textarea>
+  <label class="row" style="margin-top:8px"><input type="checkbox" id="published" style="width:auto"> Published (visible on the storefront)</label>
+  <div class="row" style="margin-top:10px">
+    <button class="primary" id="saveBtn" onclick="save()">Save item</button>
+    <button onclick="resetForm()">Clear</button>
+    <span id="msg" class="muted"></span>
+  </div>
+</div>
+
+<div id="list"><p class="muted">Loading…</p></div>
+
+<script>
+  function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function $(id) { return document.getElementById(id); }
+  function msg(t, isErr) { var e = $("msg"); e.textContent = t || ""; e.className = isErr ? "err" : "muted"; }
+
+  function resetForm() {
+    $("id").value = ""; $("name").value = ""; $("sku").value = "";
+    $("price").value = "0"; $("stock").value = "0"; $("description").value = "";
+    $("published").checked = false; $("formTitle").textContent = "Add item"; msg("");
+  }
+
+  function edit(it) {
+    $("id").value = it.id; $("name").value = it.name || ""; $("sku").value = it.sku || "";
+    $("price").value = it.price || 0; $("stock").value = it.stock || 0;
+    $("description").value = it.description || ""; $("published").checked = !!it.published;
+    $("formTitle").textContent = "Edit item"; window.scrollTo(0, 0); msg("Editing " + (it.name || ""));
+  }
+
+  async function save() {
+    var item = {
+      id: $("id").value || undefined,
+      name: $("name").value, sku: $("sku").value,
+      price: parseFloat($("price").value), stock: parseInt($("stock").value, 10),
+      description: $("description").value, published: $("published").checked,
+    };
+    $("saveBtn").disabled = true;
+    try {
+      await window.presshPanel.request("save", { item: item });
+      resetForm(); msg("Saved."); await load();
+    } catch (e) { msg(e.message, true); }
+    finally { $("saveBtn").disabled = false; }
+  }
+
+  async function del(id, name) {
+    if (!confirm('Delete "' + name + '"?')) return;
+    try { await window.presshPanel.request("remove", { id: id }); await load(); }
+    catch (e) { msg(e.message, true); }
+  }
+
+  async function load() {
+    var box = $("list");
+    try {
+      var r = await window.presshPanel.request("list");
+      var items = (r && r.items) || [];
+      if (!items.length) { box.innerHTML = '<p class="muted">No products yet. Add one above.</p>'; return; }
+      box.innerHTML = '<table><thead><tr><th>Name</th><th>SKU</th><th class="num">Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead><tbody>' +
+        items.map(function (it) {
+          var tag = it.published ? '<span class="tag">Published</span>' : '<span class="tag off">Draft</span>';
+          return "<tr><td><b>" + esc(it.name) + "</b></td><td>" + esc(it.sku) + '</td><td class="num">' + esc(it.price) +
+            '</td><td class="num">' + esc(it.stock) + "</td><td>" + tag + '</td><td class="row">' +
+            '<button onclick=\'edit(' + JSON.stringify(it).replace(/'/g, "&#39;") + ')\'>Edit</button>' +
+            '<button class="danger" onclick="del(\'' + esc(it.id) + "','" + esc((it.name || "").replace(/'/g, "")) + '\')">Delete</button></td></tr>';
+        }).join("") + "</tbody></table>";
+    } catch (e) { box.innerHTML = '<p class="err">Could not load inventory: ' + esc(e.message) + "</p>"; }
+  }
+
+  load();
+</script>

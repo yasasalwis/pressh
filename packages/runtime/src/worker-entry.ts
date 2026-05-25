@@ -46,11 +46,13 @@ const host: HostApi = {
   storage: {
     get: (collection, id) => serviceCall("storage", "get", [collection, id]),
     put: (collection, doc) => serviceCall("storage", "put", [collection, doc]).then(() => undefined),
-    query: (collection, where) =>
-      serviceCall("storage", "query", [collection, where]) as Promise<{
+    delete: (collection, id) => serviceCall("storage", "delete", [collection, id]).then(() => undefined),
+    query: (collection, where, page) =>
+      serviceCall("storage", "query", [collection, where, page]) as Promise<{
         items: unknown[];
         nextCursor: string | null;
       }>,
+    list: () => serviceCall("storage", "list", []) as Promise<string[]>,
   },
   secrets: {
     get: (name) => serviceCall("secrets", "get", [name]) as Promise<string>,

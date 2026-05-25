@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 export const galleryComponent: ComponentDef = {
   id: "gallery",
@@ -44,7 +44,7 @@ export const galleryComponent: ComponentDef = {
       </figure>` : "";
     }).join("");
     const empty = cells.trim() === "" ? '<div class="ps-gl-empty">Add image URLs in the Properties panel →</div>' : "";
-    return `<section class="ps-gl" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-gl" style="background:${cssColor(props["bgColor"], "#f6f7fb")}">
   <div class="ps-gl-inner">
     ${props["heading"] ? `<h2 class="ps-gl-heading">${e(props["heading"])}</h2>` : ""}
     <div class="ps-gl-grid" style="--gl-cols:${cols};--gl-gap:${gap}">${cells}${empty}</div>

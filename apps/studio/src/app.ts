@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { CapabilityGate, PressError, createMetrics, requestId } from "@pressh/core";
+import { CapabilityGate, PressError, createMetrics, createRateLimiter, requestId } from "@pressh/core";
 import type { AuditLog, AuthService, CsrfProtection, RoleName, StorageAdapter, User } from "@pressh/core";
 import type {
   ContentService,
@@ -15,8 +15,10 @@ import type {
 import { PRESETS, PRIMITIVE_DEFS, renderTree } from "@pressh/engine";
 import type { ContentEntry, PrimitiveNode, PrimitiveRenderContext } from "@pressh/engine";
 import { panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
-import type { CveService } from "@pressh/runtime";
+import type { CveService, PluginInfo } from "@pressh/runtime";
+import { MAX_UPLOAD_BYTES } from "./media.js";
 import type { MediaService } from "./media.js";
+import type { MigrationLock } from "./migration-lock.js";
 import { ADMIN_HTML } from "./admin-html.js";
 
 /** Source of plugin admin panels (wired from the PluginHost in the bootstrap). */
@@ -27,9 +29,17 @@ export interface PanelProvider {
 
 /** Installed-plugin metadata for the Plugins screen (wired from the PluginHost). */
 export interface PluginInfoProvider {
-  list(): Promise<
-    { name: string; version: string; capabilities: string[]; endpoints: number; hasPanel: boolean }[]
-  >;
+  list(): Promise<PluginInfo[]>;
+}
+
+/** Runtime enable/disable + panel-bridge control over the PluginHost. */
+export interface PluginControlProvider {
+  isRegistered(name: string): boolean;
+  enable(name: string): Promise<void>;
+  disable(name: string): Promise<void>;
+  /** Handler names a plugin's panel is allowed to invoke (default-deny). */
+  panelActions(name: string): string[];
+  invoke(name: string, action: string, payload: unknown): Promise<unknown>;
 }
 
 const SESSION_COOKIE = "pressh_session";
@@ -45,8 +55,11 @@ export interface StudioAppDeps {
   settings: SettingsService;
   panels?: PanelProvider;
   pluginInfo?: PluginInfoProvider;
+  pluginControl?: PluginControlProvider;
   gdpr?: GdprService;
   cve?: CveService;
+  /** When locked (during a DB migration), data-mutating admin routes return 409. */
+  migrationLock?: MigrationLock;
   production?: boolean;
 }
 
@@ -141,6 +154,30 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   const gate = new CapabilityGate();
   const metrics = createMetrics();
 
+  // Per-IP throttle for unauthenticated/sensitive endpoints (baseline #12).
+  // Per-account lockout lives in the AuthService; this caps credential spraying
+  // and write floods from a single source. Behind a proxy, x-forwarded-for is
+  // the client; without one all requests share the "unknown" bucket (still capped).
+  const authLimiter = createRateLimiter({ limit: 10, windowMs: 60_000 });
+  const clientKey = (c: Context<Vars>): string => {
+    const xff = c.req.header("x-forwarded-for");
+    return (xff ? (xff.split(",")[0] ?? "").trim() : "") || c.req.header("x-real-ip") || "unknown";
+  };
+  const rateLimit =
+    (limiter: ReturnType<typeof createRateLimiter>) =>
+    async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
+      if (!limiter.check(clientKey(c))) {
+        return c.json({ error: { code: "rate_limited", message: "Too many requests" } }, 429);
+      }
+      await next();
+      return undefined;
+    };
+
+  // /metrics can expose request volumes/timings; require a bearer token when
+  // PRESSH_METRICS_TOKEN is set (left open otherwise, to avoid breaking an
+  // existing trusted-network scrape on upgrade).
+  const metricsToken = process.env["PRESSH_METRICS_TOKEN"];
+
   // Request-id correlation + request metrics (TDD §9).
   app.use("*", async (c, next) => {
     c.header("x-request-id", requestId(c.req.header("x-request-id")));
@@ -150,14 +187,40 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     metrics.observe("pressh_http_request_ms", "HTTP request duration (ms)", Date.now() - start);
   });
 
+  // While a database migration is copying records, reject data-mutating admin
+  // calls so nothing is written to the old store after the copy began (it would
+  // be lost on cutover). Reads, the Database-Manager routes themselves, and
+  // auth/session routes stay open so the operator can drive and monitor it.
+  const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  app.use("*", async (c, next) => {
+    if (deps.migrationLock?.isLocked() && MUTATING.has(c.req.method)) {
+      const path = c.req.path;
+      const exempt =
+        path.startsWith("/admin/api/db") ||
+        path.startsWith("/admin/api/auth") ||
+        path.startsWith("/admin/api/me");
+      if (path.startsWith("/admin/") && !exempt) {
+        return c.json(
+          { error: { code: "conflict", message: "A database migration is in progress. Try again shortly." } },
+          409,
+        );
+      }
+    }
+    await next();
+    return undefined;
+  });
+
   app.get("/healthz", (c) => c.json({ status: "ok" }));
   app.get("/readyz", async (c) => {
     const probe = await deps.storage.listCollections();
     return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
   });
-  app.get("/metrics", (c) =>
-    c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" }),
-  );
+  app.get("/metrics", (c) => {
+    if (metricsToken && c.req.header("authorization") !== `Bearer ${metricsToken}`) {
+      return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
+    }
+    return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
+  });
 
   const requireSession = async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
     const token = getCookie(c, SESSION_COOKIE);
@@ -212,7 +275,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     return c.json({ needsSetup: !(await deps.auth.hasAnyUser()) });
   });
 
-  app.post("/admin/api/setup", async (c) => {
+  app.post("/admin/api/setup", rateLimit(authLimiter), async (c) => {
     if (await deps.auth.hasAnyUser()) {
       return c.json({ error: { code: "conflict", message: "Already configured" } }, 409);
     }
@@ -236,7 +299,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   });
 
   // --- auth ---
-  app.post("/admin/api/auth/login", async (c) => {
+  app.post("/admin/api/auth/login", rateLimit(authLimiter), async (c) => {
     const { email, password } = await c.req.json<{ email: string; password: string }>();
     try {
       const { token, user } = await deps.auth.authenticate({ email, password });
@@ -403,10 +466,44 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     const plugin = c.req.param("plugin") ?? "";
     const panel = deps.panels ? await deps.panels.get(plugin) : null;
     if (!panel) return c.text("Not found", 404);
+    const safe = plugin.replace(/[^a-zA-Z0-9_-]/g, "");
     // Parent wrapper that embeds the panel in a sandbox WITHOUT allow-same-origin.
+    // The bridge below is the panel's ONLY channel to the host: it validates the
+    // message comes from our frame, then relays it to the cap-gated, CSRF-checked
+    // invoke endpoint (which itself allow-lists handlers via panelActions).
     return c.html(
-      `<!DOCTYPE html><meta charset="utf-8"><title>Plugin: ${plugin.replace(/[^a-zA-Z0-9_-]/g, "")}</title>` +
-        panelFrameTag(`/admin/plugins/${encodeURIComponent(plugin)}/panel`),
+      `<!DOCTYPE html><meta charset="utf-8"><title>Plugin: ${safe}</title>` +
+        `<style>html,body{margin:0;height:100%}</style>` +
+        panelFrameTag(`/admin/plugins/${encodeURIComponent(plugin)}/panel`) +
+        `<script>(function(){
+  var frame=null, csrfP=null;
+  function getFrame(){ if(!frame) frame=document.querySelector("iframe.pressh-panel"); return frame; }
+  function getCsrf(){
+    if(!csrfP) csrfP=fetch("/admin/api/me",{credentials:"same-origin"})
+      .then(function(r){return r.json();}).then(function(b){return (b&&b.csrfToken)||"";})
+      .catch(function(){return "";});
+    return csrfP;
+  }
+  window.addEventListener("message", function(e){
+    var m=e.data;
+    if(!m||m.pressh!==true||typeof m.id!=="number"||typeof m.action!=="string") return;
+    var f=getFrame();
+    if(!f||e.source!==f.contentWindow) return;
+    function reply(b){ e.source.postMessage(Object.assign({pressh:true,id:m.id},b),"*"); }
+    getCsrf().then(function(csrf){
+      return fetch(${JSON.stringify(`/admin/plugins/${encodeURIComponent(safe)}/invoke`)},{
+        method:"POST",credentials:"same-origin",
+        headers:{"content-type":"application/json","x-csrf-token":csrf},
+        body:JSON.stringify({action:m.action,payload:m.payload})
+      });
+    }).then(function(res){
+      return res.json().then(function(body){ return {ok:res.ok,body:body}; });
+    }).then(function(r){
+      if(r.ok&&r.body&&r.body.ok) reply({ok:true,result:r.body.data});
+      else reply({ok:false,error:{message:(r.body&&r.body.error&&r.body.error.code)||"Request failed"}});
+    }).catch(function(){ reply({ok:false,error:{message:"Request failed"}}); });
+  });
+})();</script>`,
     );
   });
 
@@ -488,6 +585,10 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     if (!(file instanceof File)) {
       return c.json({ error: { code: "validation", message: "Missing file" } }, 400);
     }
+    // Reject oversized uploads before buffering the whole blob into memory.
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return c.json({ error: { code: "validation", message: "File too large" } }, 413);
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     return run(c, () => deps.media.store(file.name, file.type, bytes, c.get("user").id));
   });
@@ -566,7 +667,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   );
 
   // Public: redeem an invitation. No session yet — the token IS the credential.
-  app.post("/admin/api/invite/accept", async (c) => {
+  app.post("/admin/api/invite/accept", rateLimit(authLimiter), async (c) => {
     const { token, password } = await c.req.json<{ token: string; password: string }>();
     try {
       const { token: session, user } = await deps.auth.acceptInvite({ token, password });
@@ -616,10 +717,53 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     return c.json({ items: entries.reverse() }); // newest first
   });
 
-  // --- installed plugins (capabilities + panel availability) ---
+  // --- installed plugins (capabilities + panel availability + enabled state) ---
   app.get("/admin/api/plugins", requireSession, requireCap("plugins.manage"), async (c) =>
     c.json({ items: deps.pluginInfo ? await deps.pluginInfo.list() : [] }),
   );
+
+  // Enable a plugin: spawns its worker (and persists the state). Disabling does
+  // the reverse — a disabled plugin runs no worker at all, keeping the app lean.
+  app.post("/admin/api/plugins/:name/enable", requireSession, requireCsrf, requireCap("plugins.manage"), async (c) => {
+    const name = c.req.param("name") ?? "";
+    if (!deps.pluginControl?.isRegistered(name)) {
+      return c.json({ error: { code: "not_found", message: "not_found" } }, 404);
+    }
+    return run(c, async () => {
+      await deps.pluginControl!.enable(name);
+      await deps.audit.append({ action: "plugin.enabled", actorId: c.get("user").id, detail: { plugin: name } });
+      return { enabled: true };
+    });
+  });
+
+  app.post("/admin/api/plugins/:name/disable", requireSession, requireCsrf, requireCap("plugins.manage"), async (c) => {
+    const name = c.req.param("name") ?? "";
+    if (!deps.pluginControl?.isRegistered(name)) {
+      return c.json({ error: { code: "not_found", message: "not_found" } }, 404);
+    }
+    return run(c, async () => {
+      await deps.pluginControl!.disable(name);
+      await deps.audit.append({ action: "plugin.disabled", actorId: c.get("user").id, detail: { plugin: name } });
+      return { enabled: false };
+    });
+  });
+
+  // Panel bridge endpoint (ADR-005). The sandboxed panel iframe cannot reach the
+  // network itself; its `presshPanel.request(action, payload)` is relayed by the
+  // wrapper page to here. Default-deny: only handlers the plugin lists in its
+  // manifest `panelActions` may run, and only with a valid session + CSRF token.
+  app.post("/admin/plugins/:plugin/invoke", requireSession, requireCsrf, requireCap("plugins.manage"), async (c) => {
+    const plugin = c.req.param("plugin") ?? "";
+    if (!deps.pluginControl) return c.json({ error: { code: "not_found", message: "not_found" } }, 404);
+    const body = await c.req
+      .json<{ action?: unknown; payload?: unknown }>()
+      .catch(() => ({}) as { action?: unknown; payload?: unknown });
+    const action = typeof body.action === "string" ? body.action : "";
+    if (!deps.pluginControl.panelActions(plugin).includes(action)) {
+      return c.json({ error: { code: "forbidden", message: "Action not allowed" } }, 403);
+    }
+    return run(c, () => deps.pluginControl!.invoke(plugin, action, body.payload ?? {}));
+  });
 
   return app;
 }

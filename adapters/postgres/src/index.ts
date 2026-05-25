@@ -20,7 +20,9 @@ function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }
 function fail(e: unknown): Result<never> {
-  return { ok: false, error: e instanceof PressError ? e : new PressError("internal", String(e)) };
+  // Never surface the raw driver error (it can include the connection string /
+  // host) to callers; wrap unknown errors in a generic message.
+  return { ok: false, error: e instanceof PressError ? e : new PressError("internal", "Storage backend error") };
 }
 
 class PostgresStorageAdapter implements StorageAdapter {

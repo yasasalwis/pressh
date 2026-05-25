@@ -8,7 +8,7 @@ import {
   createFileSystemStorage,
 } from "@pressh/core";
 import type { AuditLog, StorageAdapter } from "@pressh/core";
-import { createContentService } from "@pressh/engine";
+import { SYSTEM_SLUGS, createContentService } from "@pressh/engine";
 import type { ContentService, ContentType } from "@pressh/engine";
 
 const EDITOR = capabilitiesForRoles(["editor"]); // create/update/submit/publish
@@ -170,5 +170,76 @@ describe("ContentService", () => {
         fields: { title: "b" },
       }),
     ).rejects.toMatchObject({ code: "conflict" });
+  });
+});
+
+describe("ContentService system pages", () => {
+  const ALL_SLUGS = [
+    SYSTEM_SLUGS.header,
+    SYSTEM_SLUGS.footer,
+    SYSTEM_SLUGS.home,
+    SYSTEM_SLUGS.notFound,
+    SYSTEM_SLUGS.serverError,
+    SYSTEM_SLUGS.maintenance,
+  ];
+
+  it("creates every built-in system page published and non-deletable", async () => {
+    await svc.ensureSystemPages("owner-1");
+    for (const slug of ALL_SLUGS) {
+      const entry = await svc.resolveBySlug(slug);
+      expect(entry, `expected system page "${slug}" to exist`).not.toBeNull();
+      expect(entry?.system).toBe(true);
+      expect(entry?.status).toBe("published");
+    }
+  });
+
+  it("seeds standalone pages with starter content, fragments empty", async () => {
+    await svc.ensureSystemPages("owner-1");
+    const home = await svc.resolveBySlug(SYSTEM_SLUGS.home);
+    const homeRev = await svc.getRevision(home!.id, home!.currentRevision);
+    expect((homeRev?.blocks ?? []).length).toBeGreaterThan(0);
+
+    const header = await svc.resolveBySlug(SYSTEM_SLUGS.header);
+    const headerRev = await svc.getRevision(header!.id, header!.currentRevision);
+    expect(headerRev?.blocks).toEqual([]);
+  });
+
+  it("is idempotent — repeated calls never duplicate a system page", async () => {
+    await svc.ensureSystemPages("owner-1");
+    await svc.ensureSystemPages("owner-1");
+    for (const slug of ALL_SLUGS) {
+      const page = await storage.query("content_entries", { where: { slug } });
+      expect(page.ok && page.value.items.length).toBe(1);
+    }
+  });
+
+  it("adopts a pre-existing page on a system slug, preserving its content", async () => {
+    const home = await svc.createEntry(AUTHOR, {
+      typeId: type.id,
+      slug: SYSTEM_SLUGS.home,
+      authorId: "u1",
+      fields: { title: "My Custom Home" },
+      blocks: [{ type: "paragraph", content: "Hand-written homepage." }],
+    });
+    await svc.transition(EDITOR, home.id, "published");
+
+    await svc.ensureSystemPages("owner-1");
+
+    const adopted = await svc.resolveBySlug(SYSTEM_SLUGS.home);
+    expect(adopted?.id).toBe(home.id); // same entry, not a duplicate
+    expect(adopted?.system).toBe(true);
+    const rev = await svc.getRevision(adopted!.id, adopted!.currentRevision);
+    expect(rev?.fields["title"]).toBe("My Custom Home"); // content untouched
+  });
+
+  it("refuses to unpublish or archive a system page", async () => {
+    await svc.ensureSystemPages("owner-1");
+    const home = await svc.resolveBySlug(SYSTEM_SLUGS.home);
+    await expect(svc.transition(EDITOR, home!.id, "draft")).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(svc.transition(EDITOR, home!.id, "archived")).rejects.toMatchObject({
+      code: "conflict",
+    });
   });
 });

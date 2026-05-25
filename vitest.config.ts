@@ -15,6 +15,7 @@ export default defineConfig({
       "@pressh/ui-kit": resolve(root, "packages/ui-kit/src/index.ts"),
       "@pressh/adapter-sqlite": resolve(root, "adapters/sqlite/src/index.ts"),
       "@pressh/adapter-postgres": resolve(root, "adapters/postgres/src/index.ts"),
+      "@pressh/adapter-mysql": resolve(root, "adapters/mysql/src/index.ts"),
       "@pressh/adapter-mongo": resolve(root, "adapters/mongo/src/index.ts"),
       "@pressh/site": resolve(root, "apps/site/src/index.ts"),
       "@pressh/studio": resolve(root, "apps/studio/src/index.ts"),

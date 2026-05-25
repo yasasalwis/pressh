@@ -462,20 +462,31 @@ async function clearSmtp(){
 }
 
 // ═══════════════ PLUGINS ═══════════════
+async function togglePlugin(name,enable){
+  var verb=enable?"enable":"disable";
+  var r=await api("/admin/api/plugins/"+encodeURIComponent(name)+"/"+verb,{method:"POST",body:"{}"});
+  if(r.status===200){ toast(enable?"Plugin enabled":"Plugin disabled"); renderPlugins(); }
+  else toast((r.body.error&&r.body.error.code)||"Could not "+verb+" plugin",true);
+}
 async function renderPlugins(){
   var r=await api("/admin/api/plugins");
   var items=r.body.items||[];
   var cve=await api("/admin/api/plugins/cve");
   var advisories=cve.body.items||[];
-  var table=items.length?'<table class="tbl"><thead><tr><th>Plugin</th><th>Capabilities</th><th>Endpoints</th><th></th></tr></thead><tbody>'+
+  var table=items.length?'<table class="tbl"><thead><tr><th>Plugin</th><th>Capabilities</th><th>Status</th><th></th></tr></thead><tbody>'+
     items.map(function(p){
       var caps=(p.capabilities||[]).map(function(c){ return '<span class="tag cap">'+esc(c)+'</span>'; }).join("")||'<span class="meta">none</span>';
-      var panel=p.hasPanel?'<a class="ghost" href="/admin/plugins/'+encodeURIComponent(p.name)+'" target="_blank" rel="noopener">Open panel &#8599;</a>':'';
-      return '<tr><td><b>'+esc(p.name)+'</b> <span class="meta">v'+esc(p.version)+'</span></td><td>'+caps+'</td><td>'+esc(p.endpoints)+'</td><td class="actions">'+panel+'</td></tr>';
+      var badge=p.builtin?' <span class="tag">built-in</span>':'';
+      var status=p.enabled
+        ?'<span class="tag" style="background:#16a34a22;color:#16a34a">Enabled</span>'
+        :'<span class="tag" style="background:#64748b22;color:#64748b">Disabled</span>';
+      var panel=(p.enabled&&p.hasPanel)?'<a class="ghost" href="/admin/plugins/'+encodeURIComponent(p.name)+'" target="_blank" rel="noopener">Open panel &#8599;</a>':'';
+      var toggle='<button class="btn-sm'+(p.enabled?' ghost':'')+'" onclick="togglePlugin(\\''+esc(p.name)+'\\','+(p.enabled?'false':'true')+')">'+(p.enabled?'Disable':'Enable')+'</button>';
+      return '<tr><td><b>'+esc(p.name)+'</b> <span class="meta">v'+esc(p.version)+'</span>'+badge+'</td><td>'+caps+'</td><td>'+status+'</td><td class="actions">'+panel+toggle+'</td></tr>';
     }).join("")+'</tbody></table>':'<div class="empty"><span class="ico">&#129513;</span>No plugins installed.</div>';
   var cveCard=advisories.length?'<div class="card"><h3>Security advisories</h3><table class="tbl"><tbody>'+
     advisories.map(function(a){ return '<tr><td><b>'+esc(a.name||a.plugin||"?")+'</b></td><td class="meta">'+esc(a.id||a.cve||"")+'</td><td>'+esc(a.severity||"")+'</td></tr>'; }).join("")+'</tbody></table></div>':'';
-  el("view").innerHTML='<div class="row-head"><h2>Plugins</h2></div><div class="card"><p class="hint">Plugins run in isolated worker threads with only the capabilities you approve.</p>'+table+'</div>'+cveCard;
+  el("view").innerHTML='<div class="row-head"><h2>Plugins</h2></div><div class="card"><p class="hint">Plugins run in isolated worker threads with only the capabilities you approve. Disabled plugins run no worker at all &mdash; enable only what you need.</p>'+table+'</div>'+cveCard;
 }
 
 // ═══════════════ PRIVACY / GDPR ═══════════════

@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 function card(name: unknown, role: unknown, bio: unknown, avatar: unknown, acc: string): string {
   if (!name) return "";
@@ -56,16 +56,16 @@ export const teamGridComponent: ComponentDef = {
     name4: "", role4: "", bio4: "", avatar4: "",
   },
   render(props) {
-    const acc = e(props["accent"] as string ?? "#6d28d9");
+    const acc = cssColor(props["accent"], "#6d28d9");
     const cols = Number(props["columns"] ?? 3);
     const cards = [1,2,3,4].map(i => card(props[`name${i}`],props[`role${i}`],props[`bio${i}`],props[`avatar${i}`],acc)).join("");
-    return `<section class="ps-tg" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-tg" style="background:${cssColor(props["bgColor"], "#f6f7fb")}">
   <div class="ps-tg-inner">
     <div class="ps-tg-head">
       <h2>${e(props["heading"])}</h2>
       ${props["sub"] ? `<p>${e(props["sub"])}</p>` : ""}
     </div>
-    <div class="ps-tg-grid" style="--tg-cols:${cols};--tg-card-bg:${e(props["cardBg"])}">${cards}</div>
+    <div class="ps-tg-grid" style="--tg-cols:${cols};--tg-card-bg:${cssColor(props["cardBg"], "#ffffff")}">${cards}</div>
   </div>
 </section>`;
   },

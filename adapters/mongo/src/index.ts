@@ -11,6 +11,10 @@ import type { Cursor, Filter, Page, Result, StorageAdapter, StoredDoc } from "@p
  */
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
+// Filter keys must be plain field names; values must be scalars. This stops a
+// caller from smuggling Mongo operators (e.g. `{$ne:null}`, `$where`) through
+// the equality-only Filter contract — matching the SQLite/Postgres adapters.
+const SAFE_FIELD = /^[A-Za-z0-9_]+$/;
 
 /** Mongo documents use a string `_id` (the Pressh id). */
 interface MongoDoc {
@@ -27,7 +31,9 @@ function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }
 function fail(e: unknown): Result<never> {
-  return { ok: false, error: e instanceof PressError ? e : new PressError("internal", String(e)) };
+  // Never surface the raw driver error (it can include the connection string /
+  // host) to callers; wrap unknown errors in a generic message.
+  return { ok: false, error: e instanceof PressError ? e : new PressError("internal", "Storage backend error") };
 }
 
 function strip<T extends StoredDoc>(raw: MongoDoc | null): T | null {
@@ -86,8 +92,15 @@ class MongoStorageAdapter implements StorageAdapter {
     page: Cursor = {},
   ): Promise<Result<Page<T>>> {
     try {
-      const mongoFilter: MongoFilter<MongoDoc> = { ...(filter.where ?? {}) };
-      if (page.after) mongoFilter._id = { $gt: page.after };
+      const mongoFilter: Record<string, unknown> = {};
+      for (const [field, value] of Object.entries(filter.where ?? {})) {
+        if (!SAFE_FIELD.test(field)) throw new PressError("validation", `Invalid filter field: ${field}`);
+        if (value !== null && typeof value === "object") {
+          throw new PressError("validation", `Invalid filter value for field: ${field}`);
+        }
+        mongoFilter[field] = value;
+      }
+      if (page.after) mongoFilter["_id"] = { $gt: page.after };
       const limit = Math.min(Math.max(page.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
       const rows = await this.#col(collection)
         .find(mongoFilter)

@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 function youtubeId(url: string): string {
   const m = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
@@ -41,7 +41,7 @@ export const videoEmbedComponent: ComponentDef = {
     if (ytId) src = `https://www.youtube-nocookie.com/embed/${ytId}?rel=0`;
     else if (viId) src = `https://player.vimeo.com/video/${viId}`;
     else src = safeUrl(url);
-    return `<section class="ps-ve" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-ve" style="background:${cssColor(props["bgColor"], "#0f172a")}">
   <div class="ps-ve-inner" style="max-width:${Number(props["maxWidth"] ?? 900)}px">
     <div class="ps-ve-wrap" style="padding-bottom:${ratio};${radius}${shadow}">
       ${src ? `<iframe src="${e(src)}" title="Video" frameborder="0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share" allowfullscreen loading="lazy"></iframe>` : '<div class="ps-ve-nourl">Enter a YouTube or Vimeo URL in the properties panel</div>'}

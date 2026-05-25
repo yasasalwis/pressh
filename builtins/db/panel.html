@@ -1,0 +1,97 @@
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; color: #1f2937; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e5e7eb; background: #0b1220; } th { border-color:#1f2a44 !important; } td { border-color:#1f2a44 !important; } }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  select, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid #cbd5e1; background: #f8fafc; color: inherit; cursor: pointer; }
+  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  th { position: sticky; top: 0; background: inherit; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+  .muted { color: #6b7280; }
+  .err { color: #dc2626; }
+  textarea { width: 100%; min-height: 180px; font: 12px/1.4 ui-monospace, monospace; margin-top: 8px; }
+  .hide { display: none; }
+</style>
+
+<h2>Data Manager</h2>
+<p class="muted">Read-only browser over your data. No editing, no raw queries.</p>
+
+<div class="row">
+  <select id="coll"><option value="">Loading collections…</option></select>
+  <button class="primary" id="view" onclick="loadFirst()">View</button>
+  <button id="more" class="hide" onclick="loadMore()">Load more</button>
+  <button id="export" onclick="doExport()">Export all (JSON)</button>
+</div>
+
+<div id="status" class="muted"></div>
+<div id="result"></div>
+
+<textarea id="exportOut" class="hide" readonly aria-label="Exported JSON"></textarea>
+
+<script>
+  var rows = [];
+  var cursor = null;
+  var current = "";
+
+  function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function status(msg, isErr) { var e = document.getElementById("status"); e.textContent = msg || ""; e.className = isErr ? "err" : "muted"; }
+
+  async function init() {
+    try {
+      var r = await window.presshPanel.request("listCollections");
+      var sel = document.getElementById("coll");
+      var cols = (r && r.collections) || [];
+      sel.innerHTML = cols.length
+        ? cols.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + "</option>"; }).join("")
+        : '<option value="">(no collections yet)</option>';
+    } catch (e) { status("Could not load collections: " + e.message, true); }
+  }
+
+  function render() {
+    var box = document.getElementById("result");
+    if (!rows.length) { box.innerHTML = '<p class="muted">No records.</p>'; return; }
+    box.innerHTML = '<table><thead><tr><th>id</th><th>document</th></tr></thead><tbody>' +
+      rows.map(function (d) {
+        return "<tr><td>" + esc(d.id) + "</td><td><pre>" + esc(JSON.stringify(d, null, 2)) + "</pre></td></tr>";
+      }).join("") + "</tbody></table>";
+    document.getElementById("more").className = cursor ? "" : "hide";
+  }
+
+  async function loadFirst() {
+    current = document.getElementById("coll").value;
+    rows = []; cursor = null;
+    if (!current) { status("Pick a collection first."); return; }
+    await loadMore();
+  }
+
+  async function loadMore() {
+    status("Loading…");
+    try {
+      var payload = { collection: current };
+      if (cursor) payload.after = cursor;
+      var r = await window.presshPanel.request("queryCollection", payload);
+      rows = rows.concat(r.items || []);
+      cursor = r.nextCursor || null;
+      status(rows.length + " record(s)" + (cursor ? " (more available)" : ""));
+      render();
+    } catch (e) { status("Query failed: " + e.message, true); }
+  }
+
+  async function doExport() {
+    status("Building export…");
+    try {
+      var r = await window.presshPanel.request("exportAll");
+      var out = document.getElementById("exportOut");
+      out.value = JSON.stringify(r, null, 2);
+      out.className = "";
+      out.focus(); out.select();
+      status("Export ready" + (r.truncated ? " (truncated at cap)" : "") + " — copy the JSON below.");
+    } catch (e) { status("Export failed: " + e.message, true); }
+  }
+
+  init();
+</script>

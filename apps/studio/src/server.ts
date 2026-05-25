@@ -9,11 +9,13 @@ import {
   createCsrf,
   createFileAuditLog,
   createFileSecretsBackend,
-  createFileSystemStorage,
   createScheduler,
   deriveMasterKey,
+  loadStorageConfig,
+  watchStorageConfig,
 } from "@pressh/core";
 import type { SecretsBackend } from "@pressh/core";
+import { buildStorage } from "./storage.js";
 import {
   PUBLISH_JOB_TYPE,
   createContentService,
@@ -21,11 +23,29 @@ import {
   createSettingsService,
   createThemeService,
 } from "@pressh/engine";
-import { PluginHost, createCveService } from "@pressh/runtime";
+import { PluginHost, createCveService, createPluginStateStore } from "@pressh/runtime";
 import type { CveFeedSource } from "@pressh/runtime";
 import { createStudioApp, seedDemoContent } from "./app.js";
-import type { PanelProvider, PluginInfoProvider } from "./app.js";
+import type { PanelProvider, PluginControlProvider, PluginInfoProvider } from "./app.js";
 import { createMediaService } from "./media.js";
+import { createMigrationLock } from "./migration-lock.js";
+
+/** Registers every plugin folder under `dir` without spawning workers; the state
+ * store decides which actually start. Per-plugin failures are swallowed so one
+ * bad plugin can't take down boot. */
+async function registerPluginsFrom(host: PluginHost, dir: string, builtin: boolean): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // directory absent — nothing to register
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      await host.register(join(dir, entry.name), { builtin }).catch(() => undefined);
+    }
+  }
+}
 
 const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
 
@@ -47,7 +67,10 @@ function parseMasterKey(raw: string | undefined): Buffer | null {
 export interface StudioServerOptions {
   contentRoot: string;
   mediaRoot: string;
+  /** User-installed plugins folder (third-party). */
   pluginsDir?: string;
+  /** First-party plugins shipped with Pressh; registered as `builtin`. */
+  builtinsDir?: string;
   auditPath?: string;
   port?: number;
   production?: boolean;
@@ -56,6 +79,8 @@ export interface StudioServerOptions {
   masterKey?: Buffer;
   /** Path to the sealed secrets vault file. Defaults next to the content root. */
   secretsPath?: string;
+  /** Path to the active-storage config (`storage.json`). Defaults next to the content root. */
+  storageConfigPath?: string;
   /** Source of plugin CVE advisories (v1 default: empty/operator-supplied). */
   cveFeed?: CveFeedSource;
 }
@@ -65,7 +90,25 @@ export interface StudioServerOptions {
  * process (ADR-002). Boots its own storage/auth/content/media + CSRF.
  */
 export async function createStudioServer(opts: StudioServerOptions): Promise<{ start: () => void }> {
-  const storage = createFileSystemStorage({ root: opts.contentRoot });
+  // Sealed vault for operator secrets (SMTP password, database connection
+  // strings). Built before storage because DB backends resolve their connection
+  // string from the vault. Optional in dev; when absent the Settings/Database
+  // screens report credential storage disabled.
+  let secrets: SecretsBackend | undefined;
+  if (opts.masterKey) {
+    secrets = await createFileSecretsBackend({
+      path: opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json"),
+      key: opts.masterKey,
+    });
+  }
+
+  // Active storage backend is chosen by `storage.json` (written by the Database
+  // Manager on cutover). Absent → the filesystem default, so a fresh install
+  // needs zero configuration.
+  const storageConfigPath = opts.storageConfigPath ?? join(opts.contentRoot, "..", "storage.json");
+  const persistedStorage = await loadStorageConfig(storageConfigPath);
+  const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets);
+
   const audit = await createFileAuditLog({
     path: opts.auditPath ?? join(opts.contentRoot, "..", "audit.log"),
   });
@@ -82,15 +125,6 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const media = createMediaService({ storage, audit, mediaRoot: opts.mediaRoot });
   const theme = createThemeService({ storage, audit });
 
-  // Sealed vault for operator secrets (e.g. SMTP password). Optional in dev;
-  // when absent, the Settings screen reports SMTP credential storage disabled.
-  let secrets: SecretsBackend | undefined;
-  if (opts.masterKey) {
-    secrets = await createFileSecretsBackend({
-      path: opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json"),
-      key: opts.masterKey,
-    });
-  }
   const settings = createSettingsService({ storage, audit, ...(secrets ? { secrets } : {}) });
 
   const gdpr = createGdprService({
@@ -117,15 +151,13 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   await scheduler.schedule({ type: "cve.sync" }); // initial sync on boot
 
   // The Studio boots its own PluginHost (separate trust boundary, ADR-002).
-  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve });
-  if (opts.pluginsDir) {
-    const entries = await readdir(opts.pluginsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        await pluginHost.load(join(opts.pluginsDir, entry.name)).catch(() => undefined);
-      }
-    }
-  }
+  // The state store decides which registered plugins actually spawn a worker —
+  // disabled ones (the default) cost nothing.
+  const pluginState = createPluginStateStore(storage);
+  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve, state: pluginState });
+  if (opts.builtinsDir) await registerPluginsFrom(pluginHost, opts.builtinsDir, true);
+  if (opts.pluginsDir) await registerPluginsFrom(pluginHost, opts.pluginsDir, false);
+
   const panels: PanelProvider = {
     list: async () => pluginHost.panels(),
     get: (plugin) => pluginHost.panel(plugin),
@@ -133,6 +165,15 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const pluginInfo: PluginInfoProvider = {
     list: async () => pluginHost.plugins(),
   };
+  const pluginControl: PluginControlProvider = {
+    isRegistered: (name) => pluginHost.isRegistered(name),
+    enable: (name) => pluginHost.enable(name),
+    disable: (name) => pluginHost.disable(name),
+    panelActions: (name) => pluginHost.panelActions(name),
+    invoke: (name, action, payload) => pluginHost.invoke(name, action, payload),
+  };
+
+  const migrationLock = createMigrationLock();
 
   const app = createStudioApp({
     auth,
@@ -145,8 +186,10 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     settings,
     panels,
     pluginInfo,
+    pluginControl,
     gdpr,
     cve,
+    migrationLock,
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
 
@@ -180,6 +223,13 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
         }
         throw e;
       });
+      // Database-Manager cutover writes a new `storage.json`; exit cleanly so the
+      // process supervisor (Docker/systemd/pm2) restarts us on the new backend.
+      watchStorageConfig(storageConfigPath, () => {
+        process.stdout.write("Pressh Studio: storage config changed — restarting to apply the new database.\n");
+        void server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 3000).unref();
+      });
     },
   };
 }
@@ -203,6 +253,8 @@ async function runFromEnv(): Promise<void> {
     ...(masterKey ? { masterKey } : {}),
     ...(process.env["PRESSH_CSRF_SECRET"] ? { csrfSecret: process.env["PRESSH_CSRF_SECRET"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
+    ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),
+    builtinsDir: process.env["PRESSH_BUILTINS_DIR"] ?? join(process.cwd(), "builtins"),
   });
   server.start();
   process.stdout.write(`Pressh Studio (admin) listening on http://localhost:${port}/admin\n`);

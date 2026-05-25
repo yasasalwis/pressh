@@ -39,7 +39,9 @@ const RICH: sanitizeHtml.IOptions = {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer" }, true),
     iframe: sanitizeHtml.simpleTransform(
       "iframe",
-      { sandbox: "allow-scripts allow-same-origin allow-popups" },
+      // No `allow-same-origin`: combined with `allow-scripts` it lets a framed
+      // document escape the sandbox and act with its own origin's privileges.
+      { sandbox: "allow-scripts allow-popups" },
       true,
     ),
   },

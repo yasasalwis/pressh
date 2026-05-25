@@ -41,6 +41,20 @@ describe("SettingsService", () => {
     expect(s.timezone).toBe("UTC");
     expect(s.smtp).toBeNull();
     expect(s.smtpAvailable).toBe(true);
+    expect(s.maintenanceMode).toBe(false);
+  });
+
+  it("toggles maintenance mode and rejects non-boolean values", async () => {
+    const svc = createSettingsService({ storage, audit, secrets });
+    const on = await svc.updateSettings(ADMIN, { maintenanceMode: true });
+    expect(on.maintenanceMode).toBe(true);
+    // Persisted across reads.
+    expect((await svc.getSettings()).maintenanceMode).toBe(true);
+    const off = await svc.updateSettings(ADMIN, { maintenanceMode: false });
+    expect(off.maintenanceMode).toBe(false);
+    await expect(
+      svc.updateSettings(ADMIN, { maintenanceMode: "yes" as unknown as boolean }),
+    ).rejects.toMatchObject({ code: "validation" });
   });
 
   it("requires settings.manage to update", async () => {

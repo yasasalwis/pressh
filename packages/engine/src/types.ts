@@ -24,9 +24,38 @@ export interface ContentType extends StoredDoc {
 export const SYSTEM_SLUGS = {
   header: "header",
   footer: "footer",
+  home: "home",
+  notFound: "404",
+  serverError: "500",
+  maintenance: "maintenance",
 } as const;
 
 export type SystemSlug = (typeof SYSTEM_SLUGS)[keyof typeof SYSTEM_SLUGS];
+
+/**
+ * Layout fragments are rendered standalone and injected into the chrome of every
+ * page (header at the top, footer at the bottom).
+ */
+export const LAYOUT_FRAGMENT_SLUGS: readonly SystemSlug[] = [
+  SYSTEM_SLUGS.header,
+  SYSTEM_SLUGS.footer,
+];
+
+/**
+ * Standalone system pages are full documents the site serves directly: the
+ * homepage (`/`), the not-found (404) and server-error (500) pages, and the
+ * maintenance page shown while maintenance mode is on.
+ */
+export const SYSTEM_PAGE_SLUGS: readonly SystemSlug[] = [
+  SYSTEM_SLUGS.home,
+  SYSTEM_SLUGS.notFound,
+  SYSTEM_SLUGS.serverError,
+  SYSTEM_SLUGS.maintenance,
+];
+
+export function isLayoutFragmentSlug(slug: string): boolean {
+  return (LAYOUT_FRAGMENT_SLUGS as readonly string[]).includes(slug);
+}
 
 export interface ContentEntry extends StoredDoc {
   typeId: string;
@@ -39,7 +68,7 @@ export interface ContentEntry extends StoredDoc {
   scheduledFor: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Marks built-in layout pages (header, footer) — cannot be archived or unpublished. */
+  /** Marks built-in system pages (header, footer, home, 404, 500, maintenance) — cannot be archived or unpublished. */
   system?: boolean;
 }
 

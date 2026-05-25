@@ -1,0 +1,9 @@
+{
+  "name": "inventory",
+  "version": "1.0.0",
+  "main": "index.mjs",
+  "capabilities": ["storage.read:inventory_items", "storage.write:inventory_items"],
+  "endpoints": [{ "method": "GET", "path": "/items", "handler": "publicItems" }],
+  "panel": { "title": "Inventory", "entry": "panel.html" },
+  "panelActions": ["list", "save", "remove"]
+}

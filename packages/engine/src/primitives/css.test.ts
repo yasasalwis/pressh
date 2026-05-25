@@ -199,6 +199,24 @@ describe("compileNodeCss — column width beats row flex distribution", () => {
     expect(css).toContain(".psn-i1.psn-i1{width:50%}");
     expect(css).not.toContain("flex:0 0 auto");
   });
+
+  // The structural column-flex default must be zero-specificity `:where()` so a
+  // modified column survives the page's own stylesheet re-emitting it later in
+  // the document ("modified column values not reflected on the published site").
+  it("emits the column-flex default as :where so a per-node width survives a later stylesheet", () => {
+    const css = compileTreeCss([
+      {
+        id: "row",
+        type: "container",
+        children: [
+          { id: "c1", type: "column", styles: { base: { default: { width: "120px" } } }, children: [] },
+          { id: "c2", type: "column", children: [] },
+        ],
+      },
+    ]);
+    expect(css).toContain(":where(.pst-row>.pst-column,.ps-flow-row>.pst-column){flex:1 1 220px}");
+    expect(css).toContain(".psn-c1.psn-c1{width:120px;flex:0 0 auto}");
+  });
 });
 
 describe("compileNodeCss — children fill an explicit parent height", () => {

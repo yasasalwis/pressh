@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor, cssUrl } from "./utils.js";
 
 export const heroComponent: ComponentDef = {
   id: "hero",
@@ -39,11 +39,11 @@ export const heroComponent: ComponentDef = {
     const cw    = Number(props["contentWidth"] ?? 860);
     const padMap: Record<string,string> = { sm:"3rem 1.5rem", md:"5rem 1.5rem", lg:"7rem 1.5rem", xl:"10rem 1.5rem" };
     const padding = padMap[String(props["paddingSize"] ?? "lg")] ?? "7rem 1.5rem";
-    const bgImg = safeUrl(props["bgImage"]);
+    const bgImg = cssUrl(props["bgImage"]);
     const opacity = Number(props["overlayOpacity"] ?? 40) / 100;
-    const gradStyle = `linear-gradient(135deg,${e(props["bgFrom"])},${e(props["bgTo"])})`;
+    const gradStyle = `linear-gradient(135deg,${cssColor(props["bgFrom"], "#6d28d9")},${cssColor(props["bgTo"], "#0ea5e9")})`;
     const overlayLayer = bgImg
-      ? `<div class="ps-hero-overlay" style="background:url('${e(bgImg)}') center/cover no-repeat;opacity:${(1 - opacity).toFixed(2)}"></div>`
+      ? `<div class="ps-hero-overlay" style="background:${bgImg} center/cover no-repeat;opacity:${(1 - opacity).toFixed(2)}"></div>`
       : "";
     const badge = props["badgeText"]
       ? `<div class="ps-hero-badge">${e(props["badgeText"])}</div>` : "";

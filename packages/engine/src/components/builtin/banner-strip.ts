@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 export const bannerStripComponent: ComponentDef = {
   id: "banner-strip",
@@ -33,13 +33,14 @@ export const bannerStripComponent: ComponentDef = {
     const align = String(props["align"] ?? "center");
     const sticky = props["sticky"] ? "position:sticky;top:0;z-index:999;" : "";
     const icon = props["icon"] ? `<span class="ps-bs-icon">${e(props["icon"])}</span>` : "";
+    const tc = cssColor(props["textColor"], "#ffffff");
     const cta = props["ctaLabel"]
-      ? `<a href="${e(safeUrl(props["ctaUrl"]))}" class="ps-bs-cta" style="color:${e(props["textColor"])};border-color:${e(props["textColor"])}">${e(props["ctaLabel"])} &#8594;</a>`
+      ? `<a href="${e(safeUrl(props["ctaUrl"]))}" class="ps-bs-cta" style="color:${tc};border-color:${tc}">${e(props["ctaLabel"])} &#8594;</a>`
       : "";
     const dismiss = props["dismissible"]
-      ? `<button class="ps-bs-close" onclick="this.closest('.ps-bs').style.display='none'" aria-label="Dismiss" style="color:${e(props["textColor"])}">&#10005;</button>`
+      ? `<button class="ps-bs-close" onclick="this.closest('.ps-bs').style.display='none'" aria-label="Dismiss" style="color:${tc}">&#10005;</button>`
       : "";
-    return `<div class="ps-bs" role="banner" style="background:${e(props["bgColor"])};color:${e(props["textColor"])};padding:${padding};font-size:${fontSize};text-align:${align};${sticky}">
+    return `<div class="ps-bs" role="banner" style="background:${cssColor(props["bgColor"], "#6d28d9")};color:${tc};padding:${padding};font-size:${fontSize};text-align:${align};${sticky}">
   <div class="ps-bs-inner">
     <span class="ps-bs-msg">${icon}${e(props["message"])}</span>
     ${cta}

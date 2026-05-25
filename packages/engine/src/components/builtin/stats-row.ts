@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e } from "./utils.js";
+import { e, cssColor } from "./utils.js";
 
 function stat(val: unknown, label: unknown): string {
   return `<div class="ps-sr-stat"><div class="ps-sr-num">${e(val)}</div><div class="ps-sr-lbl">${e(label)}</div></div>`;
@@ -32,8 +32,8 @@ export const statsRowComponent: ComponentDef = {
     textColor: "#6d28d9",
   },
   render(props) {
-    return `<section class="ps-sr" style="background:${e(props["bgColor"])}">
-  <div class="ps-sr-inner" style="--sr-accent:${e(props["textColor"])}">
+    return `<section class="ps-sr" style="background:${cssColor(props["bgColor"], "#0f172a")}">
+  <div class="ps-sr-inner" style="--sr-accent:${cssColor(props["textColor"], "#6d28d9")}">
     ${stat(props["val1"], props["label1"])}
     ${stat(props["val2"], props["label2"])}
     ${stat(props["val3"], props["label3"])}

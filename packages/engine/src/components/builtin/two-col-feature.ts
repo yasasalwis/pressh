@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { cssColor, e, richtext, safeUrl } from "./utils.js";
 
 export const twoColFeatureComponent: ComponentDef = {
   id: "two-col-feature",
@@ -30,7 +30,7 @@ export const twoColFeatureComponent: ComponentDef = {
     accentColor: "#6d28d9", bgColor: "#ffffff", imageRadius: true, imageShadow: true,
   },
   render(props) {
-    const acc    = e(props["accentColor"]);
+    const acc    = cssColor(props["accentColor"], "#6d28d9");
     const imgPos = String(props["imagePos"] ?? "right");
     const radius = props["imageRadius"] ? "border-radius:16px;" : "";
     const shadow  = props["imageShadow"] ? "box-shadow:0 24px 60px -16px rgba(15,23,42,.2);" : "";
@@ -48,13 +48,13 @@ export const twoColFeatureComponent: ComponentDef = {
     const textBlock = `<div class="ps-tc-text">
       ${badge}
       <h2 class="ps-tc-h">${e(props["heading"])}</h2>
-      <div class="ps-tc-body">${props["body"] ?? ""}</div>
+      <div class="ps-tc-body">${richtext(props["body"])}</div>
       ${cta}
     </div>`;
     const order = imgPos === "left"
       ? `<div class="ps-tc-img-wrap">${imgBlock}</div>${textBlock}`
       : `${textBlock}<div class="ps-tc-img-wrap">${imgBlock}</div>`;
-    return `<section class="ps-tc" style="background:${e(props["bgColor"])}">
+    return `<section class="ps-tc" style="background:${cssColor(props["bgColor"])}">
   <div class="ps-tc-inner">${order}</div>
 </section>`;
   },

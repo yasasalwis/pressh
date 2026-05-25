@@ -1,5 +1,5 @@
 import type { ComponentDef } from "../types.js";
-import { e, safeUrl } from "./utils.js";
+import { e, safeUrl, cssColor } from "./utils.js";
 
 export const navHeaderComponent: ComponentDef = {
   id: "nav-header",
@@ -39,24 +39,26 @@ export const navHeaderComponent: ComponentDef = {
   render(props) {
     const sticky = props["sticky"] ? "position:sticky;top:0;z-index:200;" : "";
     const shadow = props["shadow"] ? "box-shadow:0 1px 12px rgba(15,23,42,.10);" : "border-bottom:1px solid rgba(15,23,42,.08);";
-    const lc = e(props["textColor"]);
+    const lc = cssColor(props["textColor"], "#0f172a");
+    const bg = cssColor(props["bgColor"], "#ffffff");
+    const ctaBg = cssColor(props["ctaBg"], "#6d28d9");
     const links = [1,2,3,4].map(i =>
       props[`link${i}Label`] ? `<a href="${e(safeUrl(props[`link${i}Url`]))}" class="ps-nh-link" style="color:${lc}">${e(props[`link${i}Label`])}</a>` : ""
     ).join("");
-    return `<header class="ps-nh" style="background:${e(props["bgColor"])};${sticky}${shadow}">
+    return `<header class="ps-nh" style="background:${bg};${sticky}${shadow}">
   <div class="ps-nh-inner">
-    <a href="${e(safeUrl(props["logoUrl"]))}" class="ps-nh-logo" style="color:${e(props["textColor"])}">${e(props["logoText"])}</a>
+    <a href="${e(safeUrl(props["logoUrl"]))}" class="ps-nh-logo" style="color:${lc}">${e(props["logoText"])}</a>
     <!-- desktop nav -->
     <nav class="ps-nh-desk">${links}</nav>
-    <a href="${e(safeUrl(props["ctaUrl"]))}" class="ps-nh-cta" style="background:${e(props["ctaBg"])}">${e(props["ctaLabel"])}</a>
+    <a href="${e(safeUrl(props["ctaUrl"]))}" class="ps-nh-cta" style="background:${ctaBg}">${e(props["ctaLabel"])}</a>
     <!-- mobile nav (CSS-only <details> toggle) -->
     <details class="ps-nh-mob">
       <summary class="ps-nh-burger" aria-label="Toggle navigation">
         <span></span><span></span><span></span>
       </summary>
-      <nav class="ps-nh-drawer" style="background:${e(props["bgColor"])}">
+      <nav class="ps-nh-drawer" style="background:${bg}">
         ${links}
-        <a href="${e(safeUrl(props["ctaUrl"]))}" class="ps-nh-cta-mob" style="background:${e(props["ctaBg"])}">${e(props["ctaLabel"])}</a>
+        <a href="${e(safeUrl(props["ctaUrl"]))}" class="ps-nh-cta-mob" style="background:${ctaBg}">${e(props["ctaLabel"])}</a>
       </nav>
     </details>
   </div>

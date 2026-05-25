@@ -34,6 +34,7 @@ interface StoredGeneralSettings extends StoredDoc {
   smtp: SmtpSettings | null;
   headerNav?: string[];
   connectedSources?: string[];
+  maintenanceMode?: boolean;
 }
 
 /** Public view: adds whether an SMTP password is on file, never the value. */
@@ -48,6 +49,8 @@ export interface GeneralSettings {
   headerNav: string[];
   /** Content-type slugs enabled as collection data sources for the site. */
   connectedSources: string[];
+  /** When true, the public site serves the maintenance page with HTTP 503. */
+  maintenanceMode: boolean;
 }
 
 export interface UpdateSettingsInput {
@@ -62,6 +65,8 @@ export interface UpdateSettingsInput {
   headerNav?: string[];
   /** Content-type slugs to enable as collection data sources. */
   connectedSources?: string[];
+  /** Toggle the public site into maintenance mode (serves the maintenance page, HTTP 503). */
+  maintenanceMode?: boolean;
 }
 
 export interface SettingsService {
@@ -84,6 +89,7 @@ const DEFAULTS = {
   smtp: null as SmtpSettings | null,
   headerNav: [] as string[],
   connectedSources: [] as string[],
+  maintenanceMode: false,
 };
 
 function isValidTimezone(tz: string): boolean {
@@ -129,6 +135,7 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
       smtpAvailable,
       headerNav: doc.headerNav ?? [],
       connectedSources: doc.connectedSources ?? [],
+      maintenanceMode: doc.maintenanceMode ?? false,
     };
   }
 
@@ -183,6 +190,11 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
           (s) => typeof s === "string" && s.trim() !== "",
         );
       }
+      if (partial.maintenanceMode !== undefined) {
+        if (typeof partial.maintenanceMode !== "boolean")
+          throw new PressError("validation", "maintenanceMode must be a boolean");
+        doc.maintenanceMode = partial.maintenanceMode;
+      }
       if (partial.smtpPassword !== undefined && partial.smtpPassword !== "") {
         if (!opts.secrets) {
           throw new PressError(
@@ -198,7 +210,13 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
       await opts.audit.append({
         action: "settings.update",
         actorId: null,
-        detail: { baseUrl: doc.baseUrl, defaultLocale: doc.defaultLocale, timezone: doc.timezone, smtp: doc.smtp !== null },
+        detail: {
+          baseUrl: doc.baseUrl,
+          defaultLocale: doc.defaultLocale,
+          timezone: doc.timezone,
+          smtp: doc.smtp !== null,
+          maintenanceMode: doc.maintenanceMode ?? false,
+        },
       });
       return toView(doc);
     },
