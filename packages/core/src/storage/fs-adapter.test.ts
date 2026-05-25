@@ -44,6 +44,32 @@ describe("FileSystemStorageAdapter — CRUD", () => {
   });
 });
 
+describe("FileSystemStorageAdapter — transactions", () => {
+    it("commits all writes when the body succeeds", async () => {
+        const result = await store.transaction(async (tx) => {
+            unwrap(await tx.put("posts", {id: "a", n: 1}));
+            unwrap(await tx.put("posts", {id: "b", n: 2}));
+            return "ok";
+        });
+        expect(result.ok).toBe(true);
+        expect(unwrap(await store.get("posts", "a"))).not.toBeNull();
+        expect(unwrap(await store.get("posts", "b"))).not.toBeNull();
+    });
+
+    it("rolls back every write (and restores overwritten rows) when the body throws", async () => {
+        unwrap(await store.put("posts", {id: "keep", title: "original"}));
+        const result = await store.transaction(async (tx) => {
+            unwrap(await tx.put("posts", {id: "keep", title: "modified"}));
+            unwrap(await tx.put("posts", {id: "new", title: "added"}));
+            unwrap(await tx.delete("posts", "keep")); // even a delete is undone
+            throw new Error("boom");
+        });
+        expect(result.ok).toBe(false);
+        expect(unwrap(await store.get("posts", "new"))).toBeNull();
+        expect(unwrap(await store.get<{ title: string }>("posts", "keep"))?.title).toBe("original");
+    });
+});
+
 describe("FileSystemStorageAdapter — query", () => {
   it("filters by an indexed top-level field", async () => {
     await store.put("posts", { id: randomUUID(), status: "published" });

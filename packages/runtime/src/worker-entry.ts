@@ -1,4 +1,8 @@
+// `parentPort` and `register` are imported (and bound) BEFORE the sandbox
+// loader is installed, so blocking `node:worker_threads`/`node:module` for the
+// plugin below does not break the worker's own RPC channel.
 import { parentPort } from "node:worker_threads";
+import {register} from "node:module";
 import { pathToFileURL } from "node:url";
 import type {
   HostApi,
@@ -12,11 +16,31 @@ import type {
  * its only channel to the host is `parentPort` RPC. Plugin handlers receive a
  * `HostApi` whose every method round-trips to the host, where it is
  * capability-checked (ADR-003/004).
+ *
+ * Isolation is layered (see SECURITY baseline #1):
+ *  1. The host spawns this worker under the Node permission model
+ *     (`--permission`, fs-read scoped to the plugin dir), denying the
+ *     filesystem, child_process, native addons and sub-workers at the OS level.
+ *  2. The sandbox loader (registered below) denies I/O-capable builtins the
+ *     permission model misses — chiefly the network (`node:net`/`http`/`dns`).
+ *  3. Powerful globals are scrubbed so a plugin cannot reach them indirectly.
  */
 
-// Defense-in-depth: even though the worker is spawned with an empty env, scrub
-// process.env so a plugin can never read host secrets via process.env.
+// Layer 2: only pure-computation builtins and the plugin's own files may be
+// imported; network/process/fs builtins and npm deps are denied.
+register("./sandbox-loader.js", import.meta.url);
+
+// Layer 3: scrub process.env (host secrets) and the most dangerous globals.
+// `fetch`/`WebSocket` are network egress the import allowlist cannot see; the
+// low-level `process` escape hatches could rebuild blocked capabilities.
 for (const key of Object.keys(process.env)) delete process.env[key];
+delete (globalThis as { fetch?: unknown }).fetch;
+delete (globalThis as { WebSocket?: unknown }).WebSocket;
+delete (globalThis as { EventSource?: unknown }).EventSource;
+const proc = process as unknown as { binding?: unknown; dlopen?: unknown; _linkedBinding?: unknown };
+delete proc.binding;
+delete proc.dlopen;
+delete proc._linkedBinding;
 
 const port = parentPort;
 if (!port) {

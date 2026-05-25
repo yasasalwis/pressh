@@ -77,10 +77,12 @@ describe("AuthService", () => {
     for (let i = 0; i < 3; i++) {
       await expect(auth.authenticate({ email: "a@b.com", password: "bad" })).rejects.toBeDefined();
     }
-    // Even the correct password is now rejected (locked).
+      // Even the correct password is now rejected — but with the SAME generic
+      // error as a bad password, so a locked account is indistinguishable from a
+      // wrong password (no enumeration via the error code).
     await expect(
       auth.authenticate({ email: "a@b.com", password: "supersecret" }),
-    ).rejects.toMatchObject({ code: "rate_limited" });
+    ).rejects.toMatchObject({code: "unauthorized"});
 
     const locked = await audit.query({ action: "user.account.locked" });
     expect(locked).toHaveLength(1);
@@ -90,6 +92,81 @@ describe("AuthService", () => {
     const { token } = await auth.authenticate({ email: "a@b.com", password: "supersecret" });
     expect(token).toBeTruthy();
   });
+
+    it("does not reset the failure counter on lockout — a single post-window failure re-locks immediately", async () => {
+        await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        // Trip the first lockout (3 failures → locked for lockoutMs = 60s).
+        for (let i = 0; i < 3; i++) {
+            await expect(auth.authenticate({email: "a@b.com", password: "bad"})).rejects.toBeDefined();
+        }
+        // Wait out the first window, then fail ONCE more.
+        clock += 61_000;
+        await expect(auth.authenticate({email: "a@b.com", password: "bad"})).rejects.toBeDefined();
+        // Because the counter was NOT reset, that single failure re-locked the
+        // account immediately — the correct password is refused within the new
+        // window. The attacker gets at most one try per window, not a fresh batch.
+        await expect(
+            auth.authenticate({email: "a@b.com", password: "supersecret"}),
+        ).rejects.toMatchObject({code: "unauthorized"});
+    });
+
+    it("escalates the lockout backoff as failures accumulate", async () => {
+        await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        const DAY = 26 * 60 * 60 * 1000; // longer than any backoff, so each lock expires
+        // 3 failures → first lock; then drive 3 more isolated failures (waiting out
+        // each lock) to push the counter to 6 and reach the next backoff tier.
+        for (let i = 0; i < 3; i++) {
+            await auth.authenticate({email: "a@b.com", password: "bad"}).catch(() => {
+            });
+        }
+        for (let i = 0; i < 3; i++) {
+            clock += DAY;
+            await auth.authenticate({email: "a@b.com", password: "bad"}).catch(() => {
+            });
+        }
+        const locks = await audit.query({action: "user.account.locked"});
+        const backoffs = locks.map((e) => Number(e.detail?.lockedForMs)).filter(Number.isFinite);
+        // The latest backoff is strictly larger than the first — it grew.
+        expect(Math.max(...backoffs)).toBeGreaterThan(backoffs[0]!);
+    });
+
+    it("a locked account and a nonexistent account return the identical error (no enumeration)", async () => {
+        await auth.createUser({email: "real@b.com", password: "supersecret", roles: ["author"]});
+        for (let i = 0; i < 3; i++) {
+            await expect(auth.authenticate({email: "real@b.com", password: "bad"})).rejects.toBeDefined();
+        }
+        const lockedErr = await auth
+            .authenticate({email: "real@b.com", password: "supersecret"})
+            .catch((e) => e);
+        const ghostErr = await auth
+            .authenticate({email: "ghost@b.com", password: "whatever"})
+            .catch((e) => e);
+        expect(lockedErr.code).toBe("unauthorized");
+        expect(ghostErr.code).toBe(lockedErr.code);
+        expect(lockedErr.message).toBe(ghostErr.message);
+    });
+
+    it("prunes a user's expired sessions on a fresh login (no unbounded growth)", async () => {
+        await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        await auth.authenticate({email: "a@b.com", password: "supersecret"}); // session 1
+        // Advance past the session TTL so session 1 is expired, then log in again.
+        clock += 8 * 24 * 60 * 60 * 1000;
+        await auth.authenticate({email: "a@b.com", password: "supersecret"}); // session 2
+
+        const sessions = await storage.query("sessions", {});
+        expect(sessions.ok && sessions.value.items).toHaveLength(1); // expired one pruned
+    });
+
+    it("revokes existing sessions when a user's roles change", async () => {
+        const user = await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        const {token} = await auth.authenticate({email: "a@b.com", password: "supersecret"});
+        expect(await auth.validateSession(token)).not.toBeNull();
+
+        await auth.updateUser(user.id, {roles: ["editor"]});
+        // The pre-existing session no longer validates — the user must re-auth so
+        // the new role set takes effect immediately.
+        expect(await auth.validateSession(token)).toBeNull();
+    });
 
   it("resolves capabilities from the user's roles", async () => {
     const user = await auth.createUser({

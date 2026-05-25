@@ -1,5 +1,5 @@
 import mysql from "mysql2/promise";
-import { PressError } from "@pressh/core";
+import {journaledTransaction, PressError} from "@pressh/core";
 import type { Cursor, Filter, Page, Result, StorageAdapter, StoredDoc } from "@pressh/core";
 
 /**
@@ -115,11 +115,7 @@ class MysqlStorageAdapter implements StorageAdapter {
   }
 
   async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<Result<T>> {
-    try {
-      return ok(await fn(this));
-    } catch (e) {
-      return fail(e);
-    }
+      return journaledTransaction(this, fn);
   }
 
   async listCollections(): Promise<Result<string[]>> {

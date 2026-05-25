@@ -43,6 +43,15 @@ describe("sanitizeBlocks — XSS corpus", () => {
     expect(cleaned).toContain("sandbox");
   });
 
+    it("allows an https iframe but strips the src of an http or protocol-relative one", () => {
+        expect(rawHtml(`<iframe src="https://www.youtube.com/embed/x"></iframe>`)).toContain(
+            "https://www.youtube.com/embed/x",
+        );
+        // http downgrade and protocol-relative hosts must not survive as a src.
+        expect(rawHtml(`<iframe src="http://evil.com/x"></iframe>`)).not.toContain("evil.com");
+        expect(rawHtml(`<iframe src="//evil.com/x"></iframe>`)).not.toContain("evil.com");
+    });
+
   it("drops unsafe image src", () => {
     const registry = createBlockRegistry();
     const out = sanitizeBlocks(

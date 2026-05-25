@@ -1,7 +1,7 @@
 import type {Db} from "mongodb";
 import {MongoClient} from "mongodb";
 import type {Cursor, Filter, Page, Result, StorageAdapter, StoredDoc} from "@pressh/core";
-import {PressError} from "@pressh/core";
+import {journaledTransaction, PressError} from "@pressh/core";
 
 /**
  * MongoDB StorageAdapter. Each Pressh collection maps to a Mongo collection;
@@ -121,11 +121,9 @@ class MongoStorageAdapter implements StorageAdapter {
   }
 
   async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<Result<T>> {
-    try {
-      return ok(await fn(this));
-    } catch (e) {
-      return fail(e);
-    }
+      // Journaled capture+restore rather than a Mongo session transaction, which
+      // would require a replica set (unavailable on a standalone mongod).
+      return journaledTransaction(this, fn);
   }
 
   async listCollections(): Promise<Result<string[]>> {

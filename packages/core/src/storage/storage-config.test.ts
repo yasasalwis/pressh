@@ -81,6 +81,13 @@ describe("storage-config", () => {
         expect(resolveStoragePath(undefined, "db.sqlite")).toBe("db.sqlite");
     });
 
+    it("rejects a relative path that escapes the data directory", () => {
+        expect(() => resolveStoragePath("/var/data", "../../etc/cron.d/x")).toThrow(/escapes/i);
+        expect(() => resolveStoragePath("/var/data", "../secret.sqlite")).toThrow(/escapes/i);
+        // A path that resolves back inside the dir is fine.
+        expect(resolveStoragePath("/var/data", "nested/../db.sqlite")).toBe(join("/var/data", "db.sqlite"));
+    });
+
     it("forwards baseDir into the factory so a relative sqlite path can be anchored", async () => {
         let received: StorageConfig | null = null;
         const factories: Record<string, StorageFactory> = {

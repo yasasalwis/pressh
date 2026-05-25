@@ -1,5 +1,5 @@
 import {mkdir, readFile, rename, stat, writeFile} from "node:fs/promises";
-import {dirname, isAbsolute, join} from "node:path";
+import {dirname, isAbsolute, resolve as resolvePath, sep} from "node:path";
 import {PressError} from "../errors.js";
 import type {SecretsBackend} from "../secrets.js";
 import {createFileSystemStorage} from "./fs-adapter.js";
@@ -41,10 +41,19 @@ function isBackend(value: unknown): value is StorageBackend {
  * as separate processes and a supervisor may restart them from a different
  * directory, so a relative path could silently point at different (empty) files.
  * Absolute paths and the in-memory marker ":memory:" pass through unchanged.
+ *
+ * A relative path is CONFINED to `baseDir`: a value like "../../etc/cron.d/x"
+ * is rejected so an operator-supplied SQLite path (DB Manager) can never read,
+ * write, or — on cutover cleanup — delete files outside the data directory.
  */
 export function resolveStoragePath(baseDir: string | undefined, path: string): string {
   if (path === ":memory:" || isAbsolute(path) || !baseDir) return path;
-  return join(baseDir, path);
+    const base = resolvePath(baseDir);
+    const target = resolvePath(base, path);
+    if (target !== base && !target.startsWith(base + sep)) {
+        throw new PressError("validation", `Storage path escapes the data directory: ${path}`);
+    }
+    return target;
 }
 
 /** Reads and validates the persisted config. Returns null when the file is absent. */

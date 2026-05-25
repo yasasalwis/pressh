@@ -327,6 +327,96 @@ describe("inventory plugin — orders, payments & returns", () => {
         expect(s.counts.lowStock).toBeGreaterThanOrEqual(1);
         expect(s.revenue).toBe(15);
   });
+
+    // A host whose get/put round-trip through structuredClone, matching the
+    // worker RPC transport: a reader sees a snapshot, so a naive
+    // read-check-then-write would let two concurrent orders oversell.
+    function makeCloningHost() {
+        const h = makeHost();
+        const inner = h.storage;
+        h.storage = {
+            ...inner,
+            async get(name: string, id: string) {
+                const v = await inner.get(name, id);
+                return v == null ? null : structuredClone(v);
+            },
+            async put(name: string, doc: { id: string }) {
+                return inner.put(name, structuredClone(doc) as { id: string });
+            },
+            async query(name: string) {
+                const p = await inner.query(name);
+                return {items: p.items.map((i) => structuredClone(i)), nextCursor: p.nextCursor};
+            },
+        };
+        return h;
+    }
+
+    it("does not oversell under concurrent checkouts for the last unit", async () => {
+        const host = makeCloningHost();
+        const item = await seedProduct(host, 1, 10); // exactly one in stock
+        const vid = item.variants[0].id;
+        const order = () =>
+            inventory.createOrder(
+                {
+                    lines: [{itemId: item.id, variantId: vid, qty: 1}],
+                    customer: {name: "A", email: "a@b.c"},
+                    source: "storefront"
+                },
+                host,
+            );
+        // Fire two checkouts at once; exactly one may win.
+        const results = await Promise.allSettled([order(), order()]);
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        const rejected = results.filter((r) => r.status === "rejected");
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        // Stock is exactly zero — never negative, never double-sold.
+        expect((await inventory.getItem({id: item.id}, host)).item.variants[0].stock).toBe(0);
+    });
+
+    it("computes money in exact cents (no float drift) including tax", async () => {
+        const host = makeHost();
+        await inventory.saveSettings({settings: {taxRate: 8.25}}, host);
+        const item = await seedProduct(host, 10, 19.99);
+        const {order} = await inventory.createOrder(
+            {lines: [{itemId: item.id, variantId: item.variants[0].id, qty: 3}], customer: {name: "A", email: "a@b.c"}},
+            host,
+        );
+        expect(order.subtotal).toBe(59.97);   // 19.99 * 3, exact
+        expect(order.tax).toBe(4.95);         // round(5997 * 8.25 / 100) cents
+        expect(order.total).toBe(64.92);
+    });
+
+    it("caps cumulative returns at the purchased quantity across multiple returns", async () => {
+        const host = makeHost();
+        const item = await seedProduct(host, 10, 10);
+        const vid = item.variants[0].id;
+        const {order} = await inventory.createOrder(
+            {lines: [{itemId: item.id, variantId: vid, qty: 2}], customer: {name: "A", email: "a@b.c"}},
+            host,
+        );
+        await inventory.recordPayment({orderId: order.id, amount: 20, method: "card"}, host);
+
+        // First return of 2 (the whole order) succeeds.
+        await inventory.createReturn({orderId: order.id, lines: [{itemId: item.id, variantId: vid, qty: 2}]}, host);
+        // A second return for the same line must be refused — nothing left to return.
+        await expect(
+            inventory.createReturn({orderId: order.id, lines: [{itemId: item.id, variantId: vid, qty: 1}]}, host),
+        ).rejects.toThrow(/already been returned|between 1 and/i);
+    });
+
+    it("refuses to cancel a fulfilled order (must go through a return)", async () => {
+        const host = makeHost();
+        const item = await seedProduct(host, 5, 10);
+        const {order} = await inventory.createOrder(
+            {lines: [{itemId: item.id, variantId: item.variants[0].id, qty: 1}], customer: {name: "A", email: "a@b.c"}},
+            host,
+        );
+        await inventory.fulfillOrder({id: order.id}, host);
+        await expect(inventory.cancelOrder({id: order.id}, host)).rejects.toThrow(/cannot cancel/i);
+        // Stock was not restocked by the failed cancel.
+        expect((await inventory.getItem({id: item.id}, host)).item.variants[0].stock).toBe(4);
+    });
 });
 
 describe("inventory plugin — storefront cart & checkout", () => {

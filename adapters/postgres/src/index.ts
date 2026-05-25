@@ -1,12 +1,12 @@
 import pg from "pg";
-import { PressError } from "@pressh/core";
+import {journaledTransaction, PressError} from "@pressh/core";
 import type { Cursor, Filter, Page, Result, StorageAdapter, StoredDoc } from "@pressh/core";
 
 /**
  * PostgreSQL StorageAdapter. Documents are stored in a single `docs` table with
- * a `jsonb` payload. All values are bound parameters ($1, $2, …) — never
- * string-built SQL. JSON filter keys are validated against a strict charset
- * before being used in a `->>` path.
+ * a `jsonb` payload. ALL values AND JSON filter keys are bound parameters
+ * ($1, $2, …) — never string-built SQL — so a filter field name can never reach
+ * the query as raw SQL. Keys are also charset-validated as defense in depth.
  */
 const SAFE_FIELD = /^[A-Za-z0-9_]+$/;
 const DEFAULT_LIMIT = 50;
@@ -79,8 +79,12 @@ class PostgresStorageAdapter implements StorageAdapter {
       const params: (string | number)[] = [collection];
       for (const [field, value] of Object.entries(filter.where ?? {})) {
         if (!SAFE_FIELD.test(field)) throw new PressError("validation", `Invalid filter field: ${field}`);
+          // Bind BOTH the JSON key and the value — `doc->>$n` takes the key as a
+          // parameter, so the field name is never interpolated into SQL.
+          params.push(field);
+          const keyParam = params.length;
         params.push(String(value));
-        clauses.push(`doc->>'${field}' = $${params.length}`);
+          clauses.push(`doc->>$${keyParam} = $${params.length}`);
       }
       const after = page.after ?? null;
       if (after !== null) {
@@ -102,11 +106,7 @@ class PostgresStorageAdapter implements StorageAdapter {
   }
 
   async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<Result<T>> {
-    try {
-      return ok(await fn(this));
-    } catch (e) {
-      return fail(e);
-    }
+      return journaledTransaction(this, fn);
   }
 
   async listCollections(): Promise<Result<string[]>> {

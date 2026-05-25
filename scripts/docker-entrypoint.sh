@@ -42,4 +42,14 @@ ensure_secret() {
 ensure_secret PRESSH_MASTER_KEY master.key
 ensure_secret PRESSH_CSRF_SECRET csrf.key
 
+# Re-sign the first-party plugins with THIS deployment's master key. The image
+# ships dev-key signatures (built without the runtime secret); the host verifies
+# against the master-key-derived HMAC, so they must be re-signed now that the key
+# is provisioned. Idempotent and atomic, so the site and studio both running this
+# is safe. Best-effort: a read-only app dir leaves the shipped signatures as-is.
+if [ -f /app/scripts/sign-builtins.mjs ] && [ -d /app/builtins ]; then
+  node /app/scripts/sign-builtins.mjs >&2 || \
+    echo "pressh: could not re-sign builtins (app dir read-only?) — relying on shipped signatures." >&2
+fi
+
 exec "$@"

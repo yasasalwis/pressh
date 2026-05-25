@@ -13,7 +13,7 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run sign:builtins && tsc -b && vite build --config apps/site/vite.config.ts",
+    "build": "tsc -b && npm run sign:builtins && vite build --config apps/site/vite.config.ts",
     "sign:builtins": "node scripts/sign-builtins.mjs",
     "typecheck": "tsc -b",
     "clean": "tsc -b --clean",

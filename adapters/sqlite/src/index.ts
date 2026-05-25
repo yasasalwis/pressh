@@ -129,9 +129,25 @@ class SqliteStorageAdapter implements StorageAdapter {
   }
 
   async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<Result<T>> {
-    try {
+      // Already inside a transaction (nested call): join it. Let a throw propagate
+      // so the outermost transaction performs a single unified ROLLBACK.
+      if (this.#db.inTransaction) {
       return ok(await fn(this));
+      }
+      // Real atomicity: COMMIT only if `fn` resolves; ROLLBACK on any throw so a
+      // partial multi-write never persists. (better-sqlite3 ops are synchronous,
+      // so the writes inside `fn` run within this BEGIN/COMMIT span.)
+      this.#db.exec("BEGIN");
+      try {
+          const value = await fn(this);
+          this.#db.exec("COMMIT");
+          return ok(value);
     } catch (e) {
+          try {
+              this.#db.exec("ROLLBACK");
+          } catch {
+              // No active transaction to roll back — nothing to undo.
+          }
       return fail(e);
     }
   }

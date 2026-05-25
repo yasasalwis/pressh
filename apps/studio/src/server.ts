@@ -1,21 +1,17 @@
-import {dirname, join} from "node:path";
+import {join} from "node:path";
 import {pathToFileURL} from "node:url";
 import {readdir} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
 import {serve} from "@hono/node-server";
-import type {SecretsBackend} from "@pressh/core";
 import {
   createAuthService,
   createCsrf,
   createFileAuditLog,
-  createFileSecretsBackend,
   createScheduler,
-  deriveMasterKey,
-  loadStorageConfig,
-  MASTER_KEY_BYTES,
   watchStorageConfig,
 } from "@pressh/core";
-import {buildStorage, STORAGE_FACTORIES} from "./storage.js";
+import {STORAGE_FACTORIES} from "./storage.js";
+import {openConfiguredStorage, parseMasterKey} from "./bootstrap.js";
 import {
   createContentService,
   createGdprService,
@@ -48,8 +44,6 @@ async function registerPluginsFrom(host: PluginHost, dir: string, builtin: boole
   }
 }
 
-const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
-
 /**
  * Exit code used after a Database-Manager cutover so the process supervisor
  * restarts us on the new backend. `scripts/run.mjs` treats this code as
@@ -57,21 +51,6 @@ const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
  * matching constant in `apps/site/src/server.ts` and `scripts/run.mjs`.
  */
 const STORAGE_RESTART_EXIT_CODE = 75;
-
-/**
- * Parse the operator master key. A 32-byte key encoded as hex (64 chars) or
- * base64 is used directly; anything else is treated as a passphrase and
- * stretched with scrypt. Returns null for an empty/absent value.
- */
-function parseMasterKey(raw: string | undefined): Buffer | null {
-  if (!raw) return null;
-  const value = raw.trim();
-  if (value === "") return null;
-  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, "hex");
-  const b64 = Buffer.from(value, "base64");
-  if (b64.length === MASTER_KEY_BYTES) return b64;
-  return deriveMasterKey(value, MASTER_KEY_SALT);
-}
 
 export interface StudioServerOptions {
   contentRoot: string;
@@ -86,6 +65,8 @@ export interface StudioServerOptions {
   csrfSecret?: string;
   /** 32-byte vault master key. When set, SMTP credentials can be sealed. */
   masterKey?: Buffer;
+    /** Raw master-key string used to derive the plugin-signing key (see PluginHost). */
+    signingSecret?: string;
   /** Path to the sealed secrets vault file. Defaults next to the content root. */
   secretsPath?: string;
   /** Path to the active-storage config (`storage.json`). Defaults next to the content root. */
@@ -99,28 +80,21 @@ export interface StudioServerOptions {
  * process (ADR-002). Boots its own storage/auth/content/media + CSRF.
  */
 export async function createStudioServer(opts: StudioServerOptions): Promise<{ start: () => void }> {
-  // Sealed vault for operator secrets (SMTP password, database connection
-  // strings). Built before storage because DB backends resolve their connection
-  // string from the vault. Optional in dev; when absent the Settings/Database
-  // screens report credential storage disabled.
-  const vaultPath = opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json");
-  let secrets: SecretsBackend | undefined;
-  if (opts.masterKey) {
-    secrets = await createFileSecretsBackend({path: vaultPath, key: opts.masterKey});
-  }
-
-  // Active storage backend is chosen by `storage.json` (written by the Database
-  // Manager on cutover). Absent → the filesystem default, so a fresh install
-  // needs zero configuration.
-  const storageConfigPath = opts.storageConfigPath ?? join(opts.contentRoot, "..", "storage.json");
-  // Relative backend file paths (e.g. sqlite `path`) resolve against the data
-  // directory — never the process cwd — so both processes open the same file.
-  const dataDir = dirname(storageConfigPath);
-  const persistedStorage = await loadStorageConfig(storageConfigPath);
-  const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets, dataDir);
+    // Open the backend selected by `storage.json` (a DB or the filesystem
+    // default) together with the secrets vault — via the shared helper the seed/
+    // admin CLIs also use, so a configured database holds ALL persisted data.
+    const {storage, secrets, vaultPath, storageConfigPath} = await openConfiguredStorage({
+        contentRoot: opts.contentRoot,
+        ...(opts.storageConfigPath ? {storageConfigPath: opts.storageConfigPath} : {}),
+        ...(opts.secretsPath ? {secretsPath: opts.secretsPath} : {}),
+        ...(opts.masterKey ? {masterKey: opts.masterKey} : {}),
+    });
 
   const auditPath = opts.auditPath ?? join(opts.contentRoot, "..", "audit.log");
-  const audit = await createFileAuditLog({path: auditPath});
+    const audit = await createFileAuditLog({
+        path: auditPath,
+        ...(opts.signingSecret ? {sealSecret: opts.signingSecret} : {}),
+    });
   const auth = await createAuthService({ storage, audit });
   const scheduler = createScheduler({ storage, audit });
   const content = createContentService({ storage, audit, scheduler });
@@ -166,7 +140,14 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   // The state store decides which registered plugins actually spawn a worker —
   // disabled ones (the default) cost nothing.
   const pluginState = createPluginStateStore(storage);
-  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve, state: pluginState });
+    const pluginHost = new PluginHost({
+        storage,
+        audit,
+        allowUnsigned: !opts.production,
+        cve,
+        state: pluginState,
+        ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
+    });
   if (opts.builtinsDir) await registerPluginsFrom(pluginHost, opts.builtinsDir, true);
   if (opts.pluginsDir) await registerPluginsFrom(pluginHost, opts.pluginsDir, false);
 
@@ -277,6 +258,7 @@ async function runFromEnv(): Promise<void> {
     port,
     production,
     ...(masterKey ? { masterKey } : {}),
+      ...(process.env["PRESSH_MASTER_KEY"] ? {signingSecret: process.env["PRESSH_MASTER_KEY"]} : {}),
     ...(process.env["PRESSH_CSRF_SECRET"] ? { csrfSecret: process.env["PRESSH_CSRF_SECRET"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
     ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),

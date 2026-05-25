@@ -1,17 +1,31 @@
 import {Worker} from "node:worker_threads";
 import {readFile} from "node:fs/promises";
-import {createHash} from "node:crypto";
+import {realpathSync} from "node:fs";
 import {fileURLToPath} from "node:url";
-import {join, resolve as resolvePath, sep} from "node:path";
+import {dirname, join, resolve as resolvePath, sep} from "node:path";
 import type {AuditLog, Logger, Result, SecretsBackend, StorageAdapter} from "@pressh/core";
 import {CapabilityGate, PressError} from "@pressh/core";
 import type {DesignerPreset, HostToWorker, PluginManifest, RpcError, WorkerToHost,} from "@pressh/sdk";
 import type {CveChecker} from "./cve.js";
 import type {PluginStateStore} from "./plugin-state.js";
+import {
+    derivePluginSigningKey,
+    SIGNATURE_FILE,
+    verifyPluginSignature,
+    type PluginSignature,
+} from "./plugin-signature.js";
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 5000;
+const DEFAULT_MAX_MEMORY_MB = 128;
 const MANIFEST_FILE = "pressh.plugin.json";
-const SIGNATURE_FILE = "pressh.signature.json";
+
+/**
+ * The Node permission model is the OS-level half of the plugin sandbox. It is
+ * available on Node ≥20; we feature-detect rather than assume so the host still
+ * boots on older runtimes (the import-allowlist loader + global scrub remain
+ * active there as a weaker, JS-level fallback).
+ */
+const PERMISSION_MODEL_SUPPORTED = process.allowedNodeEnvironmentFlags.has("--permission");
 
 /**
  * Collections that hold auth-critical data (password hashes, live session
@@ -43,6 +57,12 @@ export interface PluginHostOptions {
   logger?: Logger;
   /** Production sets this false: unsigned/invalid plugins are refused (ADR-011). */
   allowUnsigned?: boolean;
+    /**
+     * Secret used to derive the plugin-signing HMAC key (typically
+     * `PRESSH_MASTER_KEY`). Required to verify signed plugins; when absent and
+     * `allowUnsigned` is false, every plugin is refused (fail-closed).
+     */
+    signingSecret?: string;
   invokeTimeoutMs?: number;
   /** Override the compiled worker script (used in tests running from src). */
   workerScript?: string;
@@ -247,12 +267,14 @@ export class PluginHost {
   readonly #gate = new CapabilityGate();
   readonly #workerScript: string;
   readonly #timeout: number;
+    readonly #signingKey: Buffer | null;
   readonly #registry = new Map<string, PluginRecord>();
 
   constructor(opts: PluginHostOptions) {
     this.#opts = opts;
     this.#timeout = opts.invokeTimeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
     this.#workerScript = opts.workerScript ?? fileURLToPath(new URL("./worker-entry.js", import.meta.url));
+      this.#signingKey = opts.signingSecret ? derivePluginSigningKey(opts.signingSecret) : null;
   }
 
   /**
@@ -263,13 +285,7 @@ export class PluginHost {
    */
   async register(pluginDir: string, opts: { builtin?: boolean } = {}): Promise<PluginManifest> {
     const manifest = await this.#readManifest(pluginDir);
-    await this.#verifySignature(pluginDir, manifest);
-    if (this.#opts.cve && (await this.#opts.cve.isFlagged(manifest.name, manifest.version))) {
-      throw new PressError(
-        "forbidden",
-        `Plugin "${manifest.name}@${manifest.version}" has a known vulnerability and was refused`,
-      );
-    }
+      await this.#validate(pluginDir, manifest);
     const record: PluginRecord = {
       dir: pluginDir,
       manifest,
@@ -291,11 +307,28 @@ export class PluginHost {
     return manifest;
   }
 
+    /**
+     * Re-validates a plugin against the signature and the CVE feed. Run at
+     * register AND again at every enable/respawn, so a plugin whose files changed
+     * on disk, or that was flagged by the CVE feed *after* registration, is
+     * refused rather than silently re-spawned from cached state.
+     */
+    async #validate(dir: string, manifest: PluginManifest): Promise<void> {
+        await this.#verifySignature(dir, manifest);
+        if (this.#opts.cve && (await this.#opts.cve.isFlagged(manifest.name, manifest.version))) {
+            throw new PressError(
+                "forbidden",
+                `Plugin "${manifest.name}@${manifest.version}" has a known vulnerability and was refused`,
+            );
+        }
+    }
+
   /** Spawns the worker for a registered plugin and persists the enabled state. Idempotent. */
   async enable(name: string): Promise<void> {
     const record = this.#registry.get(name);
     if (!record) throw new PressError("not_found", `Plugin not registered: ${name}`);
     if (!record.instance) {
+        await this.#validate(record.dir, record.manifest);
       record.instance = await this.#spawn(record.dir, record.manifest);
     }
     await this.#opts.state?.setEnabled(name, true);
@@ -417,11 +450,14 @@ export class PluginHost {
   }
 
   async #spawn(pluginDir: string, manifest: PluginManifest): Promise<PluginInstance> {
+      // The permission model matches *resolved* paths, so the fs-read grant and
+      // the plugin's import path must both be real-path'd or they won't match
+      // (e.g. macOS `/tmp` vs `/private/tmp`).
+      const realDir = PERMISSION_MODEL_SUPPORTED ? realpathSync(pluginDir) : pluginDir;
     const worker = new Worker(this.#workerScript, {
       env: {},
-      ...(this.#opts.maxMemoryMb
-        ? { resourceLimits: { maxOldGenerationSizeMb: this.#opts.maxMemoryMb } }
-        : {}),
+        execArgv: this.#sandboxExecArgv(realDir),
+        resourceLimits: {maxOldGenerationSizeMb: this.#opts.maxMemoryMb ?? DEFAULT_MAX_MEMORY_MB},
     });
     const instance = new PluginInstance(
       manifest,
@@ -429,9 +465,36 @@ export class PluginHost {
       (m, msg) => this.#handleServiceCall(m, msg),
       this.#opts.logger,
     );
-    await instance.start(resolveWithin(pluginDir, manifest.main));
+      await instance.start(resolveWithin(realDir, manifest.main));
     return instance;
   }
+
+    /**
+     * Builds the worker's `execArgv` to enable the OS-level sandbox. The worker
+     * gets the Node permission model with filesystem reads scoped to ONLY its own
+     * plugin directory plus the runtime's compiled dir (so it can load
+     * worker-entry + the sandbox loader). No fs-write, no child_process, no native
+     * addons. `--allow-worker` is required for the worker's own RPC thread; the
+     * plugin still cannot spawn a sub-worker because the sandbox loader denies it
+     * `node:worker_threads`. Paths are real-path'd because the permission model
+     * matches resolved paths (e.g. macOS `/tmp` → `/private/tmp`). `realPluginDir`
+     * is already real-path'd by the caller.
+     */
+    #sandboxExecArgv(realPluginDir: string): string[] {
+        if (!PERMISSION_MODEL_SUPPORTED) return [];
+        const runtimeDir = dirname(realpathSync(this.#workerScript));
+        return [
+            "--permission",
+            // Required for the worker's own RPC thread. Node warns this "could
+            // invalidate the permission model" because a sub-worker could drop it —
+            // but the sandbox loader denies the plugin `node:worker_threads`, so it
+            // can never construct one. The warning is therefore expected noise.
+            "--allow-worker",
+            "--disable-warning=SecurityWarning",
+            `--allow-fs-read=${runtimeDir}`,
+            `--allow-fs-read=${realPluginDir}`,
+        ];
+    }
 
   /** Loads + sanitises a plugin's contributed designer presets (if any). */
   async #loadPresets(dir: string, manifest: PluginManifest): Promise<DesignerPreset[]> {
@@ -458,13 +521,9 @@ export class PluginHost {
   }
 
   async #verifySignature(dir: string, manifest: PluginManifest): Promise<void> {
-      let signature: { algorithm?: string; hash?: string; files?: Record<string, string> } | null = null;
+      let signature: PluginSignature | null = null;
     try {
-      signature = JSON.parse(await readFile(join(dir, SIGNATURE_FILE), "utf8")) as {
-        algorithm?: string;
-        hash?: string;
-          files?: Record<string, string>;
-      };
+        signature = JSON.parse(await readFile(join(dir, SIGNATURE_FILE), "utf8")) as PluginSignature;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
         throw new PressError("forbidden", `Unreadable signature for "${manifest.name}"`);
@@ -472,42 +531,29 @@ export class PluginHost {
       signature = null;
     }
 
-    if (!signature || !signature.hash) {
+      if (!signature || !signature.files) {
       if (this.#opts.allowUnsigned) return;
       throw new PressError("forbidden", `Plugin "${manifest.name}" is unsigned`);
     }
 
-    const content = await readFile(resolveWithin(dir, manifest.main));
-    const actual = createHash("sha256").update(content).digest("hex");
-    if (actual !== signature.hash) {
-      throw new PressError("forbidden", `Plugin "${manifest.name}" failed signature verification`);
-    }
+      // A signature exists, so it must verify — even when unsigned plugins would
+      // otherwise be allowed. Without a key we cannot verify it: fail closed
+      // unless unsigned plugins are explicitly permitted (dev).
+      if (!this.#signingKey) {
+          if (this.#opts.allowUnsigned) return;
+          throw new PressError(
+              "forbidden",
+              `Cannot verify "${manifest.name}": no plugin-signing key configured`,
+          );
+      }
 
-      // Auxiliary files the manifest references (e.g. the contributed designer
-      // presets) are attacker-controlled too: a signed plugin must also sign them
-      // (the `files` map), so a tampered presets.json is rejected before load —
-      // defense-in-depth beyond the load-time preset sanitizer.
-      await this.#verifyAuxFile(dir, manifest, manifest.designerPresets, signature.files);
-  }
-
-    /** Verifies one manifest-referenced file against the signature's `files` map. */
-    async #verifyAuxFile(
-        dir: string,
-        manifest: PluginManifest,
-        relPath: string | undefined,
-        files: Record<string, string> | undefined,
-    ): Promise<void> {
-        if (!relPath) return;
-        let content: Buffer;
-        try {
-            content = await readFile(resolveWithin(dir, relPath));
-        } catch {
-            throw new PressError("forbidden", `Plugin "${manifest.name}" references "${relPath}" but it is unreadable`);
-        }
-        const actual = createHash("sha256").update(content).digest("hex");
-        if (files?.[relPath] !== actual) {
-            throw new PressError("forbidden", `Plugin "${manifest.name}" file "${relPath}" failed signature verification`);
-        }
+      const result = await verifyPluginSignature(dir, signature, this.#signingKey);
+      if (!result.ok) {
+          throw new PressError(
+              "forbidden",
+              `Plugin "${manifest.name}" failed signature verification: ${result.reason}`,
+          );
+      }
   }
 
   async #handleServiceCall(
@@ -542,8 +588,11 @@ export class PluginHost {
         // Read-only collection enumeration for the data browser. Gated behind
         // the broad `storage.read:*` grant — there is no raw-query escape hatch
         // (baseline #14): a plugin can list and read, never run SQL or write.
+          // Auth-critical collections are filtered out so a plugin cannot even
+          // learn that `users`/`sessions`/`invites` exist.
         this.#gate.assert(caps, "storage.read:*");
-        return unwrap(await this.#opts.storage.listCollections());
+          const all = unwrap(await this.#opts.storage.listCollections());
+          return all.filter((c) => !RESERVED_COLLECTIONS.has(c));
       }
       const collection = String(args[0]);
       // Auth-critical collections are off-limits to plugins regardless of their

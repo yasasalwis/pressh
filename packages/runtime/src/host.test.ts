@@ -1,16 +1,20 @@
 import {afterEach, beforeEach, describe, expect, it} from "vitest";
-import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
-import {createHash, randomUUID} from "node:crypto";
+import {randomUUID} from "node:crypto";
 import type {AuditLog, StorageAdapter} from "@pressh/core";
 import {createFileAuditLog, createFileSystemStorage} from "@pressh/core";
 import {PluginHost} from "@pressh/runtime";
+import {buildSignature, derivePluginSigningKey} from "./plugin-signature.js";
 
 // The worker must be the COMPILED script (worker_threads cannot run TS source).
 // `npm run build:packages` runs before `npm test` in the acceptance gate.
 const WORKER = fileURLToPath(new URL("../dist/worker-entry.js", import.meta.url));
+
+// A known signing secret for tests; the host derives the same HMAC key from it.
+const SIGNING_SECRET = "test-master-key-0123456789";
 
 const PLUGIN_SRC = `
 export async function greet(args, host) {
@@ -30,6 +34,41 @@ export async function hang() {
 }
 export async function readEnv() {
   return process.env.PRESSH_TEST_SECRET ?? "none";
+}
+export async function attemptEscapes() {
+  const tryImport = async (m) => { try { await import(m); return "loaded"; } catch (e) { return "denied"; } };
+  return {
+    childProcess: await tryImport("node:child_process"),
+    fs: await tryImport("node:fs"),
+    fsPromises: await tryImport("node:fs/promises"),
+    net: await tryImport("node:net"),
+    http: await tryImport("node:http"),
+    https: await tryImport("node:https"),
+    dns: await tryImport("node:dns"),
+    os: await tryImport("node:os"),
+    vm: await tryImport("node:vm"),
+    workerThreads: await tryImport("node:worker_threads"),
+    nodeModule: await tryImport("node:module"),
+    process: await tryImport("node:process"),
+    npmDep: await tryImport("vitest"),
+    fetch: typeof fetch,
+    webSocket: typeof WebSocket,
+    procBinding: typeof process.binding,
+    // Allowlisted pure-computation builtins must still work:
+    crypto: await tryImport("node:crypto"),
+    util: await tryImport("node:util"),
+  };
+}
+export async function attemptFsWrite() {
+  // Even if fs could be reached, the permission model denies writes. Reach it
+  // via the not-yet-scrubbed require if available; otherwise report the import.
+  try {
+    const fs = await import("node:fs");
+    fs.writeFileSync("/tmp/pressh-escape-probe.txt", "x");
+    return "WROTE";
+  } catch (e) {
+    return "blocked:" + (e.code || "import-denied");
+  }
 }
 export async function listColls(args, host) {
   try { return { ok: true, collections: await host.storage.list() }; }
@@ -61,16 +100,9 @@ async function writePlugin(
     }
   await writeFile(join(pluginDir, "pressh.plugin.json"), JSON.stringify(manifest), "utf8");
   if (opts.signed) {
-    const content = await readFile(join(pluginDir, "index.mjs"));
-      const sig: { algorithm: string; hash: string; files?: Record<string, string> } = {
-          algorithm: "sha256",
-          hash: createHash("sha256").update(content).digest("hex"),
-      };
-      if (opts.presets) {
-          const presets = await readFile(join(pluginDir, "presets.json"));
-          sig.files = {"presets.json": createHash("sha256").update(presets).digest("hex")};
-      }
-      await writeFile(join(pluginDir, "pressh.signature.json"), JSON.stringify(sig), "utf8");
+      // Sign with the same secret the verifying host derives its key from.
+      const signature = await buildSignature(pluginDir, derivePluginSigningKey(SIGNING_SECRET));
+      await writeFile(join(pluginDir, "pressh.signature.json"), JSON.stringify(signature), "utf8");
   }
   return pluginDir;
 }
@@ -132,62 +164,150 @@ describe("PluginHost", () => {
     delete process.env["PRESSH_TEST_SECRET"];
   });
 
+    it("sandboxes the worker: denies I/O builtins, npm deps, fetch — allows pure-computation builtins", async () => {
+        const host = new PluginHost({storage, audit, allowUnsigned: true, workerScript: WORKER});
+        const pluginDir = await writePlugin("escaper", []);
+        await host.load(pluginDir);
+        const r = (await host.invoke("escaper", "attemptEscapes", {})) as Record<string, string>;
+
+        // I/O-capable builtins are denied (network the permission model misses,
+        // plus fs/process/etc. as defense-in-depth).
+        for (const mod of [
+            "childProcess", "fs", "fsPromises", "net", "http", "https",
+            "dns", "os", "vm", "workerThreads", "nodeModule", "process",
+        ]) {
+            expect(r[mod], `${mod} must be denied`).toBe("denied");
+        }
+        // Bare npm specifiers are denied (plugins bundle their deps).
+        expect(r["npmDep"]).toBe("denied");
+        // Network-egress globals are scrubbed.
+        expect(r["fetch"]).toBe("undefined");
+        expect(r["webSocket"]).toBe("undefined");
+        expect(r["procBinding"]).toBe("undefined");
+        // Pure-computation builtins remain available so plugins can still work.
+        expect(r["crypto"]).toBe("loaded");
+        expect(r["util"]).toBe("loaded");
+
+        await host.stopAll();
+    });
+
+    it("denies filesystem writes from inside a plugin worker", async () => {
+        const host = new PluginHost({storage, audit, allowUnsigned: true, workerScript: WORKER});
+        const pluginDir = await writePlugin("writer", []);
+        await host.load(pluginDir);
+        const result = (await host.invoke("writer", "attemptFsWrite", {})) as string;
+        expect(result.startsWith("blocked")).toBe(true);
+        await host.stopAll();
+    });
+
   it("rejects an unsigned plugin in production mode", async () => {
     const host = new PluginHost({ storage, audit, allowUnsigned: false, workerScript: WORKER });
     const pluginDir = await writePlugin("unsigned", []);
     await expect(host.load(pluginDir)).rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("loads a correctly signed plugin and rejects a tampered one", async () => {
-    const signedHost = new PluginHost({ storage, audit, allowUnsigned: false, workerScript: WORKER });
+    it("loads a correctly signed plugin and rejects a tampered main file", async () => {
+        const signedHost = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: SIGNING_SECRET,
+            workerScript: WORKER
+        });
     const pluginDir = await writePlugin("signed", [], { signed: true });
     await expect(signedHost.load(pluginDir)).resolves.toBeDefined();
     await signedHost.stopAll();
 
     // Tamper the main file after signing.
     await writeFile(join(pluginDir, "index.mjs"), `${PLUGIN_SRC}\n// tampered`, "utf8");
-    const tamperHost = new PluginHost({ storage, audit, allowUnsigned: false, workerScript: WORKER });
+        const tamperHost = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: SIGNING_SECRET,
+            workerScript: WORKER
+        });
     await expect(tamperHost.load(pluginDir)).rejects.toMatchObject({ code: "forbidden" });
   });
 
-    it("signs and verifies contributed designer presets, rejecting a tampered presets file", async () => {
-        const preset = [{id: "p", name: "P", icon: "x", category: "C", description: "d", template: []}];
-
-        // A signed plugin whose presets are covered by the signature loads fine.
-        const okHost = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
-        const okDir = await writePlugin("preset-ok", [], {signed: true, presets: preset});
-        await expect(okHost.register(okDir)).resolves.toBeDefined();
-
-        // Tampering presets.json after signing is rejected before load (the main
-        // hash still matches — only the presets file changed).
-        await writeFile(join(okDir, "presets.json"), JSON.stringify([{id: "evil"}]), "utf8");
-        const tamperHost = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
-        await expect(tamperHost.register(okDir)).rejects.toMatchObject({code: "forbidden"});
-
-        // A signed plugin that declares presets but whose signature omits the file
-        // hash is rejected (the signature must cover everything the manifest ships).
-        const dir2 = join(dir, "preset-unsigned-file");
-        await mkdir(dir2, {recursive: true});
-        await writeFile(join(dir2, "index.mjs"), PLUGIN_SRC, "utf8");
-        await writeFile(join(dir2, "presets.json"), JSON.stringify(preset), "utf8");
+    it("rejects tampering of ANY file, not just main (the manifest)", async () => {
+        const pluginDir = await writePlugin("manifest-tamper", ["storage.read:posts"], {signed: true});
+        // Escalate capabilities by editing the manifest after signing.
         await writeFile(
-            join(dir2, "pressh.plugin.json"),
+            join(pluginDir, "pressh.plugin.json"),
             JSON.stringify({
-                name: "p2",
+                name: "manifest-tamper",
                 version: "0.0.0",
                 main: "index.mjs",
-                capabilities: [],
-                designerPresets: "presets.json"
+                capabilities: ["storage.write:users"]
             }),
             "utf8",
         );
-        const mainHash = createHash("sha256").update(await readFile(join(dir2, "index.mjs"))).digest("hex");
-        await writeFile(join(dir2, "pressh.signature.json"), JSON.stringify({
-            algorithm: "sha256",
-            hash: mainHash
-        }), "utf8");
-        const host3 = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
-        await expect(host3.register(dir2)).rejects.toMatchObject({code: "forbidden"});
+        const host = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: SIGNING_SECRET,
+            workerScript: WORKER
+        });
+        await expect(host.register(pluginDir)).rejects.toMatchObject({code: "forbidden"});
+    });
+
+    it("rejects a plugin with a file added after signing (e.g. a malicious sibling import)", async () => {
+        const pluginDir = await writePlugin("added-file", [], {signed: true});
+        await writeFile(join(pluginDir, "evil.mjs"), "export const x = 1;", "utf8");
+        const host = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: SIGNING_SECRET,
+            workerScript: WORKER
+        });
+        await expect(host.register(pluginDir)).rejects.toMatchObject({code: "forbidden"});
+    });
+
+    it("rejects a signature forged with a different key (the whole point of keying it)", async () => {
+        const pluginDir = await writePlugin("forged", [], {signed: true});
+        // The on-disk signature was made with SIGNING_SECRET; a host keyed with a
+        // DIFFERENT secret must reject it — an attacker without the key cannot forge.
+        const host = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: "a-totally-different-secret",
+            workerScript: WORKER
+        });
+        await expect(host.register(pluginDir)).rejects.toMatchObject({code: "forbidden"});
+    });
+
+    it("fails closed: a signature present but no signing key configured is refused in production", async () => {
+        const pluginDir = await writePlugin("nokey", [], {signed: true});
+        const host = new PluginHost({storage, audit, allowUnsigned: false, workerScript: WORKER});
+        await expect(host.register(pluginDir)).rejects.toMatchObject({code: "forbidden"});
+    });
+
+    it("signs and verifies all auxiliary files (e.g. designer presets), rejecting a tampered one", async () => {
+        const preset = [{id: "p", name: "P", icon: "x", category: "C", description: "d", template: []}];
+        const okHost = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: SIGNING_SECRET,
+            workerScript: WORKER
+        });
+        const okDir = await writePlugin("preset-ok", [], {signed: true, presets: preset});
+        await expect(okHost.register(okDir)).resolves.toBeDefined();
+
+        // Tampering presets.json after signing is rejected (every file is covered).
+        await writeFile(join(okDir, "presets.json"), JSON.stringify([{id: "evil"}]), "utf8");
+        const tamperHost = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: false,
+            signingSecret: SIGNING_SECRET,
+            workerScript: WORKER
+        });
+        await expect(tamperHost.register(okDir)).rejects.toMatchObject({code: "forbidden"});
     });
 
   it("kills a hung worker on timeout and respawns for the next call", async () => {
@@ -281,8 +401,11 @@ describe("PluginHost enable/disable", () => {
 });
 
 describe("PluginHost storage services", () => {
-  it("gates storage.list behind storage.read:* (deny then allow)", async () => {
+    it("gates storage.list behind storage.read:* (deny then allow) and hides reserved collections", async () => {
     await storage.put("posts", { id: randomUUID(), title: "p" });
+        // Seed auth-critical collections; a plugin must never even learn they exist.
+        await storage.put("users", {id: randomUUID(), email: "a@b.c"});
+        await storage.put("sessions", {id: randomUUID()});
 
     const denied = new PluginHost({ storage, audit, allowUnsigned: true, workerScript: WORKER });
     await denied.load(await writePlugin("nolist", ["storage.read:posts"]));
@@ -299,6 +422,10 @@ describe("PluginHost storage services", () => {
     };
     expect(r2.ok).toBe(true);
     expect(r2.collections).toContain("posts");
+        // Reserved collections are filtered out of the listing.
+        expect(r2.collections).not.toContain("users");
+        expect(r2.collections).not.toContain("sessions");
+        expect(r2.collections).not.toContain("invites");
     await allowed.stopAll();
   });
 

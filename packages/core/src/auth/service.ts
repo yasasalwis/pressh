@@ -12,6 +12,8 @@ const SESSIONS = "sessions";
 const INVITES = "invites";
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_MS = 15 * 60 * 1000;
+/** Upper bound on the exponential lockout backoff (24h). */
+const MAX_LOCKOUT_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_PASSWORD_LENGTH = 8;
@@ -203,6 +205,27 @@ class AuthServiceImpl implements AuthService {
     return page.items[0] ?? null;
   }
 
+    /** Deletes a user's expired/revoked sessions so the store can't grow unbounded. */
+    async #pruneUserSessions(userId: string, now: number): Promise<void> {
+        const page = must(await this.#storage.query<SessionRecord>(SESSIONS, {where: {userId}}));
+        for (const session of page.items) {
+            if (session.revoked || session.expiresAt <= now) {
+                await this.#storage.delete(SESSIONS, session.id);
+            }
+        }
+    }
+
+    /**
+     * Revokes ALL of a user's active sessions — used when their roles or status
+     * change so old capabilities can't outlive the change until natural expiry.
+     */
+    async #revokeUserSessions(userId: string): Promise<void> {
+        const page = must(await this.#storage.query<SessionRecord>(SESSIONS, {where: {userId}}));
+        for (const session of page.items) {
+            await this.#storage.delete(SESSIONS, session.id);
+        }
+    }
+
   /** Shared user insertion: validates, hashes, persists, and audits. */
   async #insertUser(input: {
     email: string;
@@ -260,34 +283,49 @@ class AuthServiceImpl implements AuthService {
     const email = normalizeEmail(input.email);
     const record = await this.#findRecordByEmail(email);
     const t = this.#now();
+      const locked = record !== null && record.lockedUntil !== null && record.lockedUntil > t;
 
-    // Lockout check before verifying — but the response stays generic.
-    if (record && record.lockedUntil !== null && record.lockedUntil > t) {
+      // ALWAYS run a verify (against a dummy hash for unknown users, and even for a
+      // locked account) so the response time is identical regardless of whether
+      // the account exists or is locked — closing the enumeration/timing oracle
+      // (FR-031, anti-enumeration).
+      const passwordOk = record
+          ? await verifyPassword(record.passwordHash, input.password)
+          : await verifyPassword(this.#dummyHash, input.password);
+
+      // A locked account is refused with the SAME generic error (and the same
+      // timing) as a wrong password, so an attacker cannot distinguish "locked"
+      // (account exists) from "bad credentials". The lockout is recorded in the
+      // audit log for operators, never surfaced to the caller. We do NOT count an
+      // attempt here — the lock already throttles. (Security over UX, by design:
+      // a legitimate locked-out user sees the generic error until the window
+      // elapses rather than us leaking that the account exists.)
+      if (locked) {
       await this.#audit.append({
         action: "user.login.locked",
         actorId: record.id,
         detail: { email },
       });
-      throw new PressError("rate_limited", "Too many attempts, try again later");
+          throw new PressError("unauthorized", "Invalid credentials");
     }
-
-    // Always run a verify (against a dummy hash for unknown users) to equalize
-    // timing and avoid user enumeration (FR-031, anti-enumeration).
-    const passwordOk = record
-      ? await verifyPassword(record.passwordHash, input.password)
-      : await verifyPassword(this.#dummyHash, input.password);
 
     if (!record || !passwordOk || record.status === "disabled") {
       if (record && record.status !== "disabled") {
+          // Counter is NEVER reset on lockout (only on a successful login), so the
+          // lock escalates instead of handing the attacker a fresh batch of
+          // attempts every window. Once over the threshold, EVERY further failure
+          // re-locks immediately with an exponentially longer backoff (capped),
+          // so post-lockout an attacker gets at most one try per (growing) window.
         record.failedAttempts += 1;
         if (record.failedAttempts >= this.#maxAttempts) {
-          record.lockedUntil = t + this.#lockoutMs;
-          record.failedAttempts = 0;
+            const tier = Math.floor(record.failedAttempts / this.#maxAttempts);
+            const backoff = Math.min(this.#lockoutMs * 2 ** (tier - 1), MAX_LOCKOUT_MS);
+            record.lockedUntil = t + backoff;
           must(await this.#storage.put(USERS, record));
           await this.#audit.append({
             action: "user.account.locked",
             actorId: record.id,
-            detail: { email },
+              detail: {email, attempts: record.failedAttempts, lockedForMs: backoff},
           });
         } else {
           must(await this.#storage.put(USERS, record));
@@ -301,10 +339,12 @@ class AuthServiceImpl implements AuthService {
       throw new PressError("unauthorized", "Invalid credentials");
     }
 
-    // Success: reset counters and rotate in a fresh session.
+      // Success: reset counters, prune this user's stale sessions, rotate a fresh
+      // session in.
     record.failedAttempts = 0;
     record.lockedUntil = null;
     must(await this.#storage.put(USERS, record));
+      await this.#pruneUserSessions(record.id, t);
 
     const token = randomBytes(32).toString("base64url");
     const session: SessionRecord = {
@@ -404,9 +444,18 @@ class AuthServiceImpl implements AuthService {
       throw new PressError("conflict", "Cannot remove or disable the last active owner");
     }
 
+      const rolesChanged = changes.roles !== undefined && nextRoles.join(",") !== record.roles.join(",");
+      const statusChanged = nextStatus !== record.status;
+
     record.roles = nextRoles;
     record.status = nextStatus;
     must(await this.#storage.put(USERS, record));
+      // A privilege change must take effect immediately: revoke the user's
+      // existing sessions so a still-open session can't keep its old capabilities
+      // (or stay alive after the account is disabled) until natural expiry.
+      if (rolesChanged || statusChanged) {
+          await this.#revokeUserSessions(record.id);
+      }
     await this.#audit.append({
       action: "user.update",
       actorId: actorId ?? null,

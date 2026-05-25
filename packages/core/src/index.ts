@@ -29,6 +29,7 @@ export { createFileSystemStorage } from "./storage/fs-adapter.js";
 export type { FileSystemStorageOptions } from "./storage/fs-adapter.js";
 export { runMigrations } from "./storage/migrations.js";
 export type { Cursor, Filter, Page, StorageAdapter, StoredDoc } from "./storage/types.js";
+export {journaledTransaction} from "./storage/transaction.js";
 export { createStorageFromConfig, migrateStorage } from "./storage/migrate.js";
 export type { StorageConfig, StorageFactory } from "./storage/migrate.js";
 export {

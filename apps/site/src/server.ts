@@ -49,6 +49,8 @@ export interface SiteServerOptions {
   builtinsDir?: string;
   /** 32-byte vault master key. Required to resolve DB-backend credentials. */
   masterKey?: Buffer;
+    /** Raw master-key string used to derive the plugin-signing key (see PluginHost). */
+    signingSecret?: string;
   /** Path to the sealed secrets vault file. Defaults next to the content root. */
   secretsPath?: string;
   /** Path to the active-storage config (`storage.json`). Defaults next to the content root. */
@@ -96,6 +98,7 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
 
   const audit = await createFileAuditLog({
     path: opts.auditPath ?? join(opts.contentRoot, "..", "audit.log"),
+      ...(opts.signingSecret ? {sealSecret: opts.signingSecret} : {}),
   });
   const content = createContentService({ storage, audit });
   const resolver = createQueryResolver({ content });
@@ -114,7 +117,14 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
   // Same enabled-set as the Studio (shared storage): the Site spawns only the
   // plugins the operator turned on, so the public process stays lean too.
   const pluginState = createPluginStateStore(storage);
-  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve, state: pluginState });
+    const pluginHost = new PluginHost({
+        storage,
+        audit,
+        allowUnsigned: !opts.production,
+        cve,
+        state: pluginState,
+        ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
+    });
   if (opts.builtinsDir) await registerPluginsFrom(pluginHost, opts.builtinsDir, true);
   if (opts.pluginsDir) await registerPluginsFrom(pluginHost, opts.pluginsDir, false);
 
@@ -196,6 +206,7 @@ async function runFromEnv(): Promise<void> {
     ...(process.env["PRESSH_BASE_URL"] ? { baseUrl: process.env["PRESSH_BASE_URL"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
     ...(masterKey ? { masterKey } : {}),
+      ...(process.env["PRESSH_MASTER_KEY"] ? {signingSecret: process.env["PRESSH_MASTER_KEY"]} : {}),
     ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),
     builtinsDir: process.env["PRESSH_BUILTINS_DIR"] ?? join(process.cwd(), "builtins"),
   });

@@ -91,6 +91,35 @@ function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
+// Money is computed in integer minor units (cents) so a long cart or a tax rate
+// can never accumulate binary-float drift. Amounts are stored/returned as
+// 2-dp numbers (the storefront/display format), but every +,-,* happens on
+// integers. `toCents` rounds half-up at the cent boundary.
+function toCents(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100);
+}
+
+function fromCents(c) {
+  return Math.round(c) / 100;
+}
+
+// Serializes ALL stock mutations within this worker. The plugin runs in a single
+// worker, but its handlers are async and interleave at every `await` — so two
+// concurrent checkouts for the last unit could both read stock, both pass the
+// availability check, and both decrement (oversell). Funnelling every stock
+// read-modify-write through this chain makes adjustStock's fresh re-read +
+// non-negative guard authoritative, and lets createOrder hold the lock across
+// its whole validate-then-decrement so nothing changes stock underneath it.
+// (Cross-process writes — e.g. an admin order while the public site checks out —
+// are rarer; full cross-process safety needs adapter-level CAS, noted in TDD.)
+let _stockLock = Promise.resolve();
+
+function withStockLock(fn) {
+  const run = _stockLock.then(fn);
+  _stockLock = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 // Sequential number allocator (order/return numbers). Increments are chained so
 // two concurrent invokes in the same worker can't read-modify-write the same
 // counter and collide.
@@ -443,6 +472,17 @@ export async function removeItem(args, host) {
  * @param {import('@pressh/sdk').HostApi} host
  */
 export async function adjustStock(args, host) {
+  // Public entry: take the stock lock so the fresh-read + non-negative guard
+  // below is atomic against any other stock mutation in this worker.
+  return withStockLock(() => adjustStockUnlocked(args, host));
+}
+
+/**
+ * The stock mutation itself. MUST run while the stock lock is held — either via
+ * `adjustStock` (which locks) or from within another locked critical section
+ * such as `createOrder`. Never call this directly without the lock.
+ */
+async function adjustStockUnlocked(args, host) {
   const settings = await readSettings(host);
   const item = await host.storage.get(ITEMS, str(args?.itemId));
   if (!item || typeof item !== "object") throw new Error("Product not found");
@@ -730,17 +770,27 @@ async function priceLines(host, rawLines) {
       image: (product.images && product.images[0]) || "",
       unitPrice,
       qty,
-      lineTotal: round2(unitPrice * qty),
+      // Line total in exact cents: unit price → cents, then integer multiply.
+      lineTotal: fromCents(toCents(unitPrice) * qty),
     });
   }
-  return {lines, subtotal: round2(lines.reduce((s, l) => s + l.lineTotal, 0))};
+  const subtotalCents = lines.reduce((s, l) => s + toCents(l.lineTotal), 0);
+  return {lines, subtotal: fromCents(subtotalCents)};
 }
 
 function computeTotals(subtotal, settings, opts) {
-  const tax = round2(subtotal * (Number(settings.taxRate) || 0) / 100);
-  const shipping = round2(Number(settings.shippingFlat) || 0);
-  const discount = round2(Math.max(0, Number(opts?.discount) || 0));
-  return {tax, shipping, discount, total: Math.max(0, round2(subtotal + tax + shipping - discount))};
+  // All arithmetic in integer cents so tax/discount can't drift.
+  const subtotalCents = toCents(subtotal);
+  const taxCents = Math.round((subtotalCents * (Number(settings.taxRate) || 0)) / 100);
+  const shippingCents = toCents(Math.max(0, Number(settings.shippingFlat) || 0));
+  const discountCents = toCents(Math.max(0, Number(opts?.discount) || 0));
+  const totalCents = Math.max(0, subtotalCents + taxCents + shippingCents - discountCents);
+  return {
+    tax: fromCents(taxCents),
+    shipping: fromCents(shippingCents),
+    discount: fromCents(discountCents),
+    total: fromCents(totalCents),
+  };
 }
 
 /**
@@ -754,30 +804,39 @@ function computeTotals(subtotal, settings, opts) {
  */
 export async function createOrder(args, host) {
   const settings = await readSettings(host);
-  const {lines, subtotal} = await priceLines(host, args?.lines);
   const customer = cleanCustomer(args?.customer);
   const source = args?.source === "storefront" ? "storefront" : "admin";
   if (source === "storefront" && (!customer.name || !customer.email)) {
     throw new Error("Name and email are required to place an order");
   }
-  const {tax, shipping, discount, total} = computeTotals(subtotal, settings, {discount: args?.discount});
-  const number = await nextNumber(host, "orders", ORDER_START);
-  const id = randomUUID();
 
-  for (const line of lines) {
-    await adjustStock(
-        {
-          itemId: line.itemId,
-          variantId: line.variantId,
-          mode: "delta",
-          amount: -line.qty,
-          type: "sell",
-          reason: `Order #${number}`,
-          ref: id
-        },
-        host,
-    );
-  }
+  // Validate availability AND decrement under a single held lock so no
+  // concurrent order can take the same units between the check and the
+  // decrement (closes the oversell race). priceLines throws before any stock
+  // moves; the decrements that follow are guaranteed to succeed because nothing
+  // else can change stock while we hold the lock.
+  const {lines, subtotal, number, id} = await withStockLock(async () => {
+    const priced = await priceLines(host, args?.lines);
+    const orderNumber = await nextNumber(host, "orders", ORDER_START);
+    const orderId = randomUUID();
+    for (const line of priced.lines) {
+      await adjustStockUnlocked(
+          {
+            itemId: line.itemId,
+            variantId: line.variantId,
+            mode: "delta",
+            amount: -line.qty,
+            type: "sell",
+            reason: `Order #${orderNumber}`,
+            ref: orderId,
+          },
+          host,
+      );
+    }
+    return {lines: priced.lines, subtotal: priced.subtotal, number: orderNumber, id: orderId};
+  });
+
+  const {tax, shipping, discount, total} = computeTotals(subtotal, settings, {discount: args?.discount});
 
   const order = {
     id,
@@ -856,6 +915,12 @@ export async function cancelOrder(args, host) {
   const order = await host.storage.get(ORDERS, str(args?.id));
   if (!order) throw new Error("Order not found");
   if (order.status === "cancelled") return {order};
+  // A fulfilled order's goods have shipped — cancelling it would restock units
+  // that physically left inventory (double counting). Such an order must be
+  // unwound through a Return instead, which restocks only what comes back.
+  if (order.status === "fulfilled" || order.status === "refunded") {
+    throw new Error(`Cannot cancel a ${order.status} order — process a return instead`);
+  }
   const restock = args?.restock !== false;
   if (restock && !order.restocked) {
     for (const line of order.lines ?? []) {
@@ -1005,13 +1070,32 @@ export async function createReturn(args, host) {
   const rawLines = Array.isArray(args?.lines) ? args.lines : [];
   if (!rawLines.length) throw new Error("Select at least one item to return");
 
+  // Quantity already returned per order line across all prior (non-rejected)
+  // returns. Without this, several returns could each be capped at the order
+  // line qty and collectively restock/refund more than was purchased.
+  const priorReturns = (await all(host, RETURNS)).filter(
+      (r) => r.orderId === order.id && r.status !== "rejected",
+  );
+  const alreadyReturned = new Map();
+  for (const r of priorReturns) {
+    for (const l of r.lines ?? []) {
+      const k = lineKey(l.itemId, l.variantId);
+      alreadyReturned.set(k, (alreadyReturned.get(k) || 0) + (Number(l.qty) || 0));
+    }
+  }
+
   const lines = [];
   for (const raw of rawLines) {
-    const orderLine = byKey.get(lineKey(str(raw?.itemId), str(raw?.variantId)));
+    const key = lineKey(str(raw?.itemId), str(raw?.variantId));
+    const orderLine = byKey.get(key);
     if (!orderLine) throw new Error("A return line does not match the order");
     const qty = nonNegInt(raw?.qty, "Quantity");
-    if (qty < 1 || qty > orderLine.qty) {
-      throw new Error(`Return quantity for "${orderLine.name}" must be between 1 and ${orderLine.qty}`);
+    const remaining = orderLine.qty - (alreadyReturned.get(key) || 0);
+    if (remaining <= 0) {
+      throw new Error(`All "${orderLine.name}" units on this order have already been returned`);
+    }
+    if (qty < 1 || qty > remaining) {
+      throw new Error(`Return quantity for "${orderLine.name}" must be between 1 and ${remaining}`);
     }
     lines.push({
       itemId: orderLine.itemId,

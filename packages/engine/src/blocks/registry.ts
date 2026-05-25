@@ -34,6 +34,12 @@ const RICH: sanitizeHtml.IOptions = {
     "*": ["class"],
   },
   allowedSchemes: ["http", "https", "mailto"],
+    // Embedded frames must be absolute HTTPS — no http downgrade and no
+    // protocol-relative `//evil.com` (which inherits the page scheme). Combined
+    // with the forced sandbox below, a rawhtml author can embed an https widget
+    // but cannot point a scriptable frame at an arbitrary http origin.
+    allowedSchemesByTag: {iframe: ["https"]},
+    allowProtocolRelative: false,
   disallowedTagsMode: "discard",
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer" }, true),

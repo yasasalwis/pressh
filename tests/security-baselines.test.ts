@@ -158,9 +158,14 @@ describe("14 secure-by-default baselines", () => {
     await auth.createUser({ email: "a@b.com", password: "supersecret", roles: ["author"] });
     await expect(auth.authenticate({ email: "a@b.com", password: "x" })).rejects.toBeDefined();
     await expect(auth.authenticate({ email: "a@b.com", password: "x" })).rejects.toBeDefined();
+      // The account is now locked: even the correct password is refused — with the
+      // SAME generic error as a bad password, so a locked (existing) account is
+      // indistinguishable from a wrong guess (no user enumeration).
     await expect(auth.authenticate({ email: "a@b.com", password: "supersecret" })).rejects.toMatchObject({
-      code: "rate_limited",
+        code: "unauthorized",
     });
+      // The lockout itself is recorded for operators in the audit log.
+      expect((await audit.query({action: "user.account.locked"})).length).toBeGreaterThanOrEqual(1);
   });
 
   it("#13 uploads are validated (disguised files rejected)", () => {
