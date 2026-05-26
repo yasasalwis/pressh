@@ -9,11 +9,12 @@
 services:
   site:
     build: .
-    command: ["node", "apps/site/dist/server.js"]
+    command: [ "node", "/app/site/server.js" ]
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PRESSH_CONTENT_ROOT: /data/content
+      PRESSH_WORKER_SCRIPT: /app/site/runtime/worker-entry.js
       # PRESSH_MASTER_KEY / PRESSH_CSRF_SECRET are auto-provisioned on first boot
       # by the entrypoint and persisted under the shared /data volume, so the Site
       # and Studio automatically use the same key (the Site reads sealed database
@@ -32,12 +33,13 @@ services:
 
   studio:
     build: .
-    command: ["node", "apps/studio/dist/server.js"]
+    command: [ "node", "/app/studio/server.js" ]
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PRESSH_CONTENT_ROOT: /data/content
       PRESSH_MEDIA_ROOT: /data/media
+      PRESSH_WORKER_SCRIPT: /app/studio/runtime/worker-entry.js
       # Auto-provisioned on first boot and persisted under /data (shared with the
       # Site). Override by setting PRESSH_MASTER_KEY / PRESSH_CSRF_SECRET here.
     volumes:

@@ -1,4 +1,10 @@
 # Pressh — single image, two entrypoints (site / studio). ADR-002 trust split.
+#
+# Built as a self-contained standalone bundle: `npm run build` produces `.pressh/`
+# (the server bundles, signed builtins, native sqlite driver and worker runtime),
+# and the runtime stage ships ONLY that folder — no source tree, no dev deps, no
+# package manager. This is the Next.js `.next/standalone` model: a small image
+# whose deps are already inlined into the bundles.
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
@@ -7,12 +13,27 @@ COPY adapters ./adapters
 COPY apps ./apps
 COPY scripts ./scripts
 COPY builtins ./builtins
+# `npm ci` compiles better-sqlite3 against this image's Node ABI (linux/node24);
+# `npm run build` then bundles the apps and copies that native driver into
+# .pressh/node_modules, so the runtime stage needs no toolchain or rebuild.
 RUN npm ci && npm run build
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app ./
+# Ship ONLY the standalone build, flattened so /app IS the `.pressh/` folder:
+#   /app/{site,studio}/server.js, /app/builtins, /app/plugins,
+#   /app/node_modules (native sqlite), /app/sign-builtins.mjs, /app/package.json
+COPY --from=build /app/.pressh ./
+# The entrypoint is the only non-bundle file the runtime needs.
+COPY scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
+# Per-process plugin dirs + worker sandbox. The default CMD is the public site,
+# so the worker script defaults to the site's; the studio service overrides both
+# `command` and PRESSH_WORKER_SCRIPT in docker-compose. Keeping each worker in its
+# own runtime/ dir scopes the plugin sandbox's fs-read grant to a code-only dir.
+ENV PRESSH_BUILTINS_DIR=/app/builtins \
+    PRESSH_PLUGINS_DIR=/app/plugins \
+    PRESSH_WORKER_SCRIPT=/app/site/runtime/worker-entry.js
 # Run as the unprivileged `node` user (uid 1000) shipped in the base image,
 # never root. The plugin worker sandbox + capability model are the primary
 # isolation, but dropping privileges here means even a worst-case host-side
@@ -24,7 +45,7 @@ COPY --from=build /app ./
 #    FRESH named volume inherits the mountpoint's ownership, so creating /data
 #    here owned by `node` makes the volume come up writable. (An EXISTING volume
 #    from an older root image needs a one-time `chown -R 1000:1000` — see RUNBOOK.)
-RUN chmod +x /app/scripts/docker-entrypoint.sh \
+RUN chmod +x /app/docker-entrypoint.sh \
  && mkdir -p /data \
  && chown -R node:node /data /app/builtins
 USER node
@@ -33,5 +54,5 @@ USER node
 EXPOSE 3000 4000
 # The entrypoint provisions PRESSH_MASTER_KEY/CSRF on first boot (see the script)
 # then exec's the command below (or the docker-compose `command:` override).
-ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
-CMD ["node", "apps/site/dist/server.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["node", "/app/site/server.js"]

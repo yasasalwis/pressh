@@ -3,13 +3,7 @@ import {pathToFileURL} from "node:url";
 import {readdir} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
 import {serve} from "@hono/node-server";
-import {
-  createAuthService,
-  createCsrf,
-  createFileAuditLog,
-  createScheduler,
-  watchStorageConfig,
-} from "@pressh/core";
+import {createAuthService, createCsrf, createFileAuditLog, createScheduler, watchStorageConfig,} from "@pressh/core";
 import {STORAGE_FACTORIES} from "./storage.js";
 import {openConfiguredStorage, parseMasterKey} from "./bootstrap.js";
 import {
@@ -73,6 +67,13 @@ export interface StudioServerOptions {
   storageConfigPath?: string;
   /** Source of plugin CVE advisories (v1 default: empty/operator-supplied). */
   cveFeed?: CveFeedSource;
+    /**
+     * Path to the plugin-worker entry script. Defaults (dev) to the runtime's
+     * compiled `worker-entry.js`. The standalone `.pressh/` build sets it to
+     * `.pressh/<app>/runtime/worker-entry.js` so the worker's fs-read sandbox is
+     * scoped to that code-only dir instead of the whole app bundle dir.
+     */
+    workerScript?: string;
 }
 
 /**
@@ -147,6 +148,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
         cve,
         state: pluginState,
         ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
+        ...(opts.workerScript ? {workerScript: opts.workerScript} : {}),
     });
   if (opts.builtinsDir) await registerPluginsFrom(pluginHost, opts.builtinsDir, true);
   if (opts.pluginsDir) await registerPluginsFrom(pluginHost, opts.pluginsDir, false);
@@ -262,6 +264,7 @@ async function runFromEnv(): Promise<void> {
     ...(process.env["PRESSH_CSRF_SECRET"] ? { csrfSecret: process.env["PRESSH_CSRF_SECRET"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
     ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),
+      ...(process.env["PRESSH_WORKER_SCRIPT"] ? {workerScript: process.env["PRESSH_WORKER_SCRIPT"]} : {}),
     builtinsDir: process.env["PRESSH_BUILTINS_DIR"] ?? join(process.cwd(), "builtins"),
   });
   server.start();

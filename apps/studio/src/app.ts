@@ -15,14 +15,13 @@ import type {
   SettingsService,
   ThemeService,
 } from "@pressh/engine";
-import {PRESETS, PRIMITIVE_DEFS, prebuiltLayoutBlocks, renderTree} from "@pressh/engine";
+import {prebuiltLayoutBlocks, PRESETS, PRIMITIVE_DEFS, renderTree} from "@pressh/engine";
 import type {CveService, PluginInfo} from "@pressh/runtime";
 import {panelFrameTag, wrapPanelHtml} from "@pressh/runtime";
 import type {MediaService} from "./media.js";
 import {MAX_UPLOAD_BYTES} from "./media.js";
 import type {MigrationLock} from "./migration-lock.js";
 import type {DbManagerService, StartMigrationInput} from "./db-manager.js";
-import {ADMIN_HTML} from "./admin-html.js";
 
 // React admin bundle (built by scripts/build-admin.mjs into dist/admin-next.html,
 // a sibling of this compiled module). Read once and cached; `null` when absent.
@@ -248,16 +247,12 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     }
   }
 
-  // --- served admin client ---
-  app.get("/", (c) => c.html(ADMIN_HTML));
-  app.get("/admin", (c) => c.html(ADMIN_HTML));
-
-    // React admin (migration preview) — served from the inlined bundle built by
-    // `npm run build:admin`. Parallel to /admin so the legacy client stays live
-    // until the React migration is complete. 404s until the bundle is built.
-    app.get("/admin/next", async (c) => {
+    // --- served admin client (React + TS, built by `npm run build:admin` into
+    // dist/admin-next.html and inlined). Same-origin to /admin/api/*; the inline
+    // bundle needs script-src 'unsafe-inline'. ---
+    const serveAdmin = async (c: Context<Vars>): Promise<Response> => {
         const html = await readAdminNextHtml();
-        if (!html) return c.text("React admin not built — run: npm run build:admin", 404);
+        if (!html) return c.text("Admin client not built — run: npm run build:admin", 503);
         c.header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; " +
@@ -265,7 +260,9 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
         );
         c.header("X-Content-Type-Options", "nosniff");
         return c.html(html);
-    });
+    };
+    app.get("/", serveAdmin);
+    app.get("/admin", serveAdmin);
 
   // --- first-run setup wizard (WordPress-style) ---
   // Public, but works ONLY while zero users exist; permanently disabled after.

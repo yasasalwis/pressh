@@ -55,6 +55,13 @@ export interface SiteServerOptions {
   secretsPath?: string;
   /** Path to the active-storage config (`storage.json`). Defaults next to the content root. */
   storageConfigPath?: string;
+    /**
+     * Path to the plugin-worker entry script. Defaults (dev) to the runtime's
+     * compiled `worker-entry.js`. The standalone `.pressh/` build sets it to
+     * `.pressh/<app>/runtime/worker-entry.js` so the worker's fs-read sandbox is
+     * scoped to that code-only dir instead of the whole app bundle dir.
+     */
+    workerScript?: string;
 }
 
 async function registerPluginsFrom(host: PluginHost, dir: string, builtin: boolean): Promise<void> {
@@ -124,6 +131,7 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
         cve,
         state: pluginState,
         ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
+        ...(opts.workerScript ? {workerScript: opts.workerScript} : {}),
     });
   if (opts.builtinsDir) await registerPluginsFrom(pluginHost, opts.builtinsDir, true);
   if (opts.pluginsDir) await registerPluginsFrom(pluginHost, opts.pluginsDir, false);
@@ -208,6 +216,7 @@ async function runFromEnv(): Promise<void> {
     ...(masterKey ? { masterKey } : {}),
       ...(process.env["PRESSH_MASTER_KEY"] ? {signingSecret: process.env["PRESSH_MASTER_KEY"]} : {}),
     ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),
+      ...(process.env["PRESSH_WORKER_SCRIPT"] ? {workerScript: process.env["PRESSH_WORKER_SCRIPT"]} : {}),
     builtinsDir: process.env["PRESSH_BUILTINS_DIR"] ?? join(process.cwd(), "builtins"),
   });
   server.start();

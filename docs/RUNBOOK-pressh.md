@@ -49,12 +49,15 @@ Full diagrams: `architecture-pressh-v1.html` → Diagrams.
 ### Standard deploy
 ```bash
 # 1. Pull pinned images / checkout tagged release
-# 2. Build packages then apps (packages publish from dist/)
-npm run build:packages        # tsc -b
-npm run build                 # packages → studio → site
+# 2. Build the self-contained standalone bundle into .pressh/
+#    (tsc typecheck → admin/panels → sign builtins → site client → esbuild bundle).
+#    The Docker image does this in its build stage and ships ONLY .pressh/.
+npm run build
 # 3. Run DB/index migrations (idempotent)
 pressh migrate
-# 4. Roll Site nodes one at a time (proxy drains); then Studio
+# 4. Roll Site nodes one at a time (proxy drains); then Studio. On boot the
+#    container entrypoint re-signs the built-in plugins with this deployment's
+#    PRESSH_MASTER_KEY (the image ships dev-key signatures) before starting.
 docker compose up -d site
 docker compose up -d studio
 # 5. Verify
