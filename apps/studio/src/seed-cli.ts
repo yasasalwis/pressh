@@ -1,6 +1,6 @@
 import {createFileAuditLog} from "@pressh/core";
 import {join} from "node:path";
-import {openConfiguredStorage, parseMasterKey} from "./bootstrap.js";
+import {openConfiguredStorage} from "./bootstrap.js";
 import {seedOwner} from "./seed.js";
 
 /**
@@ -23,10 +23,10 @@ async function main(): Promise<void> {
   if (!email || !password) {
     throw new Error("Set PRESSH_SEED_EMAIL and PRESSH_SEED_PASSWORD");
   }
-    const masterKey = parseMasterKey(process.env["PRESSH_MASTER_KEY"]);
+    const masterSecret = process.env["PRESSH_MASTER_KEY"]?.trim() || undefined;
     const {storage} = await openConfiguredStorage({
         contentRoot,
-        ...(masterKey ? {masterKey} : {}),
+        ...(masterSecret ? {masterSecret} : {}),
     });
     const audit = await createFileAuditLog({
         path: join(contentRoot, "..", "audit.log"),

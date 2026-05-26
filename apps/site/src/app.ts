@@ -1,4 +1,4 @@
-import {createHash} from "node:crypto";
+import {createHash, timingSafeEqual} from "node:crypto";
 import {createReadStream, existsSync, statSync} from "node:fs";
 import {extname, resolve as resolvePath} from "node:path";
 import {Readable} from "node:stream";
@@ -6,7 +6,8 @@ import {createElement} from "react";
 import {renderToString} from "react-dom/server";
 import type {Context} from "hono";
 import {Hono} from "hono";
-import type {Metrics, StorageAdapter} from "@pressh/core";
+import {deleteCookie, getCookie, setCookie} from "hono/cookie";
+import type {Member, MemberAuthService, Metrics, StorageAdapter} from "@pressh/core";
 import {createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
 import type {
   BlockNode,
@@ -20,6 +21,7 @@ import type {
 import {DESIGNER_LAYOUT_BLOCK, renderTree, SYSTEM_SLUGS} from "@pressh/engine";
 import type {RenderCache} from "./cache.js";
 import {escapeHtml, renderMaintenanceFallback, renderNotFound, renderPage, renderServerError,} from "./render.js";
+import {getMemberFromContext, MEMBER_COOKIE, SESSION_MAX_AGE} from "./members.js";
 import {Blocks} from "./components/Blocks.js";
 import {Page} from "./components/Page.js";
 import {getClientAssets} from "./manifest.js";
@@ -50,6 +52,17 @@ export interface SiteAppDeps {
   clientDir?: string;
   baseUrl?: string;
   production?: boolean;
+    /** When present, mounts member auth routes at /api/members. */
+    memberRouter?: import("hono").Hono;
+    /** When present, enables members-only content gating and built-in account pages. */
+    memberAuth?: MemberAuthService;
+}
+
+/** Constant-time string compare so a bearer-token check can't be timed out. */
+function timingSafeStrEqual(a: string, b: string): boolean {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
 function mapError(error: unknown): { status: 400 | 403 | 404 | 500; code: string } {
@@ -336,6 +349,79 @@ async function renderSystemDocument(deps: SiteAppDeps, slug: string): Promise<st
   }
 }
 
+/** Validates a `next` redirect target — only relative paths are allowed. */
+function safeNext(next: string | undefined | null, fallback = "/"): string {
+    if (!next) return fallback;
+    const decoded = decodeURIComponent(next);
+    return decoded.startsWith("/") && !decoded.startsWith("//") ? decoded : fallback;
+}
+
+/** Minimal built-in login form, rendered as a themed full page. */
+function renderLoginPage(opts: { next: string; error?: string }): string {
+    const nextEnc = escapeHtml(opts.next);
+    const errorHtml = opts.error
+        ? `<p style="color:#c0392b;margin:0 0 1rem">${escapeHtml(opts.error)}</p>`
+        : "";
+    const body = `
+<div style="max-width:420px;margin:4rem auto;padding:2rem;font-family:system-ui,sans-serif">
+  <h1 style="margin:0 0 1.5rem;font-size:1.5rem">Log in</h1>
+  ${errorHtml}
+  <form method="POST" action="/account/login" style="display:flex;flex-direction:column;gap:1rem">
+    <input type="hidden" name="next" value="${nextEnc}">
+    <label style="display:flex;flex-direction:column;gap:.25rem;font-size:.9rem">
+      Email
+      <input type="email" name="email" required autocomplete="email"
+        style="padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:.25rem;font-size:.9rem">
+      Password
+      <input type="password" name="password" required autocomplete="current-password"
+        style="padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+    </label>
+    <button type="submit"
+      style="padding:.6rem 1rem;background:#111;color:#fff;border:none;border-radius:4px;font-size:1rem;cursor:pointer">
+      Log in
+    </button>
+  </form>
+  <p style="margin-top:1.5rem;font-size:.85rem;color:#555">
+    <a href="/account/magic-link" style="color:inherit">Sign in with magic link</a>
+    &ensp;·&ensp;
+    <a href="/account/register" style="color:inherit">Create account</a>
+    &ensp;·&ensp;
+    <a href="/account/forgot-password" style="color:inherit">Forgot password?</a>
+  </p>
+</div>`;
+    return renderPage({title: "Log in", body});
+}
+
+/** Minimal built-in member profile page. */
+function renderProfilePage(member: Member): string {
+    const avatar = member.avatarUrl
+        ? `<img src="${escapeHtml(member.avatarUrl)}" alt="" width="80" height="80"
+        style="border-radius:50%;object-fit:cover;margin-bottom:1rem">`
+        : `<div style="width:80px;height:80px;border-radius:50%;background:#ddd;display:flex;align-items:center;justify-content:center;font-size:2rem;margin-bottom:1rem">
+        ${escapeHtml(member.displayName.charAt(0).toUpperCase())}
+      </div>`;
+    const bio = member.bio
+        ? `<p style="color:#555;margin:.5rem 0 0">${escapeHtml(member.bio)}</p>`
+        : "";
+    const body = `
+<div style="max-width:480px;margin:4rem auto;padding:2rem;font-family:system-ui,sans-serif">
+  ${avatar}
+  <h1 style="margin:0;font-size:1.5rem">${escapeHtml(member.displayName)}</h1>
+  <p style="color:#888;font-size:.9rem;margin:.25rem 0 0">${escapeHtml(member.email)}</p>
+  ${bio}
+  <hr style="margin:2rem 0;border:none;border-top:1px solid #eee">
+  <form method="POST" action="/api/members/logout">
+    <button type="submit"
+      style="padding:.5rem 1rem;background:#fff;color:#111;border:1px solid #ccc;border-radius:4px;cursor:pointer">
+      Log out
+    </button>
+  </form>
+</div>`;
+    return renderPage({title: member.displayName, body});
+}
+
 export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   const app = new Hono<SiteEnv>();
   const metrics = deps.metrics ?? createMetrics();
@@ -369,7 +455,7 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
   });
   app.get("/metrics", (c) => {
-    if (metricsToken && c.req.header("authorization") !== `Bearer ${metricsToken}`) {
+      if (metricsToken && !timingSafeStrEqual(c.req.header("authorization") ?? "", `Bearer ${metricsToken}`)) {
       return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
     }
     return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
@@ -456,6 +542,77 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     );
   });
 
+    // Member auth routes (/api/members/*) — mounted when wired from the server bootstrap.
+    if (deps.memberRouter) {
+        app.route("/api/members", deps.memberRouter);
+    }
+
+    // ── Built-in account pages ─────────────────────────────────────────────────
+    // These routes provide a working fallback when the operator hasn't created
+    // custom content pages at these paths. They're mounted before the front-
+    // controller so they always take priority.
+
+    // GET /account/login — show the login form
+    app.get("/account/login", (c) => {
+        const next = safeNext(c.req.query("next"));
+        const html = renderLoginPage({next});
+        c.set("styleCsp", styleSrcDirective(html));
+        return c.html(html);
+    });
+
+    // POST /account/login — process form submission (pure HTML form, no JS required)
+    app.post("/account/login", async (c) => {
+        const next = safeNext(c.req.query("next"));
+        if (!deps.memberAuth) return c.redirect(next, 302);
+
+        let email = "";
+        let password = "";
+        let formNext = next;
+        try {
+            const fd = await c.req.formData();
+            email = String(fd.get("email") ?? "");
+            password = String(fd.get("password") ?? "");
+            formNext = safeNext(fd.get("next") as string | null, next);
+        } catch {
+            const html = renderLoginPage({next, error: "Invalid request"});
+            c.set("styleCsp", styleSrcDirective(html));
+            return c.html(html, 400);
+        }
+
+        try {
+            const {token} = await deps.memberAuth.authenticate({email, password});
+            setCookie(c, MEMBER_COOKIE, token, {
+                httpOnly: true,
+                sameSite: "Lax",
+                secure: deps.production === true,
+                maxAge: SESSION_MAX_AGE,
+                path: "/",
+            });
+            return c.redirect(formNext, 302);
+        } catch {
+            const html = renderLoginPage({next: formNext, error: "Invalid email or password"});
+            c.set("styleCsp", styleSrcDirective(html));
+            return c.html(html, 401);
+        }
+    });
+
+    // GET /account/profile — member profile (session required)
+    app.get("/account/profile", async (c) => {
+        if (!deps.memberAuth) return c.redirect("/account/login", 302);
+
+        const token = getCookie(c, MEMBER_COOKIE);
+        if (!token) return c.redirect(`/account/login?next=${encodeURIComponent("/account/profile")}`, 302);
+        const member = await deps.memberAuth.validateSession(token);
+        if (!member) {
+            deleteCookie(c, MEMBER_COOKIE, {path: "/"});
+            return c.redirect(`/account/login?next=${encodeURIComponent("/account/profile")}`, 302);
+        }
+
+        const html = renderProfilePage(member);
+        c.set("styleCsp", styleSrcDirective(html));
+        return c.html(html);
+    });
+
   // Dynamic plugin endpoints — runtime dispatch, manifest-enforced (FR-024).
   app.all("/api/p/:plugin/:action", async (c) => {
     if (!publicLimiter.check(clientKey(c))) {
@@ -529,6 +686,15 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       ]);
 
       const resolved = await deps.resolver.resolvePath(path, { scope: "public" });
+
+        // Members-only gate: runs before the cache so anonymous users are always
+        // redirected, even when the rendered HTML is already cached for members.
+        if (resolved.requiresMembership && deps.memberAuth) {
+            const member = await getMemberFromContext(c, deps.memberAuth);
+            if (!member) {
+                return c.redirect(`/account/login?next=${encodeURIComponent(path)}`, 302);
+            }
+        }
 
       // Privacy-friendly analytics: server-side page-view count, fire-and-forget
       // so it never blocks the response. No cookies, no client JS, no third

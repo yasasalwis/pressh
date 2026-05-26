@@ -118,6 +118,7 @@ export const TABLE_SPECS: readonly TableSpec[] = [
             {field: "createdAt", kind: "text"},
             {field: "updatedAt", kind: "text"},
             {field: "system", kind: "boolean", optional: true}, // only on built-in system pages
+            {field: "requiresMembership", kind: "boolean", optional: true}, // gate for members-only content
         ],
         indexes: ["status", "slug"],
         // RESTRICT, not CASCADE: deleting a content type that still has entries is
@@ -188,6 +189,54 @@ export const TABLE_SPECS: readonly TableSpec[] = [
           {field: "subject", kind: "text"}, // subject HASH only — no raw PII retained
           {field: "erasedCount", kind: "integer"},
           {field: "erasedAt", kind: "text"},
+        ],
+    },
+    // ── site-facing member (public user) collections ────────────────────────────
+    {
+        collection: "member_accounts",
+        table: "member_accounts",
+        columns: [
+            {field: "email", kind: "text", notNull: true, unique: true},
+            {field: "passwordHash", kind: "text"}, // null for magic-link-only members
+            {field: "displayName", kind: "text", notNull: true},
+            {field: "avatarUrl", kind: "text"}, // null until set
+            {field: "bio", kind: "text"}, // null until set
+            {field: "emailVerified", kind: "boolean"},
+            {field: "status", kind: "text"}, // "active" | "suspended"
+            {field: "failedAttempts", kind: "integer"},
+            {field: "lockedUntil", kind: "integer"}, // null = not locked; unix ms otherwise
+            {field: "createdAt", kind: "text"},
+            {field: "updatedAt", kind: "text"},
+        ],
+    },
+    {
+        collection: "member_sessions",
+        table: "member_sessions",
+        columns: [
+            {field: "memberId", kind: "text", notNull: true},
+            {field: "expiresAt", kind: "integer"},
+            {field: "createdAt", kind: "text"},
+        ],
+        indexes: ["memberId"],
+        foreignKeys: [
+            {column: "memberId", refTable: "member_accounts", refColumn: "id", onDelete: "cascade"},
+        ],
+    },
+    {
+        collection: "member_tokens",
+        table: "member_tokens",
+        columns: [
+            {field: "memberId", kind: "text", notNull: true},
+            {field: "email", kind: "text", notNull: true}, // denormalised for reference without a join
+            {field: "type", kind: "text"}, // "email_verify" | "magic_link" | "pw_reset"
+            {field: "tokenHash", kind: "text"}, // SHA-256 of the raw token
+            {field: "expiresAt", kind: "integer"},
+            {field: "usedAt", kind: "text"}, // null = not yet consumed
+            {field: "createdAt", kind: "text"},
+        ],
+        indexes: ["tokenHash", "memberId"],
+        foreignKeys: [
+            {column: "memberId", refTable: "member_accounts", refColumn: "id", onDelete: "cascade"},
         ],
     },
   // NOTE: `settings` is intentionally NOT normalized. It is a POLYMORPHIC

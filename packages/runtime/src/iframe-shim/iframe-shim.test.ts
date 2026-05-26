@@ -32,6 +32,7 @@ describe("createPanelBridge", () => {
     const calls: [string, unknown][] = [];
     const bridge = createPanelBridge({
       allowedActions: ["ping"],
+        isTrusted: () => true,
       onRequest: async (action, payload) => {
         calls.push([action, payload]);
         return { pong: payload };
@@ -44,7 +45,11 @@ describe("createPanelBridge", () => {
   });
 
   it("rejects a disallowed action", async () => {
-    const bridge = createPanelBridge({ allowedActions: ["ping"], onRequest: async () => null });
+      const bridge = createPanelBridge({
+          allowedActions: ["ping"],
+          isTrusted: () => true,
+          onRequest: async () => null,
+      });
     const s = source();
     await bridge.handleMessage({ data: { pressh: true, id: 2, action: "evil" }, source: s });
     expect(s.posted[0]).toMatchObject({ pressh: true, id: 2, ok: false });
@@ -54,6 +59,7 @@ describe("createPanelBridge", () => {
     let called = false;
     const bridge = createPanelBridge({
       allowedActions: ["ping"],
+        isTrusted: () => true,
       onRequest: async () => {
         called = true;
         return null;
@@ -69,6 +75,7 @@ describe("createPanelBridge", () => {
   it("reports handler errors back to the panel", async () => {
     const bridge = createPanelBridge({
       allowedActions: ["x"],
+        isTrusted: () => true,
       onRequest: async () => {
         throw new Error("boom");
       },

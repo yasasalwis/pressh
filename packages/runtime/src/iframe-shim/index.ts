@@ -19,6 +19,9 @@ function escapeHtml(value: string): string {
 export const PANEL_SHIM_JS = `(function(){
   var pending = {}, seq = 1;
   window.addEventListener("message", function(e){
+    // Only the embedding Studio window brokers this panel; ignore messages from
+    // any other frame so a co-embedded window cannot spoof responses.
+    if (e.source !== window.parent) return;
     var m = e.data;
     if (!m || m.pressh !== true || typeof m.id !== "number" || !("ok" in m)) return;
     var p = pending[m.id]; if (!p) return; delete pending[m.id];
@@ -84,8 +87,13 @@ export interface PanelMessageEvent {
 export interface PanelBridgeOptions {
   allowedActions: readonly string[];
   onRequest: (action: string, payload: unknown) => Promise<unknown>;
-  /** Optional extra trust check (e.g. expected source frame). */
-  isTrusted?: (event: PanelMessageEvent) => boolean;
+    /**
+     * Required trust check — the bridge forwards a message only when this returns
+     * true (typically `event.source === expectedPanelFrame.contentWindow`).
+     * Mandatory so a consumer cannot accidentally ship a bridge that accepts
+     * messages from any framed origin.
+     */
+    isTrusted: (event: PanelMessageEvent) => boolean;
 }
 
 export interface PanelBridge {
@@ -108,7 +116,7 @@ export function createPanelBridge(opts: PanelBridgeOptions): PanelBridge {
     async handleMessage(event) {
       const data = event.data;
       if (!isPanelRequest(data)) return;
-      if (opts.isTrusted && !opts.isTrusted(event)) return;
+        if (!opts.isTrusted(event)) return;
 
       const respond = (body: { ok: true; result: unknown } | { ok: false; error: { message: string } }): void => {
         event.source?.postMessage({ pressh: true, id: data.id, ...body }, "*");

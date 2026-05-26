@@ -295,7 +295,7 @@ export class PluginHost {
     };
     this.#registry.set(manifest.name, record);
     if (this.#opts.state && (await this.#opts.state.isEnabled(manifest.name))) {
-      record.instance = await this.#spawn(record.dir, record.manifest);
+        record.instance = await this.#spawn(record.dir, record.manifest, record.builtin);
     }
     return manifest;
   }
@@ -329,7 +329,7 @@ export class PluginHost {
     if (!record) throw new PressError("not_found", `Plugin not registered: ${name}`);
     if (!record.instance) {
         await this.#validate(record.dir, record.manifest);
-      record.instance = await this.#spawn(record.dir, record.manifest);
+        record.instance = await this.#spawn(record.dir, record.manifest, record.builtin);
     }
     await this.#opts.state?.setEnabled(name, true);
   }
@@ -432,7 +432,7 @@ export class PluginHost {
       if (isTimeout(e)) {
         // Kill the (possibly wedged) worker and respawn so the next call works.
         await instance.terminate().catch(() => undefined);
-        record.instance = await this.#spawn(record.dir, record.manifest);
+          record.instance = await this.#spawn(record.dir, record.manifest, record.builtin);
       }
       throw e;
     }
@@ -449,7 +449,25 @@ export class PluginHost {
     await Promise.all([...this.#registry.keys()].map((name) => this.stop(name)));
   }
 
-  async #spawn(pluginDir: string, manifest: PluginManifest): Promise<PluginInstance> {
+    async #spawn(pluginDir: string, manifest: PluginManifest, builtin: boolean): Promise<PluginInstance> {
+        // Fail closed: without the OS permission model the worker has no kernel-level
+        // sandbox — only the JS import allowlist + global scrub, which a determined
+        // plugin can work around. Refuse to run UNTRUSTED (third-party) plugins in
+        // that state rather than silently degrade the product's core isolation
+        // guarantee. First-party builtins are trusted code, so they still load; an
+        // operator can force third-party loads with PRESSH_INSECURE_NO_SANDBOX=1.
+        if (
+            !PERMISSION_MODEL_SUPPORTED &&
+            !builtin &&
+            process.env["PRESSH_INSECURE_NO_SANDBOX"] !== "1"
+        ) {
+            throw new PressError(
+                "forbidden",
+                `Refusing to load third-party plugin "${manifest.name}": the OS sandbox ` +
+                `(Node --permission) is unavailable on this runtime. Upgrade to Node ≥20, ` +
+                `or set PRESSH_INSECURE_NO_SANDBOX=1 to override (NOT recommended).`,
+            );
+        }
       // The permission model matches *resolved* paths, so the fs-read grant and
       // the plugin's import path must both be real-path'd or they won't match
       // (e.g. macOS `/tmp` vs `/private/tmp`).
@@ -594,11 +612,18 @@ export class PluginHost {
           const all = unwrap(await this.#opts.storage.listCollections());
           return all.filter((c) => !RESERVED_COLLECTIONS.has(c));
       }
-      const collection = String(args[0]);
+        if (typeof args[0] !== "string") {
+            throw new PressError("validation", "Collection name must be a string");
+        }
+        const collection = args[0];
       // Auth-critical collections are off-limits to plugins regardless of their
       // self-asserted capabilities (no `storage.read:*` / `storage.write:users`
-      // can reach password hashes, session tokens, or invite tokens).
-      if (RESERVED_COLLECTIONS.has(collection)) {
+        // can reach password hashes, session tokens, or invite tokens). Matched
+        // case-insensitively and trimmed: a case-insensitive filesystem
+        // (macOS/Windows, default file backend) collapses `Users`/`users `, so an
+        // exact check would let a plugin declaring `storage.write:Users` slip past
+        // and overwrite the real auth records on the next index rebuild.
+        if (RESERVED_COLLECTIONS.has(collection.trim().toLowerCase())) {
         throw new PressError("capability_denied", `Capability denied: ${collection} is reserved`, {
           required: `storage:${collection}`,
         });

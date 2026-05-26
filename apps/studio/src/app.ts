@@ -1,3 +1,4 @@
+import {timingSafeEqual} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import type {Context, Next} from "hono";
 import {Hono} from "hono";
@@ -22,6 +23,13 @@ import type {MediaService} from "./media.js";
 import {MAX_UPLOAD_BYTES} from "./media.js";
 import type {MigrationLock} from "./migration-lock.js";
 import type {DbManagerService, StartMigrationInput} from "./db-manager.js";
+
+/** Constant-time string compare so a bearer-token check can't be timed out. */
+function timingSafeStrEqual(a: string, b: string): boolean {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
 
 // React admin bundle (built by scripts/build-admin.mjs into dist/admin-next.html,
 // a sibling of this compiled module). Read once and cached; `null` when absent.
@@ -199,7 +207,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
   });
   app.get("/metrics", (c) => {
-    if (metricsToken && c.req.header("authorization") !== `Bearer ${metricsToken}`) {
+      if (metricsToken && !timingSafeStrEqual(c.req.header("authorization") ?? "", `Bearer ${metricsToken}`)) {
       return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
     }
     return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
@@ -312,7 +320,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     }
   });
 
-  app.post("/admin/api/auth/logout", requireSession, async (c) => {
+    app.post("/admin/api/auth/logout", requireSession, requireCsrf, async (c) => {
     await deps.auth.logout(c.get("token"));
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.json({ ok: true });

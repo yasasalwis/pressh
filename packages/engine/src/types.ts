@@ -1,4 +1,4 @@
-import type { StoredDoc } from "@pressh/core";
+import type {StoredDoc} from "@pressh/core";
 
 export type FieldType = "text" | "richtext" | "number" | "boolean" | "date" | "select";
 
@@ -70,6 +70,8 @@ export interface ContentEntry extends StoredDoc {
   updatedAt: string;
   /** Marks built-in system pages (header, footer, home, 404, 500, maintenance) — cannot be archived or unpublished. */
   system?: boolean;
+    /** When true, anonymous site visitors are redirected to the login page. */
+    requiresMembership?: boolean;
 }
 
 export interface Revision extends StoredDoc {

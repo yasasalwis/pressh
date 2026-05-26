@@ -1,7 +1,7 @@
 import {join} from "node:path";
 import {createFileAuditLog} from "@pressh/core";
 import {createContentService, getPrebuiltPage, prebuiltLayoutBlocks} from "@pressh/engine";
-import {openConfiguredStorage, parseMasterKey} from "./bootstrap.js";
+import {openConfiguredStorage} from "./bootstrap.js";
 
 /**
  * `npm run reseed:pages` — re-applies the shipped, fully designed layouts to the
@@ -35,10 +35,10 @@ async function main(): Promise<void> {
     } catch { /* no .env — rely on the real environment */
     }
     const contentRoot = process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content";
-    const masterKey = parseMasterKey(process.env["PRESSH_MASTER_KEY"]);
+    const masterSecret = process.env["PRESSH_MASTER_KEY"]?.trim() || undefined;
     const {storage} = await openConfiguredStorage({
         contentRoot,
-        ...(masterKey ? {masterKey} : {}),
+        ...(masterSecret ? {masterSecret} : {}),
     });
     const audit = await createFileAuditLog({
         path: join(contentRoot, "..", "audit.log"),

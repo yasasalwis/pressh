@@ -52,8 +52,14 @@ export type {
   StorageBackend,
 } from "./storage/storage-config.js";
 
-export { createFileSecretsBackend, deriveMasterKey, MASTER_KEY_BYTES } from "./secrets.js";
-export type { SecretsBackend } from "./secrets.js";
+export {
+    createFileSecretsBackend,
+    deriveMasterKey,
+    openSecretsVault,
+    LEGACY_MASTER_KEY_SALT,
+    MASTER_KEY_BYTES,
+} from "./secrets.js";
+export type {KdfParams, SecretsBackend} from "./secrets.js";
 
 export { createFileAuditLog } from "./audit.js";
 export type { AuditEntry, AuditEntryInput, AuditLog, AuditQuery } from "./audit.js";
@@ -77,6 +83,14 @@ export { createMetrics, requestId } from "./observability.js";
 export type { Labels, Metrics } from "./observability.js";
 export { createBackup, restoreBackup } from "./ops/backup.js";
 export type { BackupTargets } from "./ops/backup.js";
+
+export {createMemberAuthService} from "./members.js";
+export type {
+    Member,
+    MemberAuthService,
+    MemberAuthServiceOptions,
+    MemberLoginResult,
+} from "./members.js";
 
 export { createScheduler } from "./scheduler.js";
 export type {

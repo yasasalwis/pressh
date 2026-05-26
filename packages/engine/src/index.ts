@@ -55,6 +55,16 @@ export type {
   SmtpSettings,
   UpdateSettingsInput,
 } from "./settings.js";
+export {createEmailService} from "./email.js";
+export type {EmailMessage, EmailService, EmailServiceOptions, EmailTransport} from "./email.js";
+export {
+  verificationEmail,
+  magicLinkEmail,
+  passwordResetEmail,
+  welcomeEmail,
+  inviteEmail,
+} from "./email-templates.js";
+export type {EmailTemplate} from "./email-templates.js";
 export { createGdprService } from "./gdpr.js";
 export type {
   EncRef,

@@ -40,6 +40,17 @@ function trimmed(v, max) {
   return max ? s.slice(0, max) : s;
 }
 
+// Product images surface on the public storefront as <img src>; restrict to
+// http(s)/root-relative so a stored `javascript:`/`data:`/`//host` value can't
+// reach the page (mixed content / phishing), matching the SEO plugin's policy.
+function safeImageUrl(value) {
+  const s = trimmed(value, 1000);
+  if (s === "") return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/") && !s.startsWith("//")) return s;
+  return "";
+}
+
 function nonNegNumber(v, label) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) throw new Error(`${label} must be a non-negative number`);
@@ -380,7 +391,7 @@ async function buildProduct(input, host, settings) {
   const {variants, openings} = cleanVariants(variantsInput, options, existingVariants);
 
   const images = Array.isArray(input?.images)
-      ? input.images.map((u) => trimmed(u, 1000)).filter(Boolean).slice(0, 12)
+      ? input.images.map((u) => safeImageUrl(u)).filter(Boolean).slice(0, 12)
       : [];
   const tags = Array.isArray(input?.tags)
       ? [...new Set(input.tags.map((t) => trimmed(t, 40)).filter(Boolean))].slice(0, 20)

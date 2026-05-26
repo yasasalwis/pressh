@@ -5,19 +5,24 @@ import {serve} from "@hono/node-server";
 import type {SecretsBackend} from "@pressh/core";
 import {
   createFileAuditLog,
-  createFileSecretsBackend,
-  deriveMasterKey,
+  createMemberAuthService,
   loadStorageConfig,
-  MASTER_KEY_BYTES,
+  openSecretsVault,
   watchStorageConfig,
 } from "@pressh/core";
-import {createContentService, createGdprService, createQueryResolver, createThemeService,} from "@pressh/engine";
+import {
+  createContentService,
+  createEmailService,
+  createGdprService,
+  createQueryResolver,
+  createSettingsService,
+  createThemeService,
+} from "@pressh/engine";
 import {createCveService, createPluginStateStore, PluginHost} from "@pressh/runtime";
+import {createMemberRouter} from "./members.js";
 import {createSiteApp} from "./app.js";
 import {createRenderCache} from "./cache.js";
 import {buildStorage} from "./storage.js";
-
-const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
 
 /**
  * Exit code used after a Database-Manager cutover so a supervisor restarts the
@@ -25,17 +30,6 @@ const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
  * Keep in sync with `apps/studio/src/server.ts` and `scripts/run.mjs`.
  */
 const STORAGE_RESTART_EXIT_CODE = 75;
-
-/** Parse the operator master key (hex/base64/passphrase). Mirrors the Studio. */
-function parseMasterKey(raw: string | undefined): Buffer | null {
-  if (!raw) return null;
-  const value = raw.trim();
-  if (value === "") return null;
-  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, "hex");
-  const b64 = Buffer.from(value, "base64");
-  if (b64.length === MASTER_KEY_BYTES) return b64;
-  return deriveMasterKey(value, MASTER_KEY_SALT);
-}
 
 export interface SiteServerOptions {
   contentRoot: string;
@@ -47,8 +41,8 @@ export interface SiteServerOptions {
   pluginsDir?: string;
   /** First-party plugins shipped with Pressh. */
   builtinsDir?: string;
-  /** 32-byte vault master key. Required to resolve DB-backend credentials. */
-  masterKey?: Buffer;
+    /** Raw `PRESSH_MASTER_KEY` (32-byte hex/base64 key or passphrase). Resolves DB-backend credentials. */
+    masterSecret?: string;
     /** Raw master-key string used to derive the plugin-signing key (see PluginHost). */
     signingSecret?: string;
   /** Path to the sealed secrets vault file. Defaults next to the content root. */
@@ -89,13 +83,9 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
 }> {
   // Vault first: DB backends resolve their connection string from it. Optional
   // when running on the filesystem default (no credentials needed).
-  let secrets: SecretsBackend | undefined;
-  if (opts.masterKey) {
-    secrets = await createFileSecretsBackend({
-      path: opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json"),
-      key: opts.masterKey,
-    });
-  }
+    const vaultPath = opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json");
+    const secrets: SecretsBackend | undefined =
+        (await openSecretsVault({path: vaultPath, secret: opts.masterSecret})) ?? undefined;
   const storageConfigPath = opts.storageConfigPath ?? join(opts.contentRoot, "..", "storage.json");
     // Relative backend file paths resolve against the data directory (not cwd) so
     // the Site opens the exact same sqlite file the Studio migrated into.
@@ -163,6 +153,18 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
   // dist/client/ sits next to dist/server.js in the compiled output.
   const clientDir = fileURLToPath(new URL("client", import.meta.url));
 
+    const settingsSvc = createSettingsService({storage, audit, ...(secrets ? {secrets} : {})});
+    const emailSvc = secrets
+        ? createEmailService({settings: settingsSvc, secrets, audit})
+        : undefined;
+    const memberAuth = await createMemberAuthService({storage, audit});
+    const memberRouter = createMemberRouter({
+        memberAuth,
+        ...(emailSvc ? {email: emailSvc} : {}),
+        settings: settingsSvc,
+        ...(opts.production !== undefined ? {production: opts.production} : {}),
+    });
+
   const app = createSiteApp({
     resolver,
     pluginHost,
@@ -173,6 +175,8 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     storage,
     listPublishedPaths,
     clientDir,
+      memberRouter,
+      memberAuth,
     ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });
@@ -206,14 +210,14 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
 /** Start the Site from environment variables when run directly (`node dist/server.js`). */
 async function runFromEnv(): Promise<void> {
   const port = Number(process.env["PRESSH_SITE_PORT"] ?? 3000);
-  const masterKey = parseMasterKey(process.env["PRESSH_MASTER_KEY"]);
+    const masterSecret = process.env["PRESSH_MASTER_KEY"]?.trim() || undefined;
   const server = await createSiteServer({
     contentRoot: process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content",
     port,
     production: process.env["NODE_ENV"] === "production",
     ...(process.env["PRESSH_BASE_URL"] ? { baseUrl: process.env["PRESSH_BASE_URL"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
-    ...(masterKey ? { masterKey } : {}),
+      ...(masterSecret ? {masterSecret} : {}),
       ...(process.env["PRESSH_MASTER_KEY"] ? {signingSecret: process.env["PRESSH_MASTER_KEY"]} : {}),
     ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),
       ...(process.env["PRESSH_WORKER_SCRIPT"] ? {workerScript: process.env["PRESSH_WORKER_SCRIPT"]} : {}),

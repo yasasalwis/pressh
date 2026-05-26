@@ -5,7 +5,7 @@ import {randomBytes} from "node:crypto";
 import {serve} from "@hono/node-server";
 import {createAuthService, createCsrf, createFileAuditLog, createScheduler, watchStorageConfig,} from "@pressh/core";
 import {STORAGE_FACTORIES} from "./storage.js";
-import {openConfiguredStorage, parseMasterKey} from "./bootstrap.js";
+import {hasMasterSecret, openConfiguredStorage} from "./bootstrap.js";
 import {
   createContentService,
   createGdprService,
@@ -57,8 +57,8 @@ export interface StudioServerOptions {
   port?: number;
   production?: boolean;
   csrfSecret?: string;
-  /** 32-byte vault master key. When set, SMTP credentials can be sealed. */
-  masterKey?: Buffer;
+    /** Raw `PRESSH_MASTER_KEY` (32-byte hex/base64 key or passphrase). When set, SMTP credentials can be sealed. */
+    masterSecret?: string;
     /** Raw master-key string used to derive the plugin-signing key (see PluginHost). */
     signingSecret?: string;
   /** Path to the sealed secrets vault file. Defaults next to the content root. */
@@ -88,7 +88,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
         contentRoot: opts.contentRoot,
         ...(opts.storageConfigPath ? {storageConfigPath: opts.storageConfigPath} : {}),
         ...(opts.secretsPath ? {secretsPath: opts.secretsPath} : {}),
-        ...(opts.masterKey ? {masterKey: opts.masterKey} : {}),
+        ...(opts.masterSecret ? {masterSecret: opts.masterSecret} : {}),
     });
 
   const auditPath = opts.auditPath ?? join(opts.contentRoot, "..", "audit.log");
@@ -247,8 +247,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
 async function runFromEnv(): Promise<void> {
   const port = Number(process.env["PRESSH_STUDIO_PORT"] ?? 4000);
   const production = process.env["NODE_ENV"] === "production";
-  const masterKey = parseMasterKey(process.env["PRESSH_MASTER_KEY"]);
-  if (production && !masterKey) {
+    const masterSecret = process.env["PRESSH_MASTER_KEY"]?.trim() || undefined;
+    if (production && !hasMasterSecret(masterSecret)) {
     throw new Error(
       "PRESSH_MASTER_KEY is required in production (32-byte hex/base64 key, or a passphrase). " +
         "It seals the secrets vault used for SMTP credentials.",
@@ -259,7 +259,7 @@ async function runFromEnv(): Promise<void> {
     mediaRoot: process.env["PRESSH_MEDIA_ROOT"] ?? "./data/media",
     port,
     production,
-    ...(masterKey ? { masterKey } : {}),
+      ...(masterSecret ? {masterSecret} : {}),
       ...(process.env["PRESSH_MASTER_KEY"] ? {signingSecret: process.env["PRESSH_MASTER_KEY"]} : {}),
     ...(process.env["PRESSH_CSRF_SECRET"] ? { csrfSecret: process.env["PRESSH_CSRF_SECRET"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),

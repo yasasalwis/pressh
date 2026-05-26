@@ -31,11 +31,16 @@ export function safeUrl(value: unknown): string {
   if (typeof value !== "string") return "";
   const raw = value.trim();
   if (!raw) return "";
-  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripSchemeNoise(raw));
+    const probe = stripSchemeNoise(raw);
+    const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(probe);
   if (m) {
     const scheme = (m[1] ?? "").toLowerCase();
     return ALLOWED_SCHEMES.has(scheme) ? raw : "";
   }
+    // Reject protocol-relative URLs ("//host", and the backslash forms browsers
+    // fold into them): they carry no scheme yet still navigate off-site, an
+    // open-redirect/phishing vector in href and form-action sinks.
+    if (probe.replace(/\\/g, "/").startsWith("//")) return "";
   // No explicit scheme → relative path, root-relative, anchor, or query. Safe.
   return raw;
 }

@@ -251,6 +251,10 @@ class ContentServiceImpl implements ContentService {
     to: ContentStatus,
     opts: { scheduledFor?: string } = {},
   ): Promise<ContentEntry> {
+      // Authorize before touching the entry so an unauthorized caller can't probe
+      // existence (404) or transition legality (409) — every other mutating method
+      // asserts first too.
+      this.#gate.assert(capabilities, capabilityForTransition(to));
     const entry = await this.#requireEntry(entryId);
     if (entry.system && to !== "published") {
       throw new PressError("conflict", "System layout pages cannot be unpublished or archived");
@@ -258,7 +262,6 @@ class ContentServiceImpl implements ContentService {
     if (!isAllowedTransition(entry.status, to)) {
       throw new PressError("conflict", `Illegal transition: ${entry.status} → ${to}`);
     }
-    this.#gate.assert(capabilities, capabilityForTransition(to));
 
     const from = entry.status;
     entry.status = to;

@@ -1,7 +1,7 @@
-import { CapabilityGate, PressError } from "@pressh/core";
-import type { BlockNode } from "./blocks/types.js";
-import type { ContentService } from "./content-service.js";
-import type { ContentStatus } from "./types.js";
+import {CapabilityGate, PressError} from "@pressh/core";
+import type {BlockNode} from "./blocks/types.js";
+import type {ContentService} from "./content-service.js";
+import type {ContentStatus} from "./types.js";
 
 export interface ParsedRoute {
   slug: string;
@@ -62,6 +62,8 @@ export interface ResolvedContent {
   updatedAt: string;
   /** Monotonic revision number — bumps on every save; used as a cache version. */
   revision: number;
+    /** True when the page is gated for members only. Absent (undefined) means public. */
+    requiresMembership?: boolean;
 }
 
 export interface QueryResolver {
@@ -113,6 +115,7 @@ export function createQueryResolver(opts: QueryResolverOptions): QueryResolver {
       publishedAt: entry.publishedAt,
       updatedAt: entry.updatedAt,
       revision: entry.currentRevision,
+        ...(entry.requiresMembership ? {requiresMembership: true} : {}),
     };
   }
 
