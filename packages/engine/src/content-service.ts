@@ -6,6 +6,8 @@ import { sanitizeBlocks } from "./blocks/sanitize.js";
 import type { BlockRegistry } from "./blocks/types.js";
 import { validateFields } from "./schema.js";
 import { capabilityForTransition, isAllowedTransition } from "./state-machine.js";
+import {DESIGNER_LAYOUT_BLOCK} from "./components/types.js";
+import {getPrebuiltPage} from "./primitives/prebuilt.js";
 import { SYSTEM_SLUGS } from "./types.js";
 import type { ContentEntry, ContentStatus, ContentType, FieldDef, Revision } from "./types.js";
 
@@ -360,45 +362,27 @@ class ContentServiceImpl implements ContentService {
       typeId = t.id;
     }
 
-    // Layout fragments (header/footer) start empty — they only matter once the
-    // operator designs them. Standalone pages (home/404/500/maintenance) ship
-    // with sensible starter content so they render meaningfully out of the box.
-    const systemPages: Array<{ slug: string; label: string; blocks: unknown[] }> = [
-      { slug: SYSTEM_SLUGS.header, label: "Header", blocks: [] },
-      { slug: SYSTEM_SLUGS.footer, label: "Footer", blocks: [] },
-      {
-        slug: SYSTEM_SLUGS.home,
-        label: "Home",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "Welcome to Pressh" },
-          { type: "paragraph", content: "The secure-first CMS built for the modern web. Publish content with confidence — no compromises." },
-        ],
-      },
-      {
-        slug: SYSTEM_SLUGS.notFound,
-        label: "Page not found",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "404 — Page not found" },
-          { type: "paragraph", content: "The page you are looking for does not exist or may have moved." },
-        ],
-      },
-      {
-        slug: SYSTEM_SLUGS.serverError,
-        label: "Server error",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "500 — Something went wrong" },
-          { type: "paragraph", content: "An unexpected error occurred on our side. Please try again in a moment." },
-        ],
-      },
-      {
-        slug: SYSTEM_SLUGS.maintenance,
-        label: "Down for maintenance",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "We will be right back" },
-          { type: "paragraph", content: "The site is temporarily offline for scheduled maintenance. Please check back shortly." },
-        ],
-      },
+      // Every system page (the header/footer chrome, the home page, and the
+      // 404/500/maintenance pages) ships with a fully designed primitive tree —
+      // stored as a single `designer-layout` block — so a fresh install renders a
+      // proper, on-brand site out of the box that the operator can then edit in the
+      // visual designer. See ./primitives/prebuilt.ts for the layouts.
+      const systemSlugs = [
+          SYSTEM_SLUGS.header,
+          SYSTEM_SLUGS.footer,
+          SYSTEM_SLUGS.home,
+          SYSTEM_SLUGS.notFound,
+          SYSTEM_SLUGS.serverError,
+          SYSTEM_SLUGS.maintenance,
     ];
+      const systemPages = systemSlugs.map((slug) => {
+          const page = getPrebuiltPage(slug);
+          return {
+              slug,
+              label: page?.title ?? slug,
+              blocks: page ? [{type: DESIGNER_LAYOUT_BLOCK, props: {nodes: page.nodes}}] : [],
+          };
+      });
 
     for (const { slug, label, blocks } of systemPages) {
       const existing = await this.resolveBySlug(slug, DEFAULT_LOCALE);

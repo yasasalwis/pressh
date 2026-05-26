@@ -1,4 +1,4 @@
-import {usePanelQuery} from "../shared/usePanelQuery";
+import {usePanelQuery} from "@pressh/panel-kit";
 
 interface DayBucket {
     date: string;

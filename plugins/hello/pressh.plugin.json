@@ -4,5 +4,11 @@
   "main": "index.mjs",
   "capabilities": ["storage.read:greetings"],
   "endpoints": [{ "method": "POST", "path": "/greet", "handler": "greet" }],
-  "panel": { "title": "Hello", "entry": "panel.html" }
+  "panel": {
+    "title": "Hello",
+    "entry": "panel.html"
+  },
+  "panelActions": [
+    "greet"
+  ]
 }

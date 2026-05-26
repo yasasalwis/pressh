@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useState} from "react";
-import {request} from "../shared/bridge";
+import {request} from "@pressh/panel-kit";
 
 interface Meta {
     description: string;

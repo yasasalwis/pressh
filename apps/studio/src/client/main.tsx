@@ -1,6 +1,7 @@
 import {StrictMode} from "react";
 import {createRoot} from "react-dom/client";
 import {App} from "./App";
+import {ToastProvider} from "./components/ui";
 import "./styles.css";
 
 // Apply the saved/system theme before first paint (mirrors the legacy client).
@@ -14,7 +15,9 @@ const el = document.getElementById("pressh-admin-root");
 if (el) {
     createRoot(el).render(
         <StrictMode>
-            <App/>
+            <ToastProvider>
+                <App/>
+            </ToastProvider>
         </StrictMode>,
     );
 }

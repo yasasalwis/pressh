@@ -8568,7 +8568,7 @@ Error generating stack: ` + e.message + `
     })), l = n(), u = c();
 
     async function d(e, t) {
-        let n = window.presshPanel;
+        let n = typeof window < `u` ? window.presshPanel : void 0;
         if (!n || typeof n.request != `function`) throw Error(`Panel host bridge is unavailable`);
         return n.request(e, t)
     }

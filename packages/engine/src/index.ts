@@ -93,6 +93,8 @@ export {
   instantiatePreset,
 } from "./primitives/presets.js";
 export type { PresetDef } from "./primitives/presets.js";
+export {getPrebuiltPage, prebuiltLayoutBlocks} from "./primitives/prebuilt.js";
+export type {PrebuiltPage} from "./primitives/prebuilt.js";
 export type {
   DesignNode,
   PrimitiveNode,

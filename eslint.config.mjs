@@ -14,14 +14,19 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["scripts/**/*.mjs"],
+      files: ["scripts/**/*.mjs", "packages/panel-kit/{bin,build}/**/*.mjs"],
     languageOptions: {
       globals: globals.node,
     },
   },
     {
         // React panel sources + app client bundles run in the browser/iframe.
-        files: ["panels/**/*.{ts,tsx}", "apps/*/src/client/**/*.{ts,tsx}"],
+        files: [
+            "panels/**/*.{ts,tsx}",
+            "apps/*/src/client/**/*.{ts,tsx}",
+            "packages/panel-kit/src/**/*.{ts,tsx}",
+            "plugins/**/panel-src/**/*.{ts,tsx}",
+        ],
         languageOptions: {
             globals: globals.browser,
         },

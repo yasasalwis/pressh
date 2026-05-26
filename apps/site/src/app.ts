@@ -178,7 +178,10 @@ function makeSiteContext(
       );
       if (!result.ok) return [];
 
-      const entries = (result.value.items as ContentEntry[]).slice();
+        // System pages (header/footer chrome, 404/500/maintenance) are published
+        // but are not editorial content — they must never surface in a content feed
+        // like a "recent posts" list.
+        const entries = (result.value.items as ContentEntry[]).filter((e) => !e.system);
       entries.sort((a, b) => {
         const av = a.publishedAt ?? "";
         const bv = b.publishedAt ?? "";

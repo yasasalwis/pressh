@@ -61,6 +61,24 @@ docker compose up -d studio
 curl -fsS https://<host>/healthz && echo OK
 ```
 
+### Upgrading to the non-root image (one-time)
+
+The container now runs as the unprivileged `node` user (uid 1000), not root. A
+**fresh** `pressh-data` volume comes up owned by `node` automatically. An
+**existing** volume created by an older root-running image is owned by uid 0, so
+the new process cannot write its secrets/content/vault and will fail to boot.
+Chown the volume **once**, before rolling the new image:
+
+```bash
+docker compose down
+docker run --rm -v pressh-data:/data busybox chown -R 1000:1000 /data
+docker compose pull && docker compose up -d site studio
+curl -fsS https://<host>/healthz && echo OK
+```
+
+Symptom if skipped: entrypoint logs `cannot create /data/secrets …` or the app
+exits on a vault/storage write error. (No effect on fresh installs.)
+
 ### Rollback (standard)
 ```bash
 # Re-deploy the previous tagged image; index/content are backward-compatible within a minor.

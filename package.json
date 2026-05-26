@@ -16,6 +16,7 @@
     "build": "tsc -b && npm run build:admin && npm run build:panels && npm run sign:builtins && vite build --config apps/site/vite.config.ts",
     "build:admin": "node scripts/build-admin.mjs",
     "build:panels": "node scripts/build-panels.mjs",
+    "build:hello": "pressh-build-panel plugins/hello/panel-src/main.tsx --out plugins/hello/panel.html",
     "sign:builtins": "node scripts/sign-builtins.mjs",
     "typecheck": "tsc -b",
     "clean": "tsc -b --clean",
@@ -25,6 +26,7 @@
     "lint": "eslint .",
     "start": "tsc -b && node scripts/run.mjs",
     "seed": "node apps/studio/dist/seed-cli.js",
+    "reseed:pages": "node apps/studio/dist/reseed-prebuilt.js",
     "studio": "node apps/studio/dist/server.js",
     "site": "node apps/site/dist/server.js"
   },
@@ -36,6 +38,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.2",
+    "esbuild": "0.28.0",
     "eslint": "^9.0.0",
     "globals": "^14.0.0",
     "react": "^19.0.0",

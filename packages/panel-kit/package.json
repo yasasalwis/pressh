@@ -1,0 +1,35 @@
+{
+  "name": "@pressh/panel-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React + TypeScript authoring kit and build CLI for Pressh plugin admin panels.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./build": "./build/index.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "pressh-build-panel": "./bin/build-panel.mjs"
+  },
+  "files": [
+    "dist",
+    "build",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "8.0.13"
+  }
+}

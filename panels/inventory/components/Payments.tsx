@@ -1,4 +1,4 @@
-import {usePanelQuery} from "../../shared/usePanelQuery";
+import {usePanelQuery} from "@pressh/panel-kit";
 import type {Payment} from "../types";
 import {useStore} from "../context";
 import {fmtDate} from "../format";

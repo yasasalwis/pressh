@@ -66,6 +66,7 @@ flowchart TB
         Runtime["@pressh/runtime<br/>plugin host · worker isolation"]
         Core["@pressh/core<br/>auth · storage · capabilities · audit"]
         SDK["@pressh/sdk<br/>plugin types · RPC protocol"]
+        PanelKit["@pressh/panel-kit<br/>React panel kit · build CLI"]
     end
 
     subgraph store["Persistent /data volume"]
@@ -435,31 +436,84 @@ All adapters implement the same `StorageAdapter` interface and pass the shared c
 
 1. Create a plugin directory with a manifest:
 
-```json
+```jsonc
 // my-plugin/pressh.plugin.json
 {
-  "id": "my-plugin",
+  "name": "my-plugin",
   "version": "1.0.0",
-  "entrypoint": "./handler.js",
+  "main": "index.mjs",
   "capabilities": ["storage.read:posts", "network.fetch:api.example.com"],
-  "adminPanel": "./panel.html"
+  "endpoints": [{ "method": "POST", "path": "/sync", "handler": "sync" }],
+  "panel": { "title": "My Plugin", "entry": "panel.html" },
+  "panelActions": ["sync"]
 }
 ```
 
-2. Implement the handler using the SDK:
+2. Implement the handlers using the SDK. Each runs in an isolated worker; the only host access is the capability-gated
+   `HostApi`:
 
 ```typescript
-import type { PluginManifest, HostApi } from "@pressh/sdk";
+import type { HostApi } from "@pressh/sdk";
 
-export async function handle(args: unknown, host: HostApi): Promise<unknown> {
-  const posts = await host.storage.list("posts");
-  return { count: posts.length };
+export async function sync(args: unknown, host: HostApi): Promise<unknown> {
+  const { items } = await host.storage.query("posts", { status: "published" });
+  return { count: items.length };
 }
 ```
 
 3. Drop the plugin folder into `plugins/` — Pressh loads it on next restart.
 
-Capabilities not listed in the manifest are rejected at the RPC boundary. The admin panel runs in a sandboxed iframe; it cannot touch the host DOM or parent window.
+Capabilities not listed in the manifest are rejected at the RPC boundary. A panel may only invoke the handlers named in
+`panelActions` (default-deny). The admin panel runs in a sandboxed iframe; it cannot touch the host DOM or parent
+window.
+
+### Admin panels in React + TypeScript
+
+Author panels in React + TypeScript with **`@pressh/panel-kit`** instead of hand-writing HTML. The kit gives you a typed
+host bridge (`request`), a data hook (`usePanelQuery`), and a `mountPanel` helper. Its `pressh-build-panel` CLI bundles
+your `main.tsx` into the single self-contained `panel.html` the iframe requires — inline script + style with React
+bundled in, because the panel iframe is opaque-origin under a strict CSP (`script-src 'unsafe-inline'`, no `'self'`), so
+an external `<script src>` can't load.
+
+```tsx
+// panel-src/main.tsx
+import { StrictMode } from "react";
+import { mountPanel } from "@pressh/panel-kit";
+import { App } from "./App";
+import "./styles.css";
+
+mountPanel(<StrictMode><App /></StrictMode>);
+```
+
+```tsx
+// panel-src/App.tsx
+import { request, usePanelQuery } from "@pressh/panel-kit";
+
+export function App() {
+  // usePanelQuery: loading / error / data + reload, over the host bridge.
+  const { data, loading, error, reload } = usePanelQuery<{ count: number }>("sync");
+  if (loading) return <p>Loading…</p>;
+  if (error) return <p>Error: {error}</p>;
+  // request(action, payload): `action` MUST be listed in the manifest's panelActions.
+  return (
+    <div>
+      <p>{data?.count} posts</p>
+      <button type="button" onClick={() => request("sync").then(reload)}>Re-sync</button>
+    </div>
+  );
+}
+```
+
+Build it (writes `panel.html` next to your manifest):
+
+```bash
+npx pressh-build-panel panel-src/main.tsx --out panel.html
+```
+
+Keep panel source **outside** the shipped/signed plugin folder — only the built `panel.html` is signed and loaded. A
+complete working example lives in [`plugins/hello`](plugins/hello): source under `panel-src/` (with its own
+`tsconfig.json`), the built `panel.html`, and a manifest declaring `panelActions`. Rebuild it with
+`npm run build:hello`.
 
 ### Built-in plugins
 
@@ -473,7 +527,11 @@ Pressh ships five first-party plugins in `builtins/` — same security model as 
 | **SEO**               | Per-page + site meta/OpenGraph tags injected into the public `<head>`.                                                                                                                  | `storage.read/write:seo_meta`                                                                                                                                                                             |
 | **Analytics**         | Cookieless server-side page-view counts. No cookies, IPs, or third parties.                                                                                                             | `storage.read/write:analytics_daily`                                                                                                                                                                      |
 
-Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. Re-run `npm run sign:builtins` after editing a built-in's code (it also runs as part of `npm run build`).
+Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. The built-ins' panels are
+authored in React + TypeScript under `panels/<plugin>/` and bundled into `builtins/<plugin>/panel.html` by
+`npm run build:panels` (the same `@pressh/panel-kit` pipeline third-party authors use). After editing a built-in's panel
+source re-run `npm run build:panels` then `npm run sign:builtins`; after editing its worker code just re-run
+`npm run sign:builtins`. Both run as part of `npm run build`.
 
 ---
 

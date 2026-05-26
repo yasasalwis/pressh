@@ -15,7 +15,7 @@ import type {
   SettingsService,
   ThemeService,
 } from "@pressh/engine";
-import {PRESETS, PRIMITIVE_DEFS, renderTree} from "@pressh/engine";
+import {PRESETS, PRIMITIVE_DEFS, prebuiltLayoutBlocks, renderTree} from "@pressh/engine";
 import type {CveService, PluginInfo} from "@pressh/runtime";
 import {panelFrameTag, wrapPanelHtml} from "@pressh/runtime";
 import type {MediaService} from "./media.js";
@@ -110,53 +110,14 @@ export async function seedDemoContent(content: ContentService, ownerId: string, 
   const pageFields: FieldDef[] = [{ id: "f0", name: "title", type: "text", required: true }];
   const pageType = await content.createType(caps, { name: "Page", slug: "page", fields: pageFields });
 
+    // The demo pages ship as fully designed primitive trees (see
+    // @pressh/engine prebuilt.ts), stored as a single `designer-layout` block, so a
+    // fresh install presents a real, on-brand site the operator can edit visually.
   const pages: { slug: string; title: string; blocks: unknown[] }[] = [
-    {
-      slug: "home",
-      title: "Home",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "Welcome to Pressh" },
-        { type: "paragraph", content: "The secure-first CMS built for the modern web. Publish content with confidence — no compromises." },
-        { type: "heading", props: { level: 2 }, content: "Built for security" },
-        { type: "paragraph", content: "Traditional CMS platforms bundle thousands of lines of third-party code you never audited. Pressh takes the opposite approach: a minimal, auditable core with plugins running in isolated sandboxes." },
-        { type: "heading", props: { level: 2 }, content: "Simple and powerful" },
-        { type: "paragraph", content: "No-code content modelling, workflow states, immutable revision history, and locale support — all included out of the box." },
-      ],
-    },
-    {
-      slug: "about",
-      title: "About",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "About Pressh" },
-        { type: "paragraph", content: "Pressh is a content management system that puts security first without sacrificing simplicity. We believe the web deserves better than the legacy CMS status quo." },
-        { type: "heading", props: { level: 2 }, content: "Our values" },
-        { type: "paragraph", content: "Security by default. Minimal surface area. Transparent architecture. We build tools that developers can audit and organisations can trust." },
-        { type: "heading", props: { level: 2 }, content: "Open by design" },
-        { type: "paragraph", content: "Pressh is open-source. Every line of code is auditable, every decision is documented, and every plugin runs in a worker sandbox with explicit capability grants." },
-      ],
-    },
-    {
-      slug: "blog",
-      title: "Blog",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "The Pressh Blog" },
-        { type: "paragraph", content: "Insights on content security, web performance, and the open web." },
-        { type: "heading", props: { level: 2 }, content: "Why we built Pressh" },
-        { type: "paragraph", content: "After watching yet another CMS get compromised by a vulnerable plugin, we decided enough was enough. The web needs a CMS that is secure by default, not as an afterthought." },
-        { type: "heading", props: { level: 2 }, content: "Getting started" },
-        { type: "paragraph", content: "Create your first content type, add some pages, and publish. The Studio walks you through every step with a clean, no-code interface." },
-      ],
-    },
-    {
-      slug: "contact",
-      title: "Contact",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "Get in Touch" },
-        { type: "paragraph", content: "Have questions, feedback, or just want to say hello? We would love to hear from you." },
-        { type: "heading", props: { level: 2 }, content: "Contributing" },
-        { type: "paragraph", content: "Pressh is open-source. Bug reports, feature requests, and pull requests are all welcome on GitHub." },
-      ],
-    },
+      {slug: "home", title: "Home", blocks: prebuiltLayoutBlocks("home") ?? []},
+      {slug: "about", title: "About", blocks: prebuiltLayoutBlocks("about") ?? []},
+      {slug: "blog", title: "Blog", blocks: prebuiltLayoutBlocks("blog") ?? []},
+      {slug: "contact", title: "Contact", blocks: prebuiltLayoutBlocks("contact") ?? []},
   ];
 
   for (const page of pages) {

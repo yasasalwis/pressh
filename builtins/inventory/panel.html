@@ -8752,12 +8752,25 @@ Error generating stack: ` + e.message + `
     })), l = n(), u = c();
 
     async function d(e, t) {
-        let n = window.presshPanel;
+        let n = typeof window < `u` ? window.presshPanel : void 0;
         if (!n || typeof n.request != `function`) throw Error(`Panel host bridge is unavailable`);
         return n.request(e, t)
     }
 
-    var f = {
+    function f(e, t, n = []) {
+        let [r, i] = (0, l.useState)(null), [a, o] = (0, l.useState)(!0), [s, c] = (0, l.useState)(null), [u, f] = (0, l.useState)(0),
+            p = (0, l.useRef)(0), m = (0, l.useCallback)(() => f(e => e + 1), []);
+        return (0, l.useEffect)(() => {
+            let n = ++p.current;
+            o(!0), c(null), d(e, t).then(e => {
+                n === p.current && (i(e), o(!1))
+            }).catch(e => {
+                n === p.current && (c(e instanceof Error ? e.message : String(e)), o(!1))
+            })
+        }, [e, u, ...n]), {data: r, loading: a, error: s, reload: m}
+    }
+
+    var p = {
         getSettings: () => d(`getSettings`),
         saveSettings: e => d(`saveSettings`, {settings: e}),
         listCategories: () => d(`listCategories`),
@@ -8782,26 +8795,26 @@ Error generating stack: ` + e.message + `
         updateReturnStatus: (e, t) => d(`updateReturnStatus`, {id: e, status: t})
     };
 
-    function p(e) {
+    function m(e) {
         return String(e ?? ``).toLowerCase().trim().replace(/['"]/g, ``).replace(/[^a-z0-9]+/g, `-`).replace(/^-+|-+$/g, ``).slice(0, 80)
     }
 
-    function m(e) {
+    function h(e) {
         let t = Object.values(e ?? {}).map(e => String(e ?? ``)).filter(Boolean);
         return t.length ? t.join(` / `) : `Default`
     }
 
-    function h(e) {
+    function g(e) {
         let t = new Date(e ?? ``);
         return isNaN(t.getTime()) ? String(e ?? ``) : t.toLocaleString()
     }
 
-    function g(e, t) {
+    function _(e, t) {
         let n = Number(t);
         return e + (Number.isFinite(n) ? n.toFixed(2) : `0.00`)
     }
 
-    function _(e) {
+    function v(e) {
         let t = [{}];
         for (let n of e) {
             let e = [];
@@ -8811,38 +8824,25 @@ Error generating stack: ` + e.message + `
         return t
     }
 
-    var v = (0, l.createContext)(null), y = v.Provider;
+    var y = (0, l.createContext)(null), b = y.Provider;
 
-    function b() {
-        let e = (0, l.useContext)(v);
+    function x() {
+        let e = (0, l.useContext)(y);
         if (!e) throw Error(`useStore must be used within StoreProvider`);
         return e
     }
 
-    function x(e) {
+    function ee(e) {
         let t = e && e.currencySymbol || `$`;
-        return e => g(t, e)
+        return e => _(t, e)
     }
 
-    function ee(e) {
+    function S(e) {
         return t => {
             if (!t) return ``;
             let n = e.find(e => e.id === t);
             return n ? n.name : `—`
         }
-    }
-
-    function S(e, t, n = []) {
-        let [r, i] = (0, l.useState)(null), [a, o] = (0, l.useState)(!0), [s, c] = (0, l.useState)(null), [u, f] = (0, l.useState)(0),
-            p = (0, l.useRef)(0), m = (0, l.useCallback)(() => f(e => e + 1), []);
-        return (0, l.useEffect)(() => {
-            let n = ++p.current;
-            o(!0), c(null), d(e, t).then(e => {
-                n === p.current && (i(e), o(!1))
-            }).catch(e => {
-                n === p.current && (c(e instanceof Error ? e.message : String(e)), o(!1))
-            })
-        }, [e, u, ...n]), {data: r, loading: a, error: s, reload: m}
     }
 
     var C = e((e => {
@@ -8910,7 +8910,7 @@ Error generating stack: ` + e.message + `
     }
 
     function ce() {
-        let {money: e} = b(), {data: t, loading: n, error: r} = S(`summary`);
+        let {money: e} = x(), {data: t, loading: n, error: r} = f(`summary`);
         if (n) return (0, w.jsx)(oe, {});
         if (r) return (0, w.jsx)(se, {children: r});
         if (!t) return null;
@@ -8990,7 +8990,7 @@ Error generating stack: ` + e.message + `
         let {
             settings: n,
             categories: r
-        } = b(), [i, a] = (0, l.useState)(e != null), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(!1), [d, h] = (0, l.useState)(!1), [g, v] = (0, l.useState)(``), [y, x] = (0, l.useState)(``), [ee, S] = (0, l.useState)(!1), [C, ne] = (0, l.useState)(``), [T, re] = (0, l.useState)(`0`), [ie, ae] = (0, l.useState)(``), [se, E] = (0, l.useState)(n && n.currency || `USD`), [ce, O] = (0, l.useState)(``), [le, ue] = (0, l.useState)(``), [de, fe] = (0, l.useState)(``), [k, A] = (0, l.useState)(``), [pe, me] = (0, l.useState)(``), [he, ge] = (0, l.useState)(``), [_e, ve] = (0, l.useState)(!0), [ye, be] = (0, l.useState)([]), [xe, Se] = (0, l.useState)([]), [Ce, we] = (0, l.useState)([D()]);
+        } = x(), [i, a] = (0, l.useState)(e != null), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(!1), [d, f] = (0, l.useState)(!1), [g, _] = (0, l.useState)(``), [y, b] = (0, l.useState)(``), [ee, S] = (0, l.useState)(!1), [C, ne] = (0, l.useState)(``), [T, re] = (0, l.useState)(`0`), [ie, ae] = (0, l.useState)(``), [se, E] = (0, l.useState)(n && n.currency || `USD`), [ce, O] = (0, l.useState)(``), [le, ue] = (0, l.useState)(``), [de, fe] = (0, l.useState)(``), [k, A] = (0, l.useState)(``), [pe, me] = (0, l.useState)(``), [he, ge] = (0, l.useState)(``), [_e, ve] = (0, l.useState)(!0), [ye, be] = (0, l.useState)([]), [xe, Se] = (0, l.useState)([]), [Ce, we] = (0, l.useState)([D()]);
         (0, l.useEffect)(() => {
             let t = !0;
 
@@ -9000,10 +9000,10 @@ Error generating stack: ` + e.message + `
                     return
                 }
                 try {
-                    let r = await f.getItem(e);
+                    let r = await p.getItem(e);
                     if (!t) return;
                     let i = r.item;
-                    h(!0), v(i.name || ``), x(i.slug || ``), S(!!i.slug), ne(i.sku || ``), re(String(i.price == null ? 0 : i.price)), ae(i.compareAtPrice == null ? `` : String(i.compareAtPrice)), E(i.currency || n && n.currency || `USD`), O(i.categoryId || ``), ue(i.lowStockThreshold == null ? `` : String(i.lowStockThreshold)), fe(i.description || ``), A(i.tags ? i.tags.join(`, `) : ``), me(i.seoTitle || ``), ge(i.seoDescription || ``), ve(!!i.published), be(i.images ? i.images.slice() : []), Se((i.options || []).map(e => ({
+                    f(!0), _(i.name || ``), b(i.slug || ``), S(!!i.slug), ne(i.sku || ``), re(String(i.price == null ? 0 : i.price)), ae(i.compareAtPrice == null ? `` : String(i.compareAtPrice)), E(i.currency || n && n.currency || `USD`), O(i.categoryId || ``), ue(i.lowStockThreshold == null ? `` : String(i.lowStockThreshold)), fe(i.description || ``), A(i.tags ? i.tags.join(`, `) : ``), me(i.seoTitle || ``), ge(i.seoDescription || ``), ve(!!i.published), be(i.images ? i.images.slice() : []), Se((i.options || []).map(e => ({
                         name: e.name,
                         values: (e.values || []).slice()
                     }))), we(i.variants && i.variants.length ? i.variants.map(e => ({
@@ -9029,17 +9029,17 @@ Error generating stack: ` + e.message + `
         }, [e, n]);
 
         function Te(e) {
-            v(e), ee || x(p(e))
+            _(e), ee || b(m(e))
         }
 
         function Ee(e) {
-            x(e), S(e.trim().length > 0)
+            b(e), S(e.trim().length > 0)
         }
 
         function De() {
-            let e = xe.filter(e => e.name && e.values.length), t = e.length ? _(e) : [{}];
+            let e = xe.filter(e => e.name && e.values.length), t = e.length ? v(e) : [{}];
             we(e => t.map(t => {
-                let n = m(t), r = e.find(e => m(e.optionValues) === n);
+                let n = h(t), r = e.find(e => h(e.optionValues) === n);
                 return r ? {...r, optionValues: t, label: n} : {
                     _existing: !1,
                     optionValues: t,
@@ -9079,7 +9079,7 @@ Error generating stack: ` + e.message + `
         async function ke() {
             u(!0), s({text: `Saving…`});
             try {
-                await f.saveItem(Oe()), t()
+                await p.saveItem(Oe()), t()
             } catch (e) {
                 s({text: e instanceof Error ? e.message : String(e), kind: `err`})
             } finally {
@@ -9089,7 +9089,7 @@ Error generating stack: ` + e.message + `
 
         async function Ae() {
             if (!(!e || !confirm(`Delete this product? This cannot be undone.`))) try {
-                await f.removeItem(e), t()
+                await p.removeItem(e), t()
             } catch (e) {
                 s({text: e instanceof Error ? e.message : String(e), kind: `err`})
             }
@@ -9260,7 +9260,7 @@ Error generating stack: ` + e.message + `
                             })
                         }), (0, w.jsx)(`tbody`, {
                             children: Ce.map((e, t) => (0, w.jsxs)(`tr`, {
-                                children: [(0, w.jsx)(`td`, {children: (0, w.jsx)(`b`, {children: e.label || m(e.optionValues)})}), (0, w.jsx)(`td`, {
+                                children: [(0, w.jsx)(`td`, {children: (0, w.jsx)(`b`, {children: e.label || h(e.optionValues)})}), (0, w.jsx)(`td`, {
                                     children: (0, w.jsx)(`input`, {
                                         style: {width: 120},
                                         placeholder: `SKU`,
@@ -9362,12 +9362,12 @@ Error generating stack: ` + e.message + `
         let {
             money: e,
             catName: t
-        } = b(), [n, r] = (0, l.useState)([]), [i, a] = (0, l.useState)(!0), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(null);
+        } = x(), [n, r] = (0, l.useState)([]), [i, a] = (0, l.useState)(!0), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(null);
 
         async function d() {
             a(!0);
             try {
-                r((await f.listItems()).items), s(null)
+                r((await p.listItems()).items), s(null)
             } catch (e) {
                 s(e instanceof Error ? e.message : String(e))
             } finally {
@@ -9379,7 +9379,7 @@ Error generating stack: ` + e.message + `
             c || d()
         }, [c]), c) return (0, w.jsx)(O, {productId: c.id, onBack: () => u(null)});
 
-        function p(t) {
+        function f(t) {
             return t.priceMin != null && t.priceMax != null && t.priceMin !== t.priceMax ? e(t.priceMin) + `–` + e(t.priceMax) : e(t.price == null ? t.priceMin : t.price)
         }
 
@@ -9420,7 +9420,7 @@ Error generating stack: ` + e.message + `
                                 })]
                             }), (0, w.jsx)(`td`, {children: t(e.categoryId)}), (0, w.jsx)(`td`, {
                                 className: `num`,
-                                children: p(e)
+                                children: f(e)
                             }), (0, w.jsxs)(`td`, {
                                 className: `num`,
                                 children: [e.totalStock == null ? 0 : e.totalStock, e.lowStock && (0, w.jsx)(`span`, {
@@ -9452,7 +9452,7 @@ Error generating stack: ` + e.message + `
             categories: e,
             catName: t,
             reloadCategories: n
-        } = b(), [r, i] = (0, l.useState)(``), [a, o] = (0, l.useState)(``), [s, c] = (0, l.useState)(``), [u, d] = (0, l.useState)(``), [p, m] = (0, l.useState)(``), [h, g] = (0, l.useState)(null);
+        } = x(), [r, i] = (0, l.useState)(``), [a, o] = (0, l.useState)(``), [s, c] = (0, l.useState)(``), [u, d] = (0, l.useState)(``), [f, m] = (0, l.useState)(``), [h, g] = (0, l.useState)(null);
 
         function _() {
             i(``), o(``), c(``), d(``), m(``), g(null)
@@ -9460,12 +9460,12 @@ Error generating stack: ` + e.message + `
 
         async function v() {
             try {
-                await f.saveCategory({
+                await p.saveCategory({
                     id: r || void 0,
                     name: a,
                     slug: s,
                     parentId: u || null,
-                    description: p
+                    description: f
                 }), _(), await n(), g({text: `Saved.`, kind: `ok`})
             } catch (e) {
                 g({text: e instanceof Error ? e.message : String(e), kind: `err`})
@@ -9474,13 +9474,13 @@ Error generating stack: ` + e.message + `
 
         async function y(e) {
             if (confirm(`Delete this category?`)) try {
-                await f.removeCategory(e), e === r && _(), await n()
+                await p.removeCategory(e), e === r && _(), await n()
             } catch (e) {
                 g({text: e instanceof Error ? e.message : String(e), kind: `err`})
             }
         }
 
-        function x(e) {
+        function b(e) {
             i(e.id), o(e.name), c(e.slug || ``), d(e.parentId || ``), m(e.description || ``), g(null)
         }
 
@@ -9517,7 +9517,7 @@ Error generating stack: ` + e.message + `
                         })]
                     }), (0, w.jsxs)(`div`, {
                         children: [(0, w.jsx)(`label`, {children: `Description`}), (0, w.jsx)(`input`, {
-                            value: p,
+                            value: f,
                             onChange: e => m(e.target.value)
                         })]
                     })]
@@ -9544,7 +9544,7 @@ Error generating stack: ` + e.message + `
                             className: `right`,
                             children: [(0, w.jsx)(`button`, {
                                 className: `btn mini`,
-                                onClick: () => x(e),
+                                onClick: () => b(e),
                                 children: `Edit`
                             }), ` `, (0, w.jsx)(`button`, {
                                 className: `btn mini danger`,
@@ -9559,12 +9559,12 @@ Error generating stack: ` + e.message + `
     }
 
     function de() {
-        let {settings: e} = b(), [t, n] = (0, l.useState)([]), [r, i] = (0, l.useState)(!0), [a, o] = (0, l.useState)(null), [s, c] = (0, l.useState)(``), [u, d] = (0, l.useState)(``), [p, m] = (0, l.useState)(`receive`), [g, _] = (0, l.useState)(`0`), [v, y] = (0, l.useState)(``), [x, ee] = (0, l.useState)(null), [S, C] = (0, l.useState)(!1), [ne, T] = (0, l.useState)([]), [re, ie] = (0, l.useState)(!1);
+        let {settings: e} = x(), [t, n] = (0, l.useState)([]), [r, i] = (0, l.useState)(!0), [a, o] = (0, l.useState)(null), [s, c] = (0, l.useState)(``), [u, d] = (0, l.useState)(``), [f, m] = (0, l.useState)(`receive`), [h, _] = (0, l.useState)(`0`), [v, y] = (0, l.useState)(``), [b, ee] = (0, l.useState)(null), [S, C] = (0, l.useState)(!1), [ne, T] = (0, l.useState)([]), [re, ie] = (0, l.useState)(!1);
 
         async function ae() {
             i(!0);
             try {
-                n((await f.listItems()).items), o(null)
+                n((await p.listItems()).items), o(null)
             } catch (e) {
                 o(e instanceof Error ? e.message : String(e))
             } finally {
@@ -9587,7 +9587,7 @@ Error generating stack: ` + e.message + `
             }
             ie(!0);
             try {
-                T((await f.listMovements(e)).movements)
+                T((await p.listMovements(e)).movements)
             } catch {
                 T([])
             } finally {
@@ -9606,19 +9606,19 @@ Error generating stack: ` + e.message + `
         }
 
         async function le() {
-            let e = parseInt(g, 10);
+            let e = parseInt(h, 10);
             if (!s || !Number.isInteger(e)) {
                 ee({text: `Enter a whole number amount.`, kind: `err`});
                 return
             }
-            let t = p === `set` ? {mode: `set`, amount: e, type: `correction`} : p === `remove` ? {
+            let t = f === `set` ? {mode: `set`, amount: e, type: `correction`} : f === `remove` ? {
                 mode: `delta`,
                 amount: -Math.abs(e),
                 type: `adjust`
             } : {mode: `delta`, amount: Math.abs(e), type: `receive`};
             C(!0);
             try {
-                let e = await f.adjustStock({itemId: s, variantId: u, reason: v, ...t});
+                let e = await p.adjustStock({itemId: s, variantId: u, reason: v, ...t});
                 n(t => t.map(t => t.id === s ? e.item : t)), _(`0`), y(``), ee({
                     text: `Stock updated.`,
                     kind: `ok`
@@ -9686,7 +9686,7 @@ Error generating stack: ` + e.message + `
                         })]
                     }), (0, w.jsxs)(`div`, {
                         children: [(0, w.jsx)(`label`, {children: `Action`}), (0, w.jsxs)(`select`, {
-                            value: p,
+                            value: f,
                             onChange: e => m(e.target.value),
                             children: [(0, w.jsx)(`option`, {
                                 value: `receive`,
@@ -9701,7 +9701,7 @@ Error generating stack: ` + e.message + `
                             type: `number`,
                             min: 0,
                             step: 1,
-                            value: g,
+                            value: h,
                             onChange: e => _(e.target.value)
                         })]
                     }), (0, w.jsxs)(`div`, {
@@ -9719,7 +9719,7 @@ Error generating stack: ` + e.message + `
                         onClick: le,
                         disabled: S,
                         children: `Apply adjustment`
-                    }), x && (0, w.jsx)(te, {text: x.text, kind: x.kind})]
+                    }), b && (0, w.jsx)(te, {text: b.text, kind: b.kind})]
                 })]
             }), (0, w.jsxs)(`div`, {
                 className: `card`,
@@ -9738,7 +9738,7 @@ Error generating stack: ` + e.message + `
                             })
                         }), (0, w.jsx)(`tbody`, {
                             children: ne.map(e => (0, w.jsxs)(`tr`, {
-                                children: [(0, w.jsx)(`td`, {children: h(e.at)}), (0, w.jsx)(`td`, {children: O(e.variantId)}), (0, w.jsx)(`td`, {children: e.type}), (0, w.jsx)(`td`, {
+                                children: [(0, w.jsx)(`td`, {children: g(e.at)}), (0, w.jsx)(`td`, {children: O(e.variantId)}), (0, w.jsx)(`td`, {children: e.type}), (0, w.jsx)(`td`, {
                                     className: `num ` + (e.qtyDelta >= 0 ? `ok` : `err`),
                                     children: (e.qtyDelta > 0 ? `+` : ``) + e.qtyDelta
                                 }), (0, w.jsx)(`td`, {
@@ -9759,14 +9759,14 @@ Error generating stack: ` + e.message + `
     var fe = [`pending`, `paid`, `fulfilled`, `cancelled`, `refunded`], k = [`card`, `cash`, `bank`, `manual`, `other`];
 
     function A({id: e, onBack: t}) {
-        let {money: n} = b(), [r, i] = (0, l.useState)(null), [a, o] = (0, l.useState)([]), [s, c] = (0, l.useState)([]), [u, d] = (0, l.useState)(!0), [p, m] = (0, l.useState)(null), [h, g] = (0, l.useState)(null), [_, v] = (0, l.useState)(`pending`), [y, x] = (0, l.useState)(`0`), [ee, S] = (0, l.useState)(`card`), [C, ne] = (0, l.useState)(`0`), [re, ae] = (0, l.useState)(`card`), [E, ce] = (0, l.useState)({}), [D, O] = (0, l.useState)(``), [le, ue] = (0, l.useState)(!0),
+        let {money: n} = x(), [r, i] = (0, l.useState)(null), [a, o] = (0, l.useState)([]), [s, c] = (0, l.useState)([]), [u, d] = (0, l.useState)(!0), [f, m] = (0, l.useState)(null), [h, g] = (0, l.useState)(null), [_, v] = (0, l.useState)(`pending`), [y, b] = (0, l.useState)(`0`), [ee, S] = (0, l.useState)(`card`), [C, ne] = (0, l.useState)(`0`), [re, ae] = (0, l.useState)(`card`), [E, ce] = (0, l.useState)({}), [D, O] = (0, l.useState)(``), [le, ue] = (0, l.useState)(!0),
             de = (0, l.useCallback)(async () => {
                 d(!0);
                 try {
-                    let t = await f.getOrder(e);
+                    let t = await p.getOrder(e);
                     i(t.order), o(t.payments), c(t.returns), v(t.order.status);
                     let n = (Number(t.order.total) || 0) - ((Number(t.order.amountPaid) || 0) - (Number(t.order.amountRefunded) || 0));
-                    x(n > 0 ? n.toFixed(2) : `0`), ne(`0`), ce({}), O(``), ue(!0), m(null)
+                    b(n > 0 ? n.toFixed(2) : `0`), ne(`0`), ce({}), O(``), ue(!0), m(null)
                 } catch (e) {
                     m(e instanceof Error ? e.message : String(e))
                 } finally {
@@ -9786,7 +9786,7 @@ Error generating stack: ` + e.message + `
         }
 
         if (u) return (0, w.jsx)(oe, {});
-        if (p) return (0, w.jsx)(se, {children: p});
+        if (f) return (0, w.jsx)(se, {children: f});
         if (!r) return null;
         let pe = (Number(r.total) || 0) - ((Number(r.amountPaid) || 0) - (Number(r.amountRefunded) || 0));
 
@@ -9799,7 +9799,7 @@ Error generating stack: ` + e.message + `
                 g({text: `Set a return quantity for at least one item.`, kind: `err`});
                 return
             }
-            A(() => f.createReturn({orderId: r.id, lines: e, reason: D, restock: le}))
+            A(() => p.createReturn({orderId: r.id, lines: e, reason: D, restock: le}))
         }
 
         return (0, w.jsxs)(`section`, {
@@ -9919,7 +9919,7 @@ Error generating stack: ` + e.message + `
                         children: fe.map(e => (0, w.jsx)(`option`, {value: e, children: e}, e))
                     }), (0, w.jsx)(`button`, {
                         className: `btn primary`,
-                        onClick: () => A(() => f.updateOrderStatus(r.id, _)),
+                        onClick: () => A(() => p.updateOrderStatus(r.id, _)),
                         children: `Apply`
                     }), h && (0, w.jsx)(te, {text: h.text, kind: h.kind})]
                 })]
@@ -9936,7 +9936,7 @@ Error generating stack: ` + e.message + `
                                 min: 0,
                                 step: .01,
                                 value: y,
-                                onChange: e => x(e.target.value)
+                                onChange: e => b(e.target.value)
                             })]
                         }), (0, w.jsxs)(`div`, {
                             children: [(0, w.jsx)(`label`, {children: `Method`}), (0, w.jsx)(`select`, {
@@ -9948,7 +9948,7 @@ Error generating stack: ` + e.message + `
                     }), (0, w.jsx)(`button`, {
                         className: `btn primary`,
                         style: {marginTop: 10},
-                        onClick: () => A(() => f.recordPayment({orderId: r.id, amount: parseFloat(y), method: ee})),
+                        onClick: () => A(() => p.recordPayment({orderId: r.id, amount: parseFloat(y), method: ee})),
                         children: `Record payment`
                     })]
                 }), (0, w.jsxs)(`div`, {
@@ -9974,7 +9974,7 @@ Error generating stack: ` + e.message + `
                     }), (0, w.jsx)(`button`, {
                         className: `btn`,
                         style: {marginTop: 10},
-                        onClick: () => A(() => f.refundPayment({orderId: r.id, amount: parseFloat(C), method: re})),
+                        onClick: () => A(() => p.refundPayment({orderId: r.id, amount: parseFloat(C), method: re})),
                         children: `Issue refund`
                     })]
                 })]
@@ -10079,7 +10079,7 @@ Error generating stack: ` + e.message + `
     }
 
     function pe() {
-        let {money: e} = b(), [t, n] = (0, l.useState)(``), [r, i] = (0, l.useState)(``), [a, o] = (0, l.useState)(``), [s, c] = (0, l.useState)([]), [u, d] = (0, l.useState)(!0), [p, m] = (0, l.useState)(null), [g, _] = (0, l.useState)(null);
+        let {money: e} = x(), [t, n] = (0, l.useState)(``), [r, i] = (0, l.useState)(``), [a, o] = (0, l.useState)(``), [s, c] = (0, l.useState)([]), [u, d] = (0, l.useState)(!0), [f, m] = (0, l.useState)(null), [h, _] = (0, l.useState)(null);
         (0, l.useEffect)(() => {
             let e = setTimeout(() => o(r), 250);
             return () => clearTimeout(e)
@@ -10088,7 +10088,7 @@ Error generating stack: ` + e.message + `
         async function v() {
             d(!0);
             try {
-                c((await f.listOrders({status: t, search: a})).orders), m(null)
+                c((await p.listOrders({status: t, search: a})).orders), m(null)
             } catch (e) {
                 m(e instanceof Error ? e.message : String(e))
             } finally {
@@ -10097,9 +10097,9 @@ Error generating stack: ` + e.message + `
         }
 
         return (0, l.useEffect)(() => {
-            g || v()
-        }, [t, a, g]), g ? (0, w.jsx)(A, {
-            id: g, onBack: () => {
+            h || v()
+        }, [t, a, h]), h ? (0, w.jsx)(A, {
+            id: h, onBack: () => {
                 _(null)
             }
         }) : (0, w.jsxs)(`section`, {
@@ -10132,7 +10132,7 @@ Error generating stack: ` + e.message + `
                     value: r,
                     onChange: e => i(e.target.value)
                 })]
-            }), u ? (0, w.jsx)(oe, {}) : p ? (0, w.jsx)(se, {children: p}) : s.length ? (0, w.jsxs)(`table`, {
+            }), u ? (0, w.jsx)(oe, {}) : f ? (0, w.jsx)(se, {children: f}) : s.length ? (0, w.jsxs)(`table`, {
                 children: [(0, w.jsx)(`thead`, {
                     children: (0, w.jsxs)(`tr`, {
                         children: [(0, w.jsx)(`th`, {children: `Order`}), (0, w.jsx)(`th`, {children: `Customer`}), (0, w.jsx)(`th`, {children: `Date`}), (0, w.jsx)(`th`, {
@@ -10144,7 +10144,7 @@ Error generating stack: ` + e.message + `
                     children: s.map(t => (0, w.jsxs)(`tr`, {
                         children: [(0, w.jsx)(`td`, {children: (0, w.jsxs)(`b`, {children: [`#`, t.number]})}), (0, w.jsx)(`td`, {children: t.customer && (t.customer.name || t.customer.email) || `—`}), (0, w.jsx)(`td`, {
                             className: `muted`,
-                            children: h(t.createdAt)
+                            children: g(t.createdAt)
                         }), (0, w.jsx)(`td`, {
                             className: `num`,
                             children: e(t.total)
@@ -10163,12 +10163,12 @@ Error generating stack: ` + e.message + `
     }
 
     function me() {
-        let {money: e} = b(), [t, n] = (0, l.useState)(``), [r, i] = (0, l.useState)([]), [a, o] = (0, l.useState)(!0), [s, c] = (0, l.useState)(null);
+        let {money: e} = x(), [t, n] = (0, l.useState)(``), [r, i] = (0, l.useState)([]), [a, o] = (0, l.useState)(!0), [s, c] = (0, l.useState)(null);
 
         async function u() {
             o(!0);
             try {
-                i((await f.listReturns(t)).returns), c(null)
+                i((await p.listReturns(t)).returns), c(null)
             } catch (e) {
                 c(e instanceof Error ? e.message : String(e))
             } finally {
@@ -10182,15 +10182,15 @@ Error generating stack: ` + e.message + `
 
         async function d(e) {
             if (confirm(`Process this return? This will restock items (if requested) and issue a refund up to the amount paid.`)) try {
-                await f.processReturn(e), await u()
+                await p.processReturn(e), await u()
             } catch (e) {
                 alert(e instanceof Error ? e.message : String(e))
             }
         }
 
-        async function p(e) {
+        async function f(e) {
             try {
-                await f.updateReturnStatus(e, `rejected`), await u()
+                await p.updateReturnStatus(e, `rejected`), await u()
             } catch (e) {
                 alert(e instanceof Error ? e.message : String(e))
             }
@@ -10239,7 +10239,7 @@ Error generating stack: ` + e.message + `
                         return (0, w.jsxs)(`tr`, {
                             children: [(0, w.jsx)(`td`, {children: (0, w.jsxs)(`b`, {children: [`#`, t.number]})}), (0, w.jsxs)(`td`, {children: [`#`, t.orderNumber]}), (0, w.jsx)(`td`, {
                                 className: `muted`,
-                                children: h(t.createdAt)
+                                children: g(t.createdAt)
                             }), (0, w.jsx)(`td`, {className: `num`, children: n}), (0, w.jsx)(`td`, {
                                 className: `num`,
                                 children: e(t.refundAmount)
@@ -10251,7 +10251,7 @@ Error generating stack: ` + e.message + `
                                     children: `Process`
                                 }), ` `, t.status === `requested` && (0, w.jsx)(`button`, {
                                     className: `btn mini danger`,
-                                    onClick: () => p(t.id),
+                                    onClick: () => f(t.id),
                                     children: `Reject`
                                 })]
                             })]
@@ -10263,7 +10263,7 @@ Error generating stack: ` + e.message + `
     }
 
     function he() {
-        let {money: e} = b(), {data: t, loading: n, error: r} = S(`listPayments`);
+        let {money: e} = x(), {data: t, loading: n, error: r} = f(`listPayments`);
         if (n) return (0, w.jsx)(oe, {});
         if (r) return (0, w.jsx)(se, {children: r});
         let i = t?.payments ?? [];
@@ -10281,7 +10281,7 @@ Error generating stack: ` + e.message + `
                     })
                 }), (0, w.jsx)(`tbody`, {
                     children: i.map(t => (0, w.jsxs)(`tr`, {
-                        children: [(0, w.jsx)(`td`, {children: h(t.at)}), (0, w.jsxs)(`td`, {children: [`#`, t.orderNumber]}), (0, w.jsx)(`td`, {children: t.kind}), (0, w.jsx)(`td`, {
+                        children: [(0, w.jsx)(`td`, {children: g(t.at)}), (0, w.jsxs)(`td`, {children: [`#`, t.orderNumber]}), (0, w.jsx)(`td`, {children: t.kind}), (0, w.jsx)(`td`, {
                             className: `num ` + (t.kind === `refund` ? `err` : `ok`),
                             children: (t.kind === `refund` ? `−` : ``) + e(t.amount)
                         }), (0, w.jsx)(`td`, {children: t.method}), (0, w.jsx)(`td`, {children: t.status}), (0, w.jsx)(`td`, {
@@ -10298,15 +10298,15 @@ Error generating stack: ` + e.message + `
         let {
             settings: e,
             reloadSettings: t
-        } = b(), [n, r] = (0, l.useState)(``), [i, a] = (0, l.useState)(`USD`), [o, s] = (0, l.useState)(`$`), [c, u] = (0, l.useState)(`0`), [d, p] = (0, l.useState)(`0`), [m, h] = (0, l.useState)(`5`), [g, _] = (0, l.useState)(null), [v, y] = (0, l.useState)(!1);
+        } = x(), [n, r] = (0, l.useState)(``), [i, a] = (0, l.useState)(`USD`), [o, s] = (0, l.useState)(`$`), [c, u] = (0, l.useState)(`0`), [d, f] = (0, l.useState)(`0`), [m, h] = (0, l.useState)(`5`), [g, _] = (0, l.useState)(null), [v, y] = (0, l.useState)(!1);
         (0, l.useEffect)(() => {
-            e && (r(e.storeName || ``), a(e.currency || `USD`), s(e.currencySymbol || `$`), u(String(e.taxRate ?? 0)), p(String(e.shippingFlat ?? 0)), h(String(e.lowStockThreshold ?? 5)))
+            e && (r(e.storeName || ``), a(e.currency || `USD`), s(e.currencySymbol || `$`), u(String(e.taxRate ?? 0)), f(String(e.shippingFlat ?? 0)), h(String(e.lowStockThreshold ?? 5)))
         }, [e]);
 
-        async function x() {
+        async function b() {
             y(!0), _({text: `Saving…`});
             try {
-                await f.saveSettings({
+                await p.saveSettings({
                     storeName: n,
                     currency: i,
                     currencySymbol: o,
@@ -10370,7 +10370,7 @@ Error generating stack: ` + e.message + `
                             min: 0,
                             step: .01,
                             value: d,
-                            onChange: e => p(e.target.value)
+                            onChange: e => f(e.target.value)
                         })]
                     })]
                 }), (0, w.jsxs)(`div`, {
@@ -10378,7 +10378,7 @@ Error generating stack: ` + e.message + `
                     style: {marginTop: 12},
                     children: [(0, w.jsx)(`button`, {
                         className: `btn primary`,
-                        onClick: x,
+                        onClick: b,
                         disabled: v,
                         children: `Save settings`
                     }), g && (0, w.jsx)(te, {text: g.text, kind: g.kind})]
@@ -10392,20 +10392,20 @@ Error generating stack: ` + e.message + `
     function ve() {
         let [e, t] = (0, l.useState)(`dashboard`), [n, r] = (0, l.useState)(null), [i, a] = (0, l.useState)([]),
             o = (0, l.useCallback)(async () => {
-                let e = await f.getSettings().catch(() => null);
+                let e = await p.getSettings().catch(() => null);
                 e && r(e.settings)
             }, []), s = (0, l.useCallback)(async () => {
-                let e = await f.listCategories().catch(() => null);
+                let e = await p.listCategories().catch(() => null);
                 a(e && e.categories || [])
             }, []);
         return (0, l.useEffect)(() => {
             o(), s()
-        }, [o, s]), (0, w.jsx)(y, {
+        }, [o, s]), (0, w.jsx)(b, {
             value: (0, l.useMemo)(() => ({
                 settings: n,
                 categories: i,
-                money: x(n),
-                catName: ee(i),
+                money: ee(n),
+                catName: S(i),
                 reloadCategories: s,
                 reloadSettings: o
             }), [n, i, s, o]),

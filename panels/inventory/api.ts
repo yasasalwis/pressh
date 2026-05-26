@@ -1,4 +1,4 @@
-import {request} from "../shared/bridge";
+import {request} from "@pressh/panel-kit";
 import type {Category, DashboardSummary, Movement, Order, Payment, Product, ReturnRecord, Settings,} from "./types";
 
 // Payload shapes sent to the host (the plugin normalises/validates server-side).
