@@ -143,8 +143,9 @@ function connectionErrorMessage(backend: StorageBackend, resolvedPath: string | 
   if (backend === "sqlite") {
     return (
         `Could not open the SQLite database${resolvedPath ? ` at "${resolvedPath}"` : ""}. ` +
-        `Make sure the location is writable — a relative path like "pressh.sqlite" is saved inside the data directory, ` +
-        `while a path like "/pressh.sqlite" points at the filesystem root, which is usually not writable. (${reason})`
+        `The path is confined to the data directory (a value like "pressh.sqlite" or "db/pressh.sqlite" ` +
+        `is stored there); a path that points outside the data directory is rejected. ` +
+        `Make sure the location is writable. (${reason})`
     );
   }
   const label = CONNECTORS.find((c) => c.backend === backend)?.label ?? backend;

@@ -1,0 +1,177 @@
+import {useState} from "react";
+import {api} from "../../api";
+import {ErrorCard, Loading, RowHead, useLoader, useToast} from "../ui";
+
+interface Smtp {
+    host?: string;
+    port?: number;
+    fromEmail?: string;
+    username?: string;
+    secure?: boolean;
+    hasPassword?: boolean;
+}
+
+interface SettingsData {
+    baseUrl?: string;
+    defaultLocale?: string;
+    timezone?: string;
+    maintenanceMode?: boolean;
+    smtp?: Smtp;
+    smtpAvailable?: boolean;
+}
+
+export function Settings() {
+    const {data, loading, error} = useLoader<SettingsData>(
+        async () => (await api<{ settings?: SettingsData }>("/admin/api/settings")).body.settings || {},
+    );
+    if (loading) return <Loading/>;
+    if (error) return <ErrorCard message={error}/>;
+    if (!data) return null;
+    return <SettingsForm initial={data}/>;
+}
+
+function SettingsForm({initial}: { initial: SettingsData }) {
+    const toast = useToast();
+    const smtp = initial.smtp || {};
+    const [baseUrl, setBaseUrl] = useState(initial.baseUrl || "");
+    const [locale, setLocale] = useState(initial.defaultLocale || "en");
+    const [tz, setTz] = useState(initial.timezone || "UTC");
+    const [maint, setMaint] = useState(!!initial.maintenanceMode);
+    const [host, setHost] = useState(smtp.host || "");
+    const [port, setPort] = useState(String(smtp.port || 587));
+    const [from, setFrom] = useState(smtp.fromEmail || "");
+    const [user, setUser] = useState(smtp.username || "");
+    const [pass, setPass] = useState("");
+    const [secure, setSecure] = useState(!!smtp.secure);
+    const [error, setError] = useState("");
+
+    async function save() {
+        setError("");
+        const body: Record<string, unknown> = {
+            baseUrl: baseUrl.trim(),
+            defaultLocale: locale.trim(),
+            timezone: tz.trim(),
+            maintenanceMode: maint,
+        };
+        if (host.trim()) {
+            body["smtp"] = {
+                host: host.trim(),
+                port: Number(port) || 587,
+                secure,
+                fromEmail: from.trim(),
+                username: user.trim(),
+            };
+            if (pass) body["smtpPassword"] = pass;
+        }
+        const r = await api("/admin/api/settings", {method: "PUT", body: JSON.stringify(body)});
+        if (r.status === 200) toast("Settings saved");
+        else setError("Could not save — check the base URL, locale (e.g. en or en-US), timezone, and SMTP fields.");
+    }
+
+    async function clearSmtp() {
+        const r = await api("/admin/api/settings", {method: "PUT", body: JSON.stringify({smtp: null})});
+        if (r.status === 200) {
+            toast("SMTP configuration removed");
+            setHost("");
+            setPort("587");
+            setFrom("");
+            setUser("");
+            setPass("");
+            setSecure(false);
+        } else toast("Failed", true);
+    }
+
+    return (
+        <>
+            <RowHead title="Settings">
+                <button className="btn-sm" onClick={save}>
+                    Save changes
+                </button>
+            </RowHead>
+
+            <div className="card">
+                <h3>General</h3>
+                <div className="field-grid">
+                    <div className="full">
+                        <label>Public base URL</label>
+                        <input placeholder="https://example.com" value={baseUrl}
+                               onChange={(e) => setBaseUrl(e.target.value)}/>
+                    </div>
+                    <div>
+                        <label>Default locale</label>
+                        <input placeholder="en" value={locale} onChange={(e) => setLocale(e.target.value)}/>
+                    </div>
+                    <div>
+                        <label>Timezone</label>
+                        <input placeholder="UTC" value={tz} onChange={(e) => setTz(e.target.value)}/>
+                    </div>
+                </div>
+            </div>
+
+            <div className="card">
+                <h3>Maintenance mode</h3>
+                <p className="hint">
+                    When on, the public site returns HTTP 503 and serves your Maintenance page to every visitor. The
+                    admin
+                    Studio stays reachable. Edit the page under Pages · System pages.
+                </p>
+                <label className="dp-check-row">
+                    <input type="checkbox" checked={maint} onChange={(e) => setMaint(e.target.checked)}/>
+                    <span>Take the public site offline for maintenance</span>
+                </label>
+            </div>
+
+            <div className="card">
+                <h3>Email (SMTP)</h3>
+                <p className="hint">
+                    Used for invitations and notifications. The password is sealed in the secrets vault.
+                </p>
+                {!initial.smtpAvailable && (
+                    <div className="notice">
+                        Secrets vault not configured — set PRESSH_MASTER_KEY to store SMTP credentials.
+                    </div>
+                )}
+                <div className="field-grid">
+                    <div>
+                        <label>Host</label>
+                        <input value={host} onChange={(e) => setHost(e.target.value)}/>
+                    </div>
+                    <div>
+                        <label>Port</label>
+                        <input type="number" value={port} onChange={(e) => setPort(e.target.value)}/>
+                    </div>
+                    <div>
+                        <label>From address</label>
+                        <input value={from} onChange={(e) => setFrom(e.target.value)}/>
+                    </div>
+                    <div>
+                        <label>Username</label>
+                        <input value={user} onChange={(e) => setUser(e.target.value)}/>
+                    </div>
+                    <div className="full">
+                        <label>Password {smtp.hasPassword && <span className="tag">set</span>}</label>
+                        <input
+                            type="password"
+                            placeholder={smtp.hasPassword ? "unchanged" : "Enter SMTP password"}
+                            disabled={!initial.smtpAvailable}
+                            value={pass}
+                            onChange={(e) => setPass(e.target.value)}
+                        />
+                    </div>
+                    <div className="full">
+                        <label className="dp-check-row">
+                            <input type="checkbox" checked={secure} onChange={(e) => setSecure(e.target.checked)}/>
+                            <span>Use TLS (secure)</span>
+                        </label>
+                    </div>
+                </div>
+                <div style={{marginTop: ".6rem"}}>
+                    <button className="ghost danger" onClick={clearSmtp}>
+                        Remove SMTP config
+                    </button>
+                </div>
+                {error && <div className="alert">{error}</div>}
+            </div>
+        </>
+    );
+}

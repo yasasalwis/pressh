@@ -57,7 +57,7 @@ export function typedTableConformanceTests(
                 "plugin_state",
                 "media",
                 "consent_records",
-                "settings",
+                "gdpr_tombstones",
             ]) {
                 const page = await store.query(coll, {}, {limit: 500});
                 if (page.ok) for (const item of page.value.items) await store.delete(coll, item.id);
@@ -232,13 +232,10 @@ export function typedTableConformanceTests(
             expect(unwrap(await store.query("consent_records", {where: {subjectRef: "a@b.c"}})).items).toHaveLength(1);
         });
 
-        it("round-trips settings (nested JSON null preserved, optional fields omitted)", async () => {
-            const s = {id: "general", baseUrl: "https://x", defaultLocale: "en", timezone: "UTC", smtp: null};
-            unwrap(await store.put("settings", s));
-            const got = unwrap(await store.get<Record<string, unknown>>("settings", "general"));
-            expect(got).toEqual(s);
-            expect("maintenanceMode" in (got as object)).toBe(false); // optional + absent ⇒ omitted
-            expect(got?.["smtp"]).toBeNull(); // meaningful null preserved
+        it("round-trips a GDPR tombstone", async () => {
+            const t = {id: "tomb1", subject: "deadbeef-hash", erasedCount: 3, erasedAt: "2026-01-01T00:00:00.000Z"};
+            unwrap(await store.put("gdpr_tombstones", t));
+            expect(unwrap(await store.get("gdpr_tombstones", "tomb1"))).toEqual(t);
         });
     });
 }

@@ -7,6 +7,17 @@ export function setCsrf(token: string): void {
     csrf = token || "";
 }
 
+/** Multipart upload (e.g. media) — sends FormData with the CSRF header, no JSON content-type. */
+export async function uploadFile<T = unknown>(path: string, file: File): Promise<{ status: number; body: T }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const headers: Record<string, string> = {};
+    if (csrf) headers["x-csrf-token"] = csrf;
+    const res = await fetch(path, {method: "POST", credentials: "same-origin", headers, body: fd});
+    const body = (await res.json().catch(() => ({}))) as T;
+    return {status: res.status, body};
+}
+
 export interface ApiResult<T> {
     status: number;
     body: T;

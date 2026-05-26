@@ -40,16 +40,27 @@ function isBackend(value: unknown): value is StorageBackend {
  * would otherwise resolve against each process's `cwd` — the Studio and Site run
  * as separate processes and a supervisor may restart them from a different
  * directory, so a relative path could silently point at different (empty) files.
- * Absolute paths and the in-memory marker ":memory:" pass through unchanged.
+ * The in-memory marker ":memory:" passes through unchanged.
  *
- * A relative path is CONFINED to `baseDir`: a value like "../../etc/cron.d/x"
- * is rejected so an operator-supplied SQLite path (DB Manager) can never read,
- * write, or — on cutover cleanup — delete files outside the data directory.
+ * Both relative AND absolute paths are CONFINED to `baseDir`. A relative
+ * "../../etc/cron.d/x" or an absolute "/etc/cron.d/x" is rejected, so an
+ * operator-supplied SQLite path (DB Manager) can never read, write, or — on
+ * cutover cleanup, which `rm`s the old path — delete files outside the data
+ * directory. (Absolute paths used to pass through unchecked; that let an
+ * authenticated operator turn the cutover into an arbitrary-host-file delete.)
+ * An absolute path that already lives inside the data dir is accepted as-is.
  */
 export function resolveStoragePath(baseDir: string | undefined, path: string): string {
-  if (path === ":memory:" || isAbsolute(path) || !baseDir) return path;
+    // The in-memory marker is never a filesystem path.
+    if (path === ":memory:") return path;
+    // With no data directory to confine against (e.g. tests, or a context that
+    // does not persist files), there is nothing to resolve — leave it untouched.
+    if (!baseDir) return path;
     const base = resolvePath(baseDir);
-    const target = resolvePath(base, path);
+    // Normalize relative inputs against the data dir and absolute inputs in place,
+    // then confine the result identically: anything resolving outside `base` is
+    // rejected. `resolvePath` collapses any `..` segments before the prefix check.
+    const target = isAbsolute(path) ? resolvePath(path) : resolvePath(base, path);
     if (target !== base && !target.startsWith(base + sep)) {
         throw new PressError("validation", `Storage path escapes the data directory: ${path}`);
     }

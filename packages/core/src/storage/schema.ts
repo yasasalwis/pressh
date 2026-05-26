@@ -182,18 +182,19 @@ export const TABLE_SPECS: readonly TableSpec[] = [
         indexes: ["subjectRef"], // GDPR export/erase queries by subject
     },
     {
-        collection: "settings",
-        table: "settings",
+      collection: "gdpr_tombstones",
+      table: "gdpr_tombstones",
         columns: [
-            {field: "baseUrl", kind: "text"},
-            {field: "defaultLocale", kind: "text"},
-            {field: "timezone", kind: "text"},
-            {field: "smtp", kind: "json"}, // SmtpSettings | null — null is meaningful, kept
-            {field: "headerNav", kind: "json", optional: true},
-            {field: "connectedSources", kind: "json", optional: true},
-            {field: "maintenanceMode", kind: "boolean", optional: true},
+          {field: "subject", kind: "text"}, // subject HASH only — no raw PII retained
+          {field: "erasedCount", kind: "integer"},
+          {field: "erasedAt", kind: "text"},
         ],
     },
+  // NOTE: `settings` is intentionally NOT normalized. It is a POLYMORPHIC
+  // singleton collection — it holds both the `general` settings doc and the
+  // `theme` doc (different shapes) keyed by id — so a single typed table can't
+  // model it. It stays in the document store, where heterogeneous shapes
+  // round-trip losslessly.
 ];
 
 export function tableSpecFor(collection: string): TableSpec | undefined {
