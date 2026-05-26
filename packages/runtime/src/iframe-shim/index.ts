@@ -35,9 +35,13 @@ export const PANEL_SHIM_JS = `(function(){
   };
 })();`;
 
-/** Builds the iframe element the Studio embeds. No `allow-same-origin`. */
+/**
+ * Builds the iframe element the Studio embeds. No `allow-same-origin`. The panel
+ * opens in its own dedicated tab, so the frame fills the viewport (the panel's
+ * own document scrolls for overflow) rather than clipping at a fixed height.
+ */
 export function panelFrameTag(src: string): string {
-  return `<iframe class="pressh-panel" sandbox="allow-scripts allow-forms" src="${escapeHtml(src)}" title="Plugin panel" style="width:100%;border:0;min-height:480px"></iframe>`;
+    return `<iframe class="pressh-panel" sandbox="allow-scripts allow-forms" src="${escapeHtml(src)}" title="Plugin panel" style="display:block;width:100%;height:100vh;border:0;min-height:480px"></iframe>`;
 }
 
 /** Wraps a plugin's panel body into a full document with the shim injected. */

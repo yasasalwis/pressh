@@ -1,0 +1,306 @@
+:root {
+    color-scheme: light dark;
+    --bd: #e5e7eb;
+    --mut: #6b7280;
+    --pri: #2563eb;
+    --bg: #fff;
+    --fg: #1f2937;
+    --soft: #f8fafc;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bd: #1f2a44;
+        --mut: #94a3b8;
+        --bg: #0b1220;
+        --fg: #e5e7eb;
+        --soft: #0f1730;
+    }
+
+    input,
+    textarea,
+    select {
+        background: #0b1220 !important;
+        color: #e5e7eb !important;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font: 14px/1.5 system-ui, sans-serif;
+    margin: 0;
+    padding: 0;
+    color: var(--fg);
+    background: var(--bg);
+}
+
+.wrap {
+    padding: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+h2 {
+    font-size: 17px;
+    margin: 0 0 4px;
+}
+
+h3 {
+    font-size: 14px;
+    margin: 0 0 10px;
+}
+
+.sub {
+    color: var(--mut);
+    margin: 0 0 16px;
+    font-size: 12.5px;
+}
+
+.tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--bd);
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.tab {
+    padding: 8px 14px;
+    border: none;
+    background: none;
+    color: var(--mut);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
+
+.tab.active {
+    color: var(--pri);
+    border-bottom-color: var(--pri);
+}
+
+.card {
+    border: 1px solid var(--bd);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+    background: var(--bg);
+}
+
+label {
+    display: block;
+    font-size: 12px;
+    color: var(--mut);
+    margin: 10px 0 2px;
+    font-weight: 600;
+}
+
+input,
+textarea,
+select {
+    width: 100%;
+    font: inherit;
+    padding: 7px 9px;
+    border: 1px solid var(--bd);
+    border-radius: 7px;
+    color: inherit;
+    background: var(--bg);
+}
+
+input[type="checkbox"] {
+    width: auto;
+}
+
+.grid {
+    display: grid;
+    gap: 10px;
+}
+
+.g2 {
+    grid-template-columns: 1fr 1fr;
+}
+
+.g3 {
+    grid-template-columns: 1fr 1fr 1fr;
+}
+
+.g4 {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 640px) {
+    .g2,
+    .g3,
+    .g4 {
+        grid-template-columns: 1fr;
+    }
+}
+
+.row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.between {
+    justify-content: space-between;
+}
+
+button.btn {
+    font: inherit;
+    padding: 7px 13px;
+    border-radius: 7px;
+    border: 1px solid var(--bd);
+    background: var(--soft);
+    color: inherit;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+button.btn:hover {
+    border-color: var(--pri);
+}
+
+button.btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+button.primary {
+    background: var(--pri);
+    color: #fff;
+    border-color: var(--pri);
+}
+
+button.danger {
+    color: #dc2626;
+    border-color: #dc262633;
+}
+
+button.link {
+    background: none;
+    border: none;
+    color: var(--pri);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    padding: 4px;
+}
+
+button.mini {
+    padding: 3px 8px;
+    font-size: 12px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+th,
+td {
+    text-align: left;
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--bd);
+    vertical-align: middle;
+}
+
+th {
+    color: var(--mut);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.num {
+    text-align: right;
+}
+
+.muted {
+    color: var(--mut);
+}
+
+.err {
+    color: #dc2626;
+}
+
+.ok {
+    color: #16a34a;
+}
+
+.tag {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: #16a34a22;
+    color: #16a34a;
+    font-weight: 600;
+}
+
+.tag.off {
+    background: #64748b22;
+    color: #64748b;
+}
+
+.tag.low {
+    background: #f59e0b22;
+    color: #b45309;
+}
+
+.pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 7px;
+    border: 1px solid var(--bd);
+    border-radius: 10px;
+    margin: 2px 2px 0 0;
+}
+
+.thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--bd);
+    background: var(--soft);
+}
+
+.right {
+    text-align: right;
+}
+
+.imgrow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.msg {
+    font-size: 12.5px;
+    min-height: 18px;
+}
+
+.empty {
+    color: var(--mut);
+    padding: 24px;
+    text-align: center;
+    border: 1px dashed var(--bd);
+    border-radius: 10px;
+}
+
+details > summary {
+    cursor: pointer;
+}
+
+.kpi {
+    font-size: 24px;
+    font-weight: 800;
+}

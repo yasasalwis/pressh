@@ -13,6 +13,7 @@
 import {safeUrl} from "../url.js";
 import {compileTreeCss, nodeClass, typeClass} from "./css.js";
 import {renderIcon} from "./icons.js";
+import {assertTreeWithinLimits} from "./limits.js";
 import type {CollectionItem, CollectionQuery, PrimitiveNode, PrimitiveRenderContext, RenderResult,} from "./types.js";
 
 export interface RenderOptions {
@@ -304,6 +305,10 @@ export async function renderTree(
   ctx: PrimitiveRenderContext = NO_CTX,
   opts: RenderOptions = {},
 ): Promise<RenderResult> {
+    // Bound the work BEFORE the recursive render/CSS passes: the tree is
+    // attacker-influenced (a stored designer layout, or the studio preview body),
+    // so an unbounded one would be a CPU/stack DoS. Throws `validation` (400).
+    assertTreeWithinLimits(nodes);
   const env: RenderEnv = { ctx, editor: opts.editor === true };
   const parts: string[] = [];
   for (const node of nodes) parts.push(await renderNode(node, env, null));

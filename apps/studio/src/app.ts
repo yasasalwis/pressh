@@ -24,6 +24,20 @@ import type {MigrationLock} from "./migration-lock.js";
 import type {DbManagerService, StartMigrationInput} from "./db-manager.js";
 import {ADMIN_HTML} from "./admin-html.js";
 
+// React admin bundle (built by scripts/build-admin.mjs into dist/admin-next.html,
+// a sibling of this compiled module). Read once and cached; `null` when absent.
+let _adminNextHtml: string | null | undefined;
+
+async function readAdminNextHtml(): Promise<string | null> {
+    if (_adminNextHtml !== undefined) return _adminNextHtml;
+    try {
+        _adminNextHtml = await readFile(new URL("admin-next.html", import.meta.url), "utf8");
+    } catch {
+        _adminNextHtml = null;
+    }
+    return _adminNextHtml;
+}
+
 /** Source of plugin admin panels (wired from the PluginHost in the bootstrap). */
 export interface PanelProvider {
   list(): Promise<{ plugin: string; title: string }[]>;
@@ -276,6 +290,21 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   // --- served admin client ---
   app.get("/", (c) => c.html(ADMIN_HTML));
   app.get("/admin", (c) => c.html(ADMIN_HTML));
+
+    // React admin (migration preview) — served from the inlined bundle built by
+    // `npm run build:admin`. Parallel to /admin so the legacy client stays live
+    // until the React migration is complete. 404s until the bundle is built.
+    app.get("/admin/next", async (c) => {
+        const html = await readAdminNextHtml();
+        if (!html) return c.text("React admin not built — run: npm run build:admin", 404);
+        c.header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; " +
+            "img-src 'self' https: data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'",
+        );
+        c.header("X-Content-Type-Options", "nosniff");
+        return c.html(html);
+    });
 
   // --- first-run setup wizard (WordPress-style) ---
   // Public, but works ONLY while zero users exist; permanently disabled after.
@@ -587,8 +616,15 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.post("/admin/api/preview/render", requireSession, async (c) => {
     const body = await c.req.json<{ nodes: PrimitiveNode[] }>();
     const nodes = Array.isArray(body.nodes) ? body.nodes : [];
-    const { html, css } = await renderTree(nodes, makeDesignerContext(), { editor: true });
-    return c.json({ html, css });
+      try {
+          // renderTree caps node count + nesting depth, so an oversized preview
+          // body can't exhaust this (main-thread) request — it throws `validation`.
+          const {html, css} = await renderTree(nodes, makeDesignerContext(), {editor: true});
+          return c.json({html, css});
+      } catch (error) {
+          const {status, code} = mapError(error);
+          return c.json({error: {code, message: code}}, status);
+      }
   });
 
   // --- media upload (validated, stored outside web root) ---

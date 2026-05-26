@@ -72,6 +72,8 @@ export { registerBuiltinComponents } from "./components/builtin/index.js";
 export { renderLayout, collectStyles } from "./components/render.js";
 export { renderTree } from "./primitives/render.js";
 export type { RenderOptions } from "./primitives/render.js";
+export {assertTreeWithinLimits, MAX_TREE_NODES, MAX_TREE_DEPTH} from "./primitives/limits.js";
+export type {TreeLimits} from "./primitives/limits.js";
 export {
   compileTreeCss,
   compileNodeCss,

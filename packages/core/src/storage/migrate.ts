@@ -2,11 +2,39 @@ import {PressError} from "../errors.js";
 import type {Result} from "../result.js";
 import {err, ok} from "../result.js";
 import {createFileSystemStorage} from "./fs-adapter.js";
+import {TABLE_SPECS} from "./schema.js";
 import type {Page, StorageAdapter, StoredDoc} from "./types.js";
 
 function take<T>(result: Result<T>): T {
   if (!result.ok) throw result.error;
   return result.value;
+}
+
+/**
+ * Orders collections so a normalized table's FK-referenced collection is copied
+ * BEFORE it (e.g. `users` before `sessions`); otherwise a target with enforced
+ * foreign keys rejects the child rows. Non-normalized collections keep their
+ * given order. Stable topological sort over TABLE_SPECS' foreign keys.
+ */
+function orderByDependency(collections: string[]): string[] {
+    const specByCollection = new Map(TABLE_SPECS.map((s) => [s.collection, s]));
+    const tableToCollection = new Map(TABLE_SPECS.map((s) => [s.table, s.collection]));
+    const present = new Set(collections);
+    const result: string[] = [];
+    const added = new Set<string>();
+    const visit = (c: string, stack: Set<string>): void => {
+        if (added.has(c) || stack.has(c)) return;
+        stack.add(c);
+        for (const fk of specByCollection.get(c)?.foreignKeys ?? []) {
+            const ref = tableToCollection.get(fk.refTable);
+            if (ref && ref !== c && present.has(ref)) visit(ref, stack);
+        }
+        stack.delete(c);
+        added.add(c);
+        result.push(c);
+    };
+    for (const c of collections) visit(c, new Set());
+    return result;
 }
 
 /**
@@ -18,7 +46,7 @@ export async function migrateStorage(
   to: StorageAdapter,
 ): Promise<Result<{ collections: number; records: number }>> {
   try {
-    const collections = take(await from.listCollections());
+      const collections = orderByDependency(take(await from.listCollections()));
     let records = 0;
     for (const collection of collections) {
       let cursor: string | null = null;

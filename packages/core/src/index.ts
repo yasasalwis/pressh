@@ -30,6 +30,12 @@ export type { FileSystemStorageOptions } from "./storage/fs-adapter.js";
 export { runMigrations } from "./storage/migrations.js";
 export type { Cursor, Filter, Page, StorageAdapter, StoredDoc } from "./storage/types.js";
 export {journaledTransaction} from "./storage/transaction.js";
+export {STORAGE_INDEXES, STORAGE_INDEX_FIELDS} from "./storage/indexes.js";
+export type {StorageIndex} from "./storage/indexes.js";
+export {TABLE_SPECS, tableSpecFor} from "./storage/schema.js";
+export type {ColumnKind, ColumnSpec, ForeignKeySpec, TableSpec} from "./storage/schema.js";
+export {docToRow, fromStore, rowToDoc, toStore, typedColumns} from "./storage/typed-mapper.js";
+export type {SqlValue} from "./storage/typed-mapper.js";
 export { createStorageFromConfig, migrateStorage } from "./storage/migrate.js";
 export type { StorageConfig, StorageFactory } from "./storage/migrate.js";
 export {

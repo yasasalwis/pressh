@@ -1,6 +1,7 @@
-import { describe, it } from "vitest";
-import { storageConformanceTests } from "../../conformance";
-import { createPostgresStorage } from "@pressh/adapter-postgres";
+import {describe, it} from "vitest";
+import {storageConformanceTests} from "../../conformance";
+import {typedTableConformanceTests} from "../../typed-conformance";
+import {createPostgresStorage} from "@pressh/adapter-postgres";
 
 // Requires a throwaway Postgres DB. Set PRESSH_TEST_PG_URL to run; otherwise skipped.
 const url = process.env["PRESSH_TEST_PG_URL"];
@@ -24,6 +25,12 @@ if (url) {
     },
     (adapter) => adapter.close(),
   );
+
+    typedTableConformanceTests(
+        "postgres",
+        () => createPostgresStorage({connectionString: url}),
+        (adapter) => adapter.close(),
+    );
 } else {
   describe.skip("StorageAdapter conformance: postgres (set PRESSH_TEST_PG_URL)", () => {
     it("skipped — no live database", () => undefined);

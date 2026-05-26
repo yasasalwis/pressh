@@ -19,4 +19,11 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+    {
+        // React panel sources + app client bundles run in the browser/iframe.
+        files: ["panels/**/*.{ts,tsx}", "apps/*/src/client/**/*.{ts,tsx}"],
+        languageOptions: {
+            globals: globals.browser,
+        },
+    },
 );
