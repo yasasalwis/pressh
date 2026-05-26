@@ -9,11 +9,12 @@
  * so plugin authors write React + TS instead of raw HTML + vanilla JS.
  *
  * The companion `pressh-build-panel` CLI (this package's `bin`) bundles a panel's
- * `main.tsx` into the single self-contained `panel.html` the iframe requires.
+ * `main.tsx` into the single self-contained `panel.js` the iframe requires (React
+ * + CSS inlined); the Studio generates the surrounding iframe document.
  */
+import type {ReactNode} from "react";
 import {useCallback, useEffect, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
-import type {ReactNode} from "react";
 
 export interface PresshPanelBridge {
     request<T = unknown>(action: string, payload?: unknown): Promise<T>;

@@ -19,7 +19,7 @@ import type {
 } from "@pressh/engine";
 import {DESIGNER_LAYOUT_BLOCK, renderTree, SYSTEM_SLUGS} from "@pressh/engine";
 import type {RenderCache} from "./cache.js";
-import {escapeHtml, renderNotFound, renderPage} from "./render.js";
+import {escapeHtml, renderMaintenanceFallback, renderNotFound, renderPage, renderServerError,} from "./render.js";
 import {Blocks} from "./components/Blocks.js";
 import {Page} from "./components/Page.js";
 import {getClientAssets} from "./manifest.js";
@@ -260,10 +260,7 @@ async function renderMaintenancePage(deps: SiteAppDeps): Promise<string> {
     }
     return renderPage({ title, body: bodyHtml, locale: resolved.locale });
   } catch {
-    return renderPage({
-      title: "Down for maintenance",
-      body: "<h1>We&rsquo;ll be right back</h1><p>The site is temporarily offline for scheduled maintenance. Please check back shortly.</p>",
-    });
+    return renderMaintenanceFallback();
   }
 }
 
@@ -652,7 +649,7 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       }
       const errorPage =
           (await renderSystemDocument(deps, SYSTEM_SLUGS.serverError)) ??
-          renderPage({title: "Error", body: "<h1>500 — Server error</h1>"});
+          renderServerError();
       c.set("styleCsp", styleSrcDirective(errorPage));
       return c.html(errorPage, 500);
     }

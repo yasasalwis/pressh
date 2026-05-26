@@ -1,25 +1,23 @@
 #!/usr/bin/env node
 // pressh-build-panel — bundles a React + TS plugin admin panel into the single
-// self-contained `panel.html` the sandboxed Pressh iframe requires.
+// self-contained `panel.js` the sandboxed Pressh iframe requires (React + CSS
+// inlined). The Studio wraps it in the iframe document with the host bridge.
 //
 //   pressh-build-panel <entry> [--out <file>] [--root <dir>]
 //
 //   <entry>        Panel entry module (e.g. src/main.tsx).
-//   --out, -o      Output HTML file. Default: ./panel.html
+//   --out, -o      Output JS file. Default: ./panel.js
 //   --root         Vite root used to resolve node_modules. Default: entry's dir.
-//
-// The output is the panel BODY (a `<div id="pressh-root">` + inline <style> +
-// inline <script>); the Studio wraps it with the host bridge before serving it.
 
-import {buildPanelHtml} from "../build/index.mjs";
-import {writeFile, mkdir} from "node:fs/promises";
+import {buildPanelScript} from "../build/index.mjs";
+import {mkdir, writeFile} from "node:fs/promises";
 import {existsSync} from "node:fs";
 import {dirname, resolve} from "node:path";
 
 const USAGE = `Usage: pressh-build-panel <entry> [--out <file>] [--root <dir>]
 
   <entry>      Panel entry module (e.g. src/main.tsx)
-  --out, -o    Output HTML file (default: ./panel.html)
+  --out, -o    Output JS file (default: ./panel.js)
   --root       Vite root for node_modules resolution (default: entry's dir)
   --help, -h   Show this help`;
 
@@ -60,13 +58,13 @@ async function main() {
 
     const entry = resolve(process.cwd(), opts.entry);
     if (!existsSync(entry)) fail(`entry not found: ${entry}`);
-    const out = resolve(process.cwd(), opts.out ?? "panel.html");
+    const out = resolve(process.cwd(), opts.out ?? "panel.js");
     const root = opts.root ? resolve(process.cwd(), opts.root) : undefined;
 
-    const {html, jsBytes, cssBytes} = await buildPanelHtml({entry, root});
+    const {script, jsBytes, cssBytes} = await buildPanelScript({entry, root});
 
     await mkdir(dirname(out), {recursive: true});
-    await writeFile(out, html, "utf8");
+    await writeFile(out, script, "utf8");
 
     console.log(
         `Built ${out} — ${(jsBytes / 1024).toFixed(0)}KB js` +

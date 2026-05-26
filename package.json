@@ -16,7 +16,7 @@
     "build": "tsc -b && npm run build:admin && npm run build:panels && npm run sign:builtins && vite build --config apps/site/vite.config.ts && npm run bundle",
     "build:admin": "node scripts/build-admin.mjs",
     "build:panels": "node scripts/build-panels.mjs",
-    "build:hello": "pressh-build-panel plugins/hello/panel-src/main.tsx --out plugins/hello/panel.html",
+    "build:hello": "pressh-build-panel plugins/hello/panel-src/main.tsx --out plugins/hello/panel.js",
     "bundle": "node scripts/bundle.mjs",
     "sign:builtins": "node scripts/sign-builtins.mjs",
     "typecheck": "tsc -b",

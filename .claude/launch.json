@@ -24,6 +24,15 @@
         "PRESSH_CONTENT_ROOT=/tmp/pressh-verify/content PRESSH_MEDIA_ROOT=/tmp/pressh-verify/media PRESSH_STUDIO_PORT=4173 PRESSH_MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef npx tsx apps/studio/src/server.ts"
       ],
       "port": 4173
+    },
+    {
+      "name": "site-verify",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "PRESSH_CONTENT_ROOT=/tmp/pressh-smoke/content PRESSH_SITE_PORT=4300 PRESSH_BUILTINS_DIR=/Users/yasasalwis/WebstormProjects/pressh/builtins node apps/site/dist/server.js"
+      ],
+      "port": 4300
     }
   ]
 }

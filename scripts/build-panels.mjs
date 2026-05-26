@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // Builds each first-party React+TS plugin panel under `panels/<plugin>/main.tsx`
-// into a single self-contained `builtins/<plugin>/panel.html`.
+// into a single self-contained `builtins/<plugin>/panel.js`.
 //
-// The actual bundling + inlining is the shared `buildPanelHtml` from
+// The actual bundling + inlining is the shared `buildPanelScript` from
 // `@pressh/panel-kit/build` — the SAME pipeline third-party authors invoke via
 // the `pressh-build-panel` CLI. This script just discovers the first-party
 // panels and writes the result into builtins/.
 //
-// Run BEFORE `sign:builtins` (the signature hashes panel.html). Panel SOURCE in
+// Run BEFORE `sign:builtins` (the signature hashes panel.js). Panel SOURCE in
 // panels/ deliberately lives outside builtins/ so it is never signed/shipped.
 
-import {buildPanelHtml} from "@pressh/panel-kit/build";
+import {buildPanelScript} from "@pressh/panel-kit/build";
 import {readdir, writeFile} from "node:fs/promises";
 import {existsSync} from "node:fs";
 import {dirname, join} from "node:path";
@@ -20,11 +20,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PANELS_SRC = join(ROOT, "panels");
 const BUILTINS = join(ROOT, "builtins");
 
-/** Builds one panel and writes it into builtins/<plugin>/panel.html. */
+/** Builds one panel and writes it into builtins/<plugin>/panel.js. */
 async function buildPanel(plugin) {
     const entry = join(PANELS_SRC, plugin, "main.tsx");
-    const {html, jsBytes, cssBytes} = await buildPanelHtml({entry, root: PANELS_SRC});
-    await writeFile(join(BUILTINS, plugin, "panel.html"), html, "utf8");
+    const {script, jsBytes, cssBytes} = await buildPanelScript({entry, root: PANELS_SRC});
+    await writeFile(join(BUILTINS, plugin, "panel.js"), script, "utf8");
     return {plugin, jsBytes, cssBytes};
 }
 

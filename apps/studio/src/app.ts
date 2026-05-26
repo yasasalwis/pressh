@@ -40,7 +40,8 @@ async function readAdminNextHtml(): Promise<string | null> {
 /** Source of plugin admin panels (wired from the PluginHost in the bootstrap). */
 export interface PanelProvider {
   list(): Promise<{ plugin: string; title: string }[]>;
-  get(plugin: string): Promise<{ title: string; html: string } | null>;
+
+    get(plugin: string): Promise<{ title: string; script: string } | null>;
 }
 
 /** Installed-plugin metadata for the Plugins screen (wired from the PluginHost). */
@@ -513,7 +514,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data:; frame-ancestors 'self'",
     );
     c.header("X-Content-Type-Options", "nosniff");
-    return c.html(wrapPanelHtml({ title: panel.title, body: panel.html }));
+      return c.html(wrapPanelHtml({title: panel.title, script: panel.script}));
   });
 
   // --- page designer: primitive library & live render ---

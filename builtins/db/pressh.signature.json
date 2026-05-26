@@ -2,7 +2,7 @@
   "algorithm": "hmac-sha256",
   "files": {
     "index.mjs": "f7e2776685f0f3eff617db27f702b0018a77b6a0516c3e15b6bf8a81bb8bd21c",
-    "panel.html": "50edd7bec9f472afaeb6ab8218fc3b7536f8d1bd5a6d76b38818a3dcce1b3293",
-    "pressh.plugin.json": "8fac413a1ed24bc5cd6242f79705e0791f499896639d818d186db7f5ea807683"
+    "panel.js": "b1cc3b713d471860c917ebe43df8579404d03eb3352b4d87a933c24aaf35c49d",
+    "pressh.plugin.json": "da86fdbc8dffa3db92c7d527f9f710acf125c82710b692ccd4b2c677a37f45e7"
   }
 }

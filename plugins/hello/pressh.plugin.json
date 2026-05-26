@@ -6,7 +6,7 @@
   "endpoints": [{ "method": "POST", "path": "/greet", "handler": "greet" }],
   "panel": {
     "title": "Hello",
-    "entry": "panel.html"
+    "entry": "panel.js"
   },
   "panelActions": [
     "greet"

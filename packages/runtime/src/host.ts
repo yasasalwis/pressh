@@ -9,10 +9,10 @@ import type {DesignerPreset, HostToWorker, PluginManifest, RpcError, WorkerToHos
 import type {CveChecker} from "./cve.js";
 import type {PluginStateStore} from "./plugin-state.js";
 import {
-    derivePluginSigningKey,
-    SIGNATURE_FILE,
-    verifyPluginSignature,
-    type PluginSignature,
+  derivePluginSigningKey,
+  type PluginSignature,
+  SIGNATURE_FILE,
+  verifyPluginSignature,
 } from "./plugin-signature.js";
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 5000;
@@ -414,12 +414,12 @@ export class PluginHost {
     return out;
   }
 
-  /** Reads an enabled plugin's admin panel HTML (served into a sandboxed iframe). */
-  async panel(name: string): Promise<{ title: string; html: string } | null> {
+    /** Reads an enabled plugin's admin panel script bundle (inlined into a sandboxed iframe). */
+    async panel(name: string): Promise<{ title: string; script: string } | null> {
     const record = this.#registry.get(name);
     if (!record || !record.instance || !record.manifest.panel) return null;
-    const html = await readFile(resolveWithin(record.dir, record.manifest.panel.entry), "utf8");
-    return { title: record.manifest.panel.title, html };
+        const script = await readFile(resolveWithin(record.dir, record.manifest.panel.entry), "utf8");
+        return {title: record.manifest.panel.title, script};
   }
 
   async invoke(name: string, method: string, args: unknown): Promise<unknown> {

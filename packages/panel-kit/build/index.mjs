@@ -1,10 +1,13 @@
 // Build core for Pressh plugin admin panels. Bundles a React + TS panel entry
-// (`main.tsx`) into a single self-contained panel body: a `<div id="pressh-root">`
-// plus an inline <style> and an inline IIFE <script> with React bundled in.
+// (`main.tsx`) into a single self-contained `panel.js` IIFE bundle — React and
+// the panel's CSS are inlined into the one script (the CSS is injected at
+// runtime via a tiny prelude), so a plugin ships NO HTML file. The host wraps
+// the bundle in the sandboxed iframe document at serve time.
 //
-// Why inline: the panel iframe is sandboxed WITHOUT allow-same-origin (opaque
-// origin) and its CSP is `script-src 'unsafe-inline'` with NO 'self' — so an
-// external <script src> bundle cannot load. Inlining keeps the existing CSP.
+// Why a single inline script: the panel iframe is sandboxed WITHOUT
+// allow-same-origin (opaque origin) and its CSP is `script-src 'unsafe-inline'`
+// with NO 'self' — so an external <script src> / <link> cannot load. Everything
+// must be inline; the host inlines this bundle into a <script> it generates.
 //
 // Used by both the `pressh-build-panel` CLI (this package's bin) and the Pressh
 // monorepo's own `scripts/build-panels.mjs` (so first-party panels and
@@ -19,17 +22,17 @@ import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 
 /**
- * Bundles a panel entry into an inlined panel body.
+ * Bundles a panel entry into a single self-contained JS bundle.
  *
  * @param {object} opts
  * @param {string} opts.entry  Absolute path to the panel entry (e.g. main.tsx).
  * @param {string} [opts.root] Vite root used to resolve node_modules; defaults
  *                             to the entry's directory.
- * @returns {Promise<{ html: string, jsBytes: number, cssBytes: number }>}
+ * @returns {Promise<{ script: string, jsBytes: number, cssBytes: number }>}
  */
-export async function buildPanelHtml({ entry, root }) {
-  if (!entry) throw new Error("buildPanelHtml: `entry` is required");
-  if (!existsSync(entry)) throw new Error(`buildPanelHtml: entry not found: ${entry}`);
+export async function buildPanelScript({ entry, root }) {
+  if (!entry) throw new Error("buildPanelScript: `entry` is required");
+  if (!existsSync(entry)) throw new Error(`buildPanelScript: entry not found: ${entry}`);
 
   const outDir = join(tmpdir(), `pressh-panel-${randomBytes(8).toString("hex")}`);
 
@@ -69,19 +72,19 @@ export async function buildPanelHtml({ entry, root }) {
       "panel bundle still references process.env — it would crash in the sandboxed iframe",
     );
   }
-  // Defensively escape any literal `</script` in the bundle (only ever occurs
-  // inside JS string/regex literals after bundling, where `<\/script` is
-  // equivalent) so it can't prematurely close the inline <script>.
-  const safeJs = js.replace(/<\/script/gi, "<\\/script");
-  // A `</style` in CSS essentially never happens — fail loud rather than corrupt.
-  if (/<\/style/i.test(css)) {
-    throw new Error("panel CSS contains a literal </style — cannot inline safely");
-  }
 
-  const html =
-    `<div id="pressh-root"></div>\n` +
-    (css ? `<style>${css}</style>\n` : "") +
-    `<script>${safeJs}</script>\n`;
+  // Inject the panel's CSS at runtime so the whole panel is one JS file. The
+  // iframe CSP allows style-src 'unsafe-inline', which covers this <style>.
+  const prelude = css
+    ? `(function(){var s=document.createElement("style");` +
+      `s.appendChild(document.createTextNode(${JSON.stringify(css)}));` +
+      `document.head.appendChild(s);})();\n`
+    : "";
 
-  return { html, jsBytes: js.length, cssBytes: css.length };
+  // Defensively escape any literal `</script` (only ever occurs inside JS/CSS
+  // string or regex literals here, where `<\/script` is equivalent) so the
+  // bundle can be inlined into a host-generated <script> without closing it.
+  const script = (prelude + js).replace(/<\/script/gi, "<\\/script");
+
+  return { script, jsBytes: js.length, cssBytes: css.length };
 }

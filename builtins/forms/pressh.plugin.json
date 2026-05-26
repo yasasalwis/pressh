@@ -4,6 +4,9 @@
   "main": "index.mjs",
   "capabilities": ["storage.read:form_submissions", "storage.write:form_submissions"],
   "endpoints": [{ "method": "POST", "path": "/submit", "handler": "submit" }],
-  "panel": { "title": "Form Submissions", "entry": "panel.html" },
+  "panel": {
+    "title": "Form Submissions",
+    "entry": "panel.js"
+  },
   "panelActions": ["list", "remove"]
 }

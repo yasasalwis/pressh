@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Builds the Studio admin React client (apps/studio/src/client/main.tsx) into a
-// single self-contained HTML document written to apps/studio/dist/admin-next.html.
-// The Studio serves it at /admin/next (a parallel route during the React
-// migration; the legacy /admin stays live until the migration completes).
+// single self-contained HTML document written to apps/studio/dist/admin-next.html,
+// which the Studio serves at `/` and `/admin`.
 //
 // Inlined (like the plugin panels) so serving needs no static-asset plumbing.
 // Run AFTER `tsc -b` (which creates apps/studio/dist) so the output survives.

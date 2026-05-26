@@ -42,7 +42,10 @@
       "handler": "checkout"
     }
   ],
-  "panel": { "title": "Inventory", "entry": "panel.html" },
+  "panel": {
+    "title": "Inventory",
+    "entry": "panel.js"
+  },
   "designerPresets": "presets.json",
   "panelActions": [
     "summary",

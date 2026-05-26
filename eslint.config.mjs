@@ -10,6 +10,8 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/*.tsbuildinfo",
       "**/coverage/**",
+        // Built plugin panel bundles (React inlined by @pressh/panel-kit).
+        "**/panel.js",
     ],
   },
   js.configs.recommended,

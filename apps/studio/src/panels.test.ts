@@ -1,24 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
-import {
-  createAuthService,
-  createCsrf,
-  createFileAuditLog,
-  createFileSystemStorage,
-} from "@pressh/core";
-import type { StorageAdapter } from "@pressh/core";
-import { createContentService, createSettingsService, createThemeService } from "@pressh/engine";
-import { createStudioApp } from "./app";
-import type { PanelProvider } from "./app";
-import { createMediaService } from "./media";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes} from "node:crypto";
+import type {StorageAdapter} from "@pressh/core";
+import {createAuthService, createCsrf, createFileAuditLog, createFileSystemStorage,} from "@pressh/core";
+import {createContentService, createSettingsService, createThemeService} from "@pressh/engine";
+import type {PanelProvider} from "./app";
+import {createStudioApp} from "./app";
+import {createMediaService} from "./media";
 
 const panels: PanelProvider = {
   list: async () => [{ plugin: "hello", title: "Hello Panel" }],
   get: async (plugin) =>
-    plugin === "hello" ? { title: "Hello Panel", html: "<h1>Hi</h1><script>/* panel */</script>" } : null,
+      plugin === "hello" ? {title: "Hello Panel", script: "window.__helloPanel=1"} : null,
 };
 
 let dir: string;
@@ -80,8 +75,9 @@ describe("plugin panel routes", () => {
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("frame-ancestors 'self'");
     const html = await res.text();
-    expect(html).toContain("<h1>Hi</h1>");
-    expect(html).toContain("window.presshPanel");
+      expect(html).toContain('<div id="pressh-root"></div>'); // React mount target
+      expect(html).toContain("window.__helloPanel=1"); // inlined panel bundle
+      expect(html).toContain("window.presshPanel"); // host bridge shim
   });
 
   it("404s for an unknown plugin panel", async () => {

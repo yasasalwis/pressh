@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { createPanelBridge, panelFrameTag, wrapPanelHtml } from "@pressh/runtime";
+import {describe, expect, it} from "vitest";
+import {createPanelBridge, panelFrameTag, wrapPanelHtml} from "@pressh/runtime";
 
 describe("panelFrameTag", () => {
   it("sandboxes without allow-same-origin", () => {
@@ -13,11 +13,12 @@ describe("panelFrameTag", () => {
 });
 
 describe("wrapPanelHtml", () => {
-  it("injects the shim and the panel body and escapes the title", () => {
-    const html = wrapPanelHtml({ title: "<x>", body: "<h1>Hi</h1>" });
-    expect(html).toContain("window.presshPanel");
-    expect(html).toContain("<h1>Hi</h1>");
-    expect(html).toContain("&lt;x&gt;");
+    it("builds the iframe document: mount root, shim, inlined panel script, escaped title", () => {
+        const html = wrapPanelHtml({title: "<x>", script: "window.__panel=1"});
+        expect(html).toContain("window.presshPanel"); // host bridge shim
+        expect(html).toContain('<div id="pressh-root"></div>'); // React mount target
+        expect(html).toContain("window.__panel=1"); // inlined plugin bundle
+        expect(html).toContain("&lt;x&gt;"); // title escaped
   });
 });
 

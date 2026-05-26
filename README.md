@@ -472,7 +472,7 @@ All adapters implement the same `StorageAdapter` interface and pass the shared c
   "main": "index.mjs",
   "capabilities": ["storage.read:posts", "network.fetch:api.example.com"],
   "endpoints": [{ "method": "POST", "path": "/sync", "handler": "sync" }],
-  "panel": { "title": "My Plugin", "entry": "panel.html" },
+  "panel": { "title": "My Plugin", "entry": "panel.js" },
   "panelActions": ["sync"]
 }
 ```
@@ -497,11 +497,11 @@ window.
 
 ### Admin panels in React + TypeScript
 
-Author panels in React + TypeScript with **`@pressh/panel-kit`** instead of hand-writing HTML. The kit gives you a typed
+Author panels in React + TypeScript with **`@pressh/panel-kit`** — plugins ship **no HTML**. The kit gives you a typed
 host bridge (`request`), a data hook (`usePanelQuery`), and a `mountPanel` helper. Its `pressh-build-panel` CLI bundles
-your `main.tsx` into the single self-contained `panel.html` the iframe requires — inline script + style with React
-bundled in, because the panel iframe is opaque-origin under a strict CSP (`script-src 'unsafe-inline'`, no `'self'`), so
-an external `<script src>` can't load.
+your `main.tsx` into a single self-contained `panel.js` (React and your CSS inlined into the one script); the Studio
+generates the surrounding iframe document and inlines the bundle. This is required because the panel iframe is
+opaque-origin under a strict CSP (`script-src 'unsafe-inline'`, no `'self'`), so an external `<script src>` can't load.
 
 ```tsx
 // panel-src/main.tsx
@@ -532,15 +532,15 @@ export function App() {
 }
 ```
 
-Build it (writes `panel.html` next to your manifest):
+Build it (writes `panel.js` next to your manifest):
 
 ```bash
-npx pressh-build-panel panel-src/main.tsx --out panel.html
+npx pressh-build-panel panel-src/main.tsx --out panel.js
 ```
 
-Keep panel source **outside** the shipped/signed plugin folder — only the built `panel.html` is signed and loaded. A
+Keep panel source **outside** the shipped/signed plugin folder — only the built `panel.js` is signed and loaded. A
 complete working example lives in [`plugins/hello`](plugins/hello): source under `panel-src/` (with its own
-`tsconfig.json`), the built `panel.html`, and a manifest declaring `panelActions`. Rebuild it with
+`tsconfig.json`), the built `panel.js`, and a manifest declaring `panelActions`. Rebuild it with
 `npm run build:hello`.
 
 ### Built-in plugins
@@ -556,7 +556,7 @@ Pressh ships five first-party plugins in `builtins/` — same security model as 
 | **Analytics**         | Cookieless server-side page-view counts. No cookies, IPs, or third parties.                                                                                                             | `storage.read/write:analytics_daily`                                                                                                                                                                      |
 
 Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. The built-ins' panels are
-authored in React + TypeScript under `panels/<plugin>/` and bundled into `builtins/<plugin>/panel.html` by
+authored in React + TypeScript under `panels/<plugin>/` and bundled into `builtins/<plugin>/panel.js` by
 `npm run build:panels` (the same `@pressh/panel-kit` pipeline third-party authors use). After editing a built-in's panel
 source re-run `npm run build:panels` then `npm run sign:builtins`; after editing its worker code just re-run
 `npm run sign:builtins`. Both run as part of `npm run build`.
