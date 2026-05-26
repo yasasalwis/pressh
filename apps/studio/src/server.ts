@@ -272,6 +272,13 @@ async function runFromEnv(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    // Load a project-root .env for local dev. loadEnvFile never overrides vars
+    // already in the environment, so a real OS/secret-manager key still wins; a
+    // missing file is a no-op.
+    try {
+        process.loadEnvFile();
+    } catch { /* no .env — rely on the real environment */
+    }
   runFromEnv().catch((e: unknown) => {
     process.stderr.write(`Pressh Studio failed to start: ${e instanceof Error ? e.message : String(e)}\n`);
     process.exit(1);

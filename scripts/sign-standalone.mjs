@@ -11,6 +11,13 @@
 import {fileURLToPath} from "node:url";
 import {signBuiltinsDir} from "./sign-core.mjs";
 
+// Honor a .env in cwd if present. loadEnvFile never overrides an already-set
+// var, so provisioned deploy env still wins; a missing file is a no-op.
+try {
+    process.loadEnvFile();
+} catch { /* no .env — rely on the real environment */
+}
+
 const secret = process.env["PRESSH_MASTER_KEY"] || process.env["PRESSH_PLUGIN_SIGNING_KEY"];
 if (!secret) {
     console.error(

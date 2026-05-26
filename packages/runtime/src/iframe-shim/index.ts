@@ -126,5 +126,3 @@ export function createPanelBridge(opts: PanelBridgeOptions): PanelBridge {
     },
   };
 }
-
-export { escapeHtml as escapePanelHtml };

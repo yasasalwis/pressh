@@ -1,5 +1,5 @@
-import type { ReactElement } from "react";
-import type { BlockNode } from "@pressh/engine";
+import type {ReactElement} from "react";
+import type {BlockNode} from "@pressh/engine";
 
 export interface PageData {
   blocks: BlockNode[];
@@ -8,7 +8,7 @@ export interface PageData {
 }
 
 interface PageProps extends PageData {
-  /** Pre-rendered HTML for the body root div (from renderLayout or Blocks SSR). */
+    /** Pre-rendered HTML for the body root div (from renderTree or Blocks SSR). */
   bodyHtml: string;
   extraStyles?: string;
   clientScript?: string;

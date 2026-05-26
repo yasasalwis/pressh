@@ -11,8 +11,8 @@
 import {safeUrl} from "../url.js";
 import type {Breakpoint, PrimitiveNode, PrimitiveType, ResponsiveStyles, StyleProps, StyleState,} from "./types.js";
 
-export const TYPE_CLASS_PREFIX = "pst-";
-export const NODE_CLASS_PREFIX = "psn-";
+const TYPE_CLASS_PREFIX = "pst-";
+const NODE_CLASS_PREFIX = "psn-";
 
 /** Sanitises a node id into a CSS-class-safe token. */
 export function cssId(id: string): string {

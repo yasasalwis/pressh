@@ -1,7 +1,7 @@
 import {createFileAuditLog} from "@pressh/core";
-import { join } from "node:path";
+import {join} from "node:path";
 import {openConfiguredStorage, parseMasterKey} from "./bootstrap.js";
-import { seedOwner } from "./seed.js";
+import {seedOwner} from "./seed.js";
 
 /**
  * `npm run seed -w @pressh/studio` — creates the first Owner account.
@@ -12,6 +12,11 @@ import { seedOwner } from "./seed.js";
  * install isn't left with an admin account the running app can't see.
  */
 async function main(): Promise<void> {
+    // Honor a project-root .env (dev). Real env vars take precedence; missing file is fine.
+    try {
+        process.loadEnvFile();
+    } catch { /* no .env — rely on the real environment */
+    }
   const contentRoot = process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content";
   const email = process.env["PRESSH_SEED_EMAIL"];
   const password = process.env["PRESSH_SEED_PASSWORD"];

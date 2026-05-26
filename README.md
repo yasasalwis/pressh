@@ -161,6 +161,13 @@ npm run build
 npm run tests
 ```
 
+For local development, copy `.env.example` to `.env` in the project root and fill it in.
+The build and both apps load it automatically — including `PRESSH_MASTER_KEY`, which the
+build uses to sign the built-in plugins and the runtime uses to verify them, so the two
+must match. Real environment variables (systemd/Docker/your shell) always take precedence
+over `.env`, and a missing file is a no-op — so this only ever helps in dev. In production
+set the variables directly as described under [Deployment](#deployment).
+
 Start both apps with a single command (Studio on port 4000, Site on port 3000):
 
 ```bash

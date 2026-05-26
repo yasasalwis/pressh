@@ -29,6 +29,11 @@ const PREBUILT_SLUGS = [
 ];
 
 async function main(): Promise<void> {
+    // Honor a project-root .env (dev). Real env vars take precedence; missing file is fine.
+    try {
+        process.loadEnvFile();
+    } catch { /* no .env — rely on the real environment */
+    }
     const contentRoot = process.env["PRESSH_CONTENT_ROOT"] ?? "./data/content";
     const masterKey = parseMasterKey(process.env["PRESSH_MASTER_KEY"]);
     const {storage} = await openConfiguredStorage({

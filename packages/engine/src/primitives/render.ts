@@ -26,7 +26,7 @@ interface RenderEnv {
 }
 
 /** HTML-escape a value for text or attribute contexts. */
-export function e(value: unknown): string {
+function e(value: unknown): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

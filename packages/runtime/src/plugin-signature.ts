@@ -20,7 +20,7 @@ import {join, relative, sep} from "node:path";
  */
 
 export const SIGNATURE_FILE = "pressh.signature.json";
-export const SIGNATURE_ALGORITHM = "hmac-sha256";
+const SIGNATURE_ALGORITHM = "hmac-sha256";
 const KEY_DERIVATION_LABEL = "pressh/plugin-signing/v1";
 
 export interface PluginSignature {
@@ -38,7 +38,7 @@ export function derivePluginSigningKey(secret: string): Buffer {
     return createHmac("sha256", secret).update(KEY_DERIVATION_LABEL).digest();
 }
 
-export function computeFileHmac(key: Buffer, content: Buffer): string {
+function computeFileHmac(key: Buffer, content: Buffer): string {
     return createHmac("sha256", key).update(content).digest("hex");
 }
 
@@ -46,7 +46,7 @@ export function computeFileHmac(key: Buffer, content: Buffer): string {
  * Lists every file in a plugin directory as POSIX-relative paths, excluding the
  * signature file itself. Recurses so bundled sibling modules are covered.
  */
-export async function listPluginFiles(dir: string): Promise<string[]> {
+async function listPluginFiles(dir: string): Promise<string[]> {
     const out: string[] = [];
 
     async function walk(current: string): Promise<void> {

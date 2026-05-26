@@ -64,12 +64,7 @@ export type {
   SubjectScope,
 } from "./gdpr.js";
 export { createContentService, PUBLISH_JOB_TYPE } from "./content-service.js";
-export { createComponentRegistry } from "./components/registry.js";
-export type { ComponentRegistry } from "./components/registry.js";
-export type { ComponentDef, ComponentContext, ComponentPropDef, ComponentPropType, LayoutNode } from "./components/types.js";
-export { DESIGNER_LAYOUT_BLOCK } from "./components/types.js";
-export { registerBuiltinComponents } from "./components/builtin/index.js";
-export { renderLayout, collectStyles } from "./components/render.js";
+export {DESIGNER_LAYOUT_BLOCK} from "./primitives/types.js";
 export { renderTree } from "./primitives/render.js";
 export type { RenderOptions } from "./primitives/render.js";
 export {assertTreeWithinLimits, MAX_TREE_NODES, MAX_TREE_DEPTH} from "./primitives/limits.js";

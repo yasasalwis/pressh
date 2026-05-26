@@ -16,6 +16,14 @@ import {signBuiltinsDir} from "./sign-core.mjs";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DEV_FALLBACK = "pressh-dev-only-unsigned-key";
 
+// Honor a project-root .env so `npm run build` signs with the same key the
+// runtime verifies against. loadEnvFile never overrides an already-set var, and
+// a missing file is a no-op.
+try {
+    process.loadEnvFile();
+} catch { /* no .env — rely on the real environment */
+}
+
 function resolveSecret() {
     const secret = process.env["PRESSH_MASTER_KEY"] || process.env["PRESSH_PLUGIN_SIGNING_KEY"];
     if (secret) return secret;

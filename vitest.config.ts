@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { defineConfig } from "vitest/config";
+import {resolve} from "node:path";
+import {defineConfig} from "vitest/config";
 
 const root = import.meta.dirname;
 
@@ -12,7 +12,6 @@ export default defineConfig({
       "@pressh/engine": resolve(root, "packages/engine/src/index.ts"),
       "@pressh/sdk": resolve(root, "packages/sdk/src/index.ts"),
       "@pressh/runtime": resolve(root, "packages/runtime/src/index.ts"),
-      "@pressh/ui-kit": resolve(root, "packages/ui-kit/src/index.ts"),
         "@pressh/panel-kit": resolve(root, "packages/panel-kit/src/index.ts"),
       "@pressh/adapter-sqlite": resolve(root, "adapters/sqlite/src/index.ts"),
       "@pressh/adapter-postgres": resolve(root, "adapters/postgres/src/index.ts"),

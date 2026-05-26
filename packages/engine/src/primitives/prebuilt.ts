@@ -15,15 +15,8 @@
  * stored verbatim inside a single `designer-layout` block — the shape the Site's
  * front controller already knows how to render.
  */
-import {DESIGNER_LAYOUT_BLOCK} from "../components/types.js";
-import type {
-    Binding,
-    PrimitiveNode,
-    PrimitiveType,
-    ResponsiveStyles,
-    StateStyles,
-    StyleProps,
-} from "./types.js";
+import type {Binding, PrimitiveNode, PrimitiveType, ResponsiveStyles, StateStyles, StyleProps,} from "./types.js";
+import {DESIGNER_LAYOUT_BLOCK} from "./types.js";
 
 // ── palette ───────────────────────────────────────────────────────────────────
 const MUTED = "#64748b";
