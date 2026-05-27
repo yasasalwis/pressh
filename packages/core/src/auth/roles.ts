@@ -27,6 +27,7 @@ export const ROLE_CAPABILITIES: Record<RoleName, readonly string[]> = {
   editor: [
     "content.create",
     "content.read",
+      "content.reveal",
     "content.update",
     "content.submit",
     "content.publish",

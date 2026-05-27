@@ -1,6 +1,8 @@
+import type {SecretsBackend} from "@pressh/core";
 import {CapabilityGate, PressError} from "@pressh/core";
 import type {BlockNode} from "./blocks/types.js";
 import type {ContentService} from "./content-service.js";
+import {redactEncRefs, REVEAL_CAPABILITY, revealEncRefs} from "./sensitive.js";
 import type {ContentStatus} from "./types.js";
 
 export interface ParsedRoute {
@@ -79,11 +81,17 @@ export interface QueryResolverOptions {
   defaultLocale?: string;
   homeSlug?: string;
   locales?: string[];
+    /**
+     * Vault used to reveal sealed sensitive fields on admin reads. When absent (or
+     * the caller lacks `content.reveal`), sealed fields are masked instead.
+     */
+    secrets?: SecretsBackend;
 }
 
 export function createQueryResolver(opts: QueryResolverOptions): QueryResolver {
   const gate = new CapabilityGate();
   const defaultLocale = opts.defaultLocale ?? "en";
+    const secrets = opts.secrets;
 
   async function resolve(o: ResolveOptions): Promise<ResolvedContent> {
     const locale = o.locale ?? defaultLocale;
@@ -103,13 +111,21 @@ export function createQueryResolver(opts: QueryResolverOptions): QueryResolver {
     const revision = await opts.content.getRevision(entry.id, entry.currentRevision);
     if (!revision) throw new PressError("not_found", "Not found");
 
+      // Sealed sensitive fields (`{$enc}`) are revealed only for an admin-scope read
+      // by a caller holding `content.reveal`; every other path gets the mask. Public
+      // pages and bound list data therefore never expose plaintext PII.
+      const canReveal = o.scope === "admin" && gate.check(capabilities, REVEAL_CAPABILITY);
+      const fields = canReveal
+          ? ((await revealEncRefs(revision.fields, secrets)) as Record<string, unknown>)
+          : (redactEncRefs(revision.fields) as Record<string, unknown>);
+
     return {
       id: entry.id,
       typeId: entry.typeId,
       slug: entry.slug,
       locale: entry.locale,
       status: entry.status,
-      fields: revision.fields,
+        fields,
       blocks: revision.blocks as BlockNode[],
       authorId: o.scope === "admin" ? entry.authorId : null,
       publishedAt: entry.publishedAt,

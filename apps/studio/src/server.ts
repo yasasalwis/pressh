@@ -98,7 +98,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     });
   const auth = await createAuthService({ storage, audit });
   const scheduler = createScheduler({ storage, audit });
-  const content = createContentService({ storage, audit, scheduler });
+    const content = createContentService({storage, audit, scheduler, ...(secrets ? {secrets} : {})});
   scheduler.register(PUBLISH_JOB_TYPE, async (payload) => {
     const entryId = (payload as { entryId?: string }).entryId;
     if (entryId) {
@@ -192,6 +192,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     storage,
     audit,
     settings,
+      ...(secrets ? {secrets} : {}),
     panels,
     pluginInfo,
     pluginControl,

@@ -3,7 +3,7 @@ import {readFile} from "node:fs/promises";
 import type {Context, Next} from "hono";
 import {Hono} from "hono";
 import {deleteCookie, getCookie, setCookie} from "hono/cookie";
-import type {AuditLog, AuthService, CsrfProtection, RoleName, StorageAdapter, User} from "@pressh/core";
+import type {AuditLog, AuthService, CsrfProtection, RoleName, SecretsBackend, StorageAdapter, User} from "@pressh/core";
 import {CapabilityGate, createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
 import type {
   ContentEntry,
@@ -16,7 +16,15 @@ import type {
   SettingsService,
   ThemeService,
 } from "@pressh/engine";
-import {prebuiltLayoutBlocks, PRESETS, PRIMITIVE_DEFS, renderTree} from "@pressh/engine";
+import {
+  prebuiltLayoutBlocks,
+  PRESETS,
+  PRIMITIVE_DEFS,
+  redactEncRefs,
+  renderTree,
+  REVEAL_CAPABILITY,
+  revealEncRefs
+} from "@pressh/engine";
 import type {CveService, PluginInfo} from "@pressh/runtime";
 import {panelFrameTag, wrapPanelHtml} from "@pressh/runtime";
 import type {MediaService} from "./media.js";
@@ -86,6 +94,8 @@ export interface StudioAppDeps {
   storage: StorageAdapter;
   audit: AuditLog;
   settings: SettingsService;
+    /** Vault used to reveal sealed sensitive content fields to authorized editors. */
+    secrets?: SecretsBackend;
   panels?: PanelProvider;
   pluginInfo?: PluginInfoProvider;
   pluginControl?: PluginControlProvider;
@@ -411,9 +421,15 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     const entry = await deps.content.getEntry(c.req.param("id") ?? "");
     if (!entry) return c.json({ error: { code: "not_found", message: "not_found" } }, 404);
     const revision = await deps.content.getRevision(entry.id, entry.currentRevision);
+      const rawFields = revision?.fields ?? {};
+      // Editors with `content.reveal` load decrypted sensitive fields; everyone else
+      // gets the mask (and the unchanged mask round-trips back to ciphertext on save).
+      const fields = gate.check(caps(c), REVEAL_CAPABILITY)
+          ? await revealEncRefs(rawFields, deps.secrets)
+          : redactEncRefs(rawFields);
     return c.json({
       entry,
-      revision: revision ? { fields: revision.fields, blocks: revision.blocks } : { fields: {}, blocks: [] },
+        revision: {fields, blocks: revision?.blocks ?? []},
     });
   });
 
@@ -594,7 +610,9 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
           let fields: Record<string, unknown> = {};
           try {
             const rev = await deps.content.getRevision(entry.id, entry.currentRevision);
-            fields = rev?.fields ?? {};
+              // Bound list data renders into pages (incl. the public site), so sealed
+              // sensitive fields are always masked here — never revealed in a binding.
+              fields = redactEncRefs(rev?.fields ?? {}) as Record<string, unknown>;
           } catch {
             fields = {};
           }

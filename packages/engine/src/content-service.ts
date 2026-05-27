@@ -1,9 +1,10 @@
 import {randomUUID} from "node:crypto";
-import type {AuditLog, Result, Scheduler, StorageAdapter} from "@pressh/core";
+import type {AuditLog, Result, Scheduler, SecretsBackend, StorageAdapter} from "@pressh/core";
 import {CapabilityGate, PressError} from "@pressh/core";
 import {createBlockRegistry} from "./blocks/registry.js";
 import {sanitizeBlocks} from "./blocks/sanitize.js";
 import type {BlockRegistry} from "./blocks/types.js";
+import {protectSensitive} from "./sensitive.js";
 import {validateFields} from "./schema.js";
 import {capabilityForTransition, isAllowedTransition} from "./state-machine.js";
 import {DESIGNER_LAYOUT_BLOCK} from "./primitives/types.js";
@@ -54,6 +55,11 @@ export interface ContentServiceOptions {
   blockRegistry?: BlockRegistry;
   /** When set, scheduling content enqueues a `content.publish` job (Phase 14). */
   scheduler?: Scheduler;
+    /**
+     * Vault used to seal fields marked `sensitive` (baseline #6). Required for any
+     * content type that declares a sensitive field — writes fail closed without it.
+     */
+    secrets?: SecretsBackend;
 }
 
 /** Job type the scheduler runs to publish content at its scheduled time. */
@@ -100,6 +106,7 @@ class ContentServiceImpl implements ContentService {
   readonly #gate = new CapabilityGate();
   readonly #blocks: BlockRegistry;
   readonly #scheduler: Scheduler | undefined;
+    readonly #secrets: SecretsBackend | undefined;
 
   constructor(opts: ContentServiceOptions) {
     this.#storage = opts.storage;
@@ -107,6 +114,7 @@ class ContentServiceImpl implements ContentService {
     this.#now = opts.now ?? (() => Date.now());
     this.#blocks = opts.blockRegistry ?? createBlockRegistry();
     this.#scheduler = opts.scheduler;
+      this.#secrets = opts.secrets;
   }
 
   #iso(): string {
@@ -189,6 +197,9 @@ class ContentServiceImpl implements ContentService {
     const locale = input.locale ?? DEFAULT_LOCALE;
     const type = await this.#requireType(input.typeId);
     const validated = validateFields(type.fields, input.fields);
+      // Seal sensitive fields before any write so plaintext never reaches storage
+      // (fails closed without a vault — see protectSensitive).
+      const fields = await protectSensitive(validated, type.fields, this.#secrets);
     const blocks = sanitizeBlocks(this.#blocks, input.blocks ?? [], { capabilities });
 
     const existing = must(
@@ -212,7 +223,7 @@ class ContentServiceImpl implements ContentService {
       updatedAt: this.#iso(),
     };
     must(await this.#storage.put(ENTRIES, entry));
-    await this.#addRevision(entry, validated, blocks, input.authorId, 1);
+      await this.#addRevision(entry, fields, blocks, input.authorId, 1);
     await this.#audit.append({
       action: "content.create",
       actorId: input.authorId,
@@ -230,10 +241,19 @@ class ContentServiceImpl implements ContentService {
     const entry = await this.#requireEntry(entryId);
     const type = await this.#requireType(entry.typeId);
     const validated = validateFields(type.fields, input.fields);
+      // Carry forward the prior revision's ciphertext when a sensitive field comes
+      // back as the mask (editor couldn't reveal it, or left it untouched).
+      const priorRevision = await this.getRevision(entryId, entry.currentRevision);
+      const fields = await protectSensitive(
+          validated,
+          type.fields,
+          this.#secrets,
+          priorRevision?.fields,
+      );
     const blocks = sanitizeBlocks(this.#blocks, input.blocks ?? [], { capabilities });
 
     const version = entry.currentRevision + 1;
-    await this.#addRevision(entry, validated, blocks, input.editorId, version);
+      await this.#addRevision(entry, fields, blocks, input.editorId, version);
     entry.currentRevision = version;
     entry.updatedAt = this.#iso();
     must(await this.#storage.put(ENTRIES, entry));

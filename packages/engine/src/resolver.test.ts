@@ -1,19 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes} from "node:crypto";
+import type {AuditLog, SecretsBackend, StorageAdapter} from "@pressh/core";
 import {
-  capabilitiesForRoles,
-  createFileAuditLog,
-  createFileSystemStorage,
+    capabilitiesForRoles,
+    createFileAuditLog,
+    createFileSecretsBackend,
+    createFileSystemStorage,
 } from "@pressh/core";
-import type { AuditLog, StorageAdapter } from "@pressh/core";
-import { createContentService, createQueryResolver, parsePath } from "@pressh/engine";
-import type { ContentService, QueryResolver } from "@pressh/engine";
+import type {ContentService, QueryResolver} from "@pressh/engine";
+import {createContentService, createQueryResolver, parsePath, SENSITIVE_MASK,} from "@pressh/engine";
 
 const ADMIN = capabilitiesForRoles(["admin"]);
 const EDITOR = capabilitiesForRoles(["editor"]);
-const VIEWER = capabilitiesForRoles(["viewer"]); // has content.read
+const VIEWER = capabilitiesForRoles(["viewer"]); // has content.read, not content.reveal
 
 describe("parsePath", () => {
   it("parses a flat slug", () => {
@@ -107,4 +109,77 @@ describe("QueryResolver", () => {
     const resolved = await resolver.resolvePath("/about", { scope: "public" });
     expect(resolved.slug).toBe("about");
   });
+});
+
+describe("QueryResolver — sensitive fields", () => {
+    let dir: string;
+    let storage: StorageAdapter;
+    let audit: AuditLog;
+    let secrets: SecretsBackend;
+    let svc: ContentService;
+    let resolver: QueryResolver;
+    let entryId: string;
+
+    beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), "pressh-resolver-sens-"));
+        storage = createFileSystemStorage({root: join(dir, "content")});
+        audit = await createFileAuditLog({path: join(dir, "audit.log")});
+        secrets = await createFileSecretsBackend({path: join(dir, "vault.json"), key: randomBytes(32)});
+        svc = createContentService({storage, audit, secrets});
+        resolver = createQueryResolver({content: svc, secrets});
+
+        const type = await svc.createType(ADMIN, {
+            name: "Lead",
+            slug: "lead",
+            fields: [
+                {id: "1", name: "title", type: "text", required: true},
+                {id: "2", name: "ssn", type: "text", required: false, sensitive: true},
+            ],
+        });
+        const entry = await svc.createEntry(EDITOR, {
+            typeId: type.id,
+            slug: "secret-lead",
+            authorId: "u1",
+            fields: {title: "Lead", ssn: "123-45-6789"},
+        });
+        entryId = entry.id;
+        await svc.transition(EDITOR, entryId, "published");
+    });
+
+    afterEach(async () => {
+        storage.close();
+        await rm(dir, {recursive: true, force: true});
+    });
+
+    it("masks a sensitive field on public reads", async () => {
+        const resolved = await resolver.resolve({slug: "secret-lead", scope: "public"});
+        expect(resolved.fields["title"]).toBe("Lead");
+        expect(resolved.fields["ssn"]).toBe(SENSITIVE_MASK);
+    });
+
+    it("reveals a sensitive field to an admin holding content.reveal", async () => {
+        const resolved = await resolver.resolve({
+            slug: "secret-lead",
+            scope: "admin",
+            capabilities: EDITOR, // editor now carries content.reveal
+        });
+        expect(resolved.fields["ssn"]).toBe("123-45-6789");
+    });
+
+    it("masks a sensitive field for an admin read without content.reveal", async () => {
+        const resolved = await resolver.resolve({
+            slug: "secret-lead",
+            scope: "admin",
+            capabilities: VIEWER,
+        });
+        expect(resolved.fields["ssn"]).toBe(SENSITIVE_MASK);
+    });
+
+    it("never stores the plaintext in the revision", async () => {
+        const entry = await svc.getEntry(entryId);
+        const rev = await svc.getRevision(entryId, entry!.currentRevision);
+        const ssn = rev!.fields["ssn"] as { $enc?: string };
+        expect(ssn.$enc).toBeDefined();
+        expect(JSON.stringify(rev!.fields)).not.toContain("123-45-6789");
+    });
 });

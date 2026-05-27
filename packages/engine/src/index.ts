@@ -75,6 +75,14 @@ export type {
   SubjectScope,
 } from "./gdpr.js";
 export { createContentService, PUBLISH_JOB_TYPE } from "./content-service.js";
+export {
+    protectSensitive,
+    revealEncRefs,
+    redactEncRefs,
+    isEncRef,
+    SENSITIVE_MASK,
+    REVEAL_CAPABILITY,
+} from "./sensitive.js";
 export {DESIGNER_LAYOUT_BLOCK} from "./primitives/types.js";
 export { renderTree } from "./primitives/render.js";
 export type { RenderOptions } from "./primitives/render.js";
