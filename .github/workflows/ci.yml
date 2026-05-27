@@ -78,12 +78,14 @@ jobs:
         run: npm audit --audit-level=high
       # Generate a CycloneDX SBOM artifact.
       - name: SBOM
-        run: npm sbom --sbom-format cyclonedx > sbom.json || true
+        id: sbom
+        run: npm sbom --sbom-format cyclonedx > sbom.json
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
+        if: steps.sbom.outcome == 'success'
         with:
           name: sbom
           path: sbom.json
-        if: always()
       # Lightweight secret scan — fail if obvious secrets are committed.
       # The aws key uses a [k] character class so this pattern does not match its own definition.
       - name: Secret scan

@@ -17,12 +17,12 @@
   },
   "dependencies": {
     "@pressh/core": "*",
-    "nodemailer": "^6.9.0",
+    "nodemailer": "^8.0.9",
     "sanitize-html": "^2.13.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.0",
+    "@types/nodemailer": "^8.0.0",
     "@types/sanitize-html": "^2.13.0"
   }
 }
