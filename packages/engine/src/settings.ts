@@ -27,6 +27,15 @@ export interface SmtpSettings {
   username: string;
 }
 
+/** Cookie-consent banner config shown on the public site (GDPR consent capture). */
+export interface ConsentSettings {
+    enabled: boolean;
+    /** Banner copy shown to visitors. */
+    message: string;
+    /** Link to the privacy policy (http(s) or site-relative; empty hides the link). */
+    policyUrl: string;
+}
+
 interface StoredGeneralSettings extends StoredDoc {
   baseUrl: string;
   defaultLocale: string;
@@ -35,6 +44,7 @@ interface StoredGeneralSettings extends StoredDoc {
   headerNav?: string[];
   connectedSources?: string[];
   maintenanceMode?: boolean;
+    consent?: ConsentSettings;
 }
 
 /** Public view: adds whether an SMTP password is on file, never the value. */
@@ -51,6 +61,8 @@ export interface GeneralSettings {
   connectedSources: string[];
   /** When true, the public site serves the maintenance page with HTTP 503. */
   maintenanceMode: boolean;
+    /** Cookie-consent banner config (disabled by default). */
+    consent: ConsentSettings;
 }
 
 export interface UpdateSettingsInput {
@@ -67,6 +79,8 @@ export interface UpdateSettingsInput {
   connectedSources?: string[];
   /** Toggle the public site into maintenance mode (serves the maintenance page, HTTP 503). */
   maintenanceMode?: boolean;
+    /** Cookie-consent banner config. */
+    consent?: Partial<ConsentSettings>;
 }
 
 export interface SettingsService {
@@ -82,6 +96,13 @@ export interface SettingsServiceOptions {
   now?: () => number;
 }
 
+const CONSENT_DEFAULT: ConsentSettings = {
+    enabled: false,
+    message: "We use cookies to keep this site running. You can accept or decline non-essential cookies.",
+    policyUrl: "",
+};
+const MAX_CONSENT_MESSAGE_LEN = 500;
+
 const DEFAULTS = {
   baseUrl: "",
   defaultLocale: "en",
@@ -90,6 +111,7 @@ const DEFAULTS = {
   headerNav: [] as string[],
   connectedSources: [] as string[],
   maintenanceMode: false,
+    consent: CONSENT_DEFAULT,
 };
 
 function isValidTimezone(tz: string): boolean {
@@ -136,6 +158,7 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
       headerNav: doc.headerNav ?? [],
       connectedSources: doc.connectedSources ?? [],
       maintenanceMode: doc.maintenanceMode ?? false,
+        consent: {...CONSENT_DEFAULT, ...(doc.consent ?? {})},
     };
   }
 
@@ -195,6 +218,28 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
           throw new PressError("validation", "maintenanceMode must be a boolean");
         doc.maintenanceMode = partial.maintenanceMode;
       }
+        if (partial.consent !== undefined) {
+            const current = doc.consent ?? CONSENT_DEFAULT;
+            const next: ConsentSettings = {...current};
+            if (partial.consent.enabled !== undefined) {
+                if (typeof partial.consent.enabled !== "boolean")
+                    throw new PressError("validation", "consent.enabled must be a boolean");
+                next.enabled = partial.consent.enabled;
+            }
+            if (partial.consent.message !== undefined) {
+                const msg = String(partial.consent.message).trim();
+                if (msg.length > MAX_CONSENT_MESSAGE_LEN)
+                    throw new PressError("validation", `Consent message must be ${MAX_CONSENT_MESSAGE_LEN} characters or fewer`);
+                next.message = msg || CONSENT_DEFAULT.message;
+            }
+            if (partial.consent.policyUrl !== undefined) {
+                const url = String(partial.consent.policyUrl).trim();
+                if (url !== "" && !/^(https?:\/\/|\/)/u.test(url))
+                    throw new PressError("validation", "Policy URL must be an http(s) URL, a site-relative path, or empty");
+                next.policyUrl = url;
+            }
+            doc.consent = next;
+        }
       if (partial.smtpPassword !== undefined && partial.smtpPassword !== "") {
         if (!opts.secrets) {
           throw new PressError(

@@ -105,25 +105,79 @@ export function Login({onAuthed}: { onAuthed: () => void }) {
     const [pw, setPw] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
+    // When the account has 2FA, the password step returns a challenge and we ask
+    // for the authenticator code before any session cookie is set.
+    const [challenge, setChallenge] = useState("");
+    const [code, setCode] = useState("");
 
-    async function submit(e: FormEvent) {
+    async function submitPassword(e: FormEvent) {
         e.preventDefault();
         setError("");
         setBusy(true);
-        const r = await api("/admin/api/auth/login", {
+        const r = await api<{ mfaRequired?: boolean; challenge?: string }>("/admin/api/auth/login", {
             method: "POST",
             body: JSON.stringify({email: email.trim(), password: pw})
         });
         setBusy(false);
+        if (r.status === 200 && r.body.mfaRequired && r.body.challenge) {
+            setChallenge(r.body.challenge);
+            return;
+        }
         if (r.status === 200) return onAuthed();
         setError("Invalid email or password.");
+    }
+
+    async function submitCode(e: FormEvent) {
+        e.preventDefault();
+        setError("");
+        setBusy(true);
+        const r = await api("/admin/api/auth/mfa/verify", {
+            method: "POST",
+            body: JSON.stringify({challenge, code: code.trim()})
+        });
+        setBusy(false);
+        if (r.status === 200) return onAuthed();
+        setError("That code didn't match. Try again.");
+    }
+
+    if (challenge) {
+        return (
+            <AuthLayout>
+                <h2>Two-factor authentication</h2>
+                <p className="sub">Enter the 6-digit code from your authenticator app.</p>
+                <form onSubmit={submitCode}>
+                    <label>Authentication code</label>
+                    <input
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        autoFocus
+                        placeholder="123456 or a recovery code"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value)}
+                    />
+                    {error && <div className="alert">{error}</div>}
+                    <button className="btn" type="submit" disabled={busy}>
+                        {busy ? "Verifying…" : "Verify & sign in"}
+                    </button>
+                </form>
+                <p className="foot">
+                    Lost your device? Use a recovery code, or{" "}
+                    <a href="#" onClick={(e) => {
+                        e.preventDefault();
+                        setChallenge("");
+                        setCode("");
+                        setError("");
+                    }}><b>start over</b></a>.
+                </p>
+            </AuthLayout>
+        );
     }
 
     return (
         <AuthLayout>
             <h2>Sign in</h2>
             <p className="sub">Welcome back. Sign in to your Studio.</p>
-            <form onSubmit={submit}>
+            <form onSubmit={submitPassword}>
                 <label>Email</label>
                 <input type="email" autoComplete="username" placeholder="you@example.com" value={email}
                        onChange={(e) => setEmail(e.target.value)}/>

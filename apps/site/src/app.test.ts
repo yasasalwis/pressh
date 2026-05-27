@@ -1,11 +1,11 @@
 import {afterEach, beforeEach, describe, expect, it} from "vitest";
 import {createHash} from "node:crypto";
-import {mkdtemp, rm} from "node:fs/promises";
+import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import type {StorageAdapter} from "@pressh/core";
 import {capabilitiesForRoles, createFileAuditLog, createFileSystemStorage,} from "@pressh/core";
-import {createContentService, createQueryResolver, DESIGNER_LAYOUT_BLOCK} from "@pressh/engine";
+import {createContentService, createQueryResolver, createSettingsService, DESIGNER_LAYOUT_BLOCK} from "@pressh/engine";
 import type {SitePluginHost} from "./app";
 import {createSiteApp} from "./app";
 import {createRenderCache} from "./cache";
@@ -234,4 +234,48 @@ describe("SEO endpoints", () => {
     const body = await res.text();
     expect(body).toContain("https://example.test/about");
   });
+});
+
+describe("cookie-consent banner", () => {
+    it("injects the consent payload only when enabled", async () => {
+        const audit = await createFileAuditLog({path: join(dir, "audit2.log")});
+        const settings = createSettingsService({storage, audit});
+        const resolver = createQueryResolver({content});
+
+        // Disabled by default → no payload in the page.
+        const off = createSiteApp({resolver, pluginHost: stubHost, cache: createRenderCache(), settings});
+        const offHtml = await (await off.request("/about")).text();
+        expect(offHtml).not.toContain('id="pressh-consent"');
+
+        // Enabled → CSP-safe JSON payload present, carrying the operator's message.
+        await settings.updateSettings(ADMIN, {
+            consent: {enabled: true, message: "Cookies OK?", policyUrl: "/privacy"},
+        });
+        const on = createSiteApp({resolver, pluginHost: stubHost, cache: createRenderCache(), settings});
+        const onHtml = await (await on.request("/about")).text();
+        expect(onHtml).toContain('id="pressh-consent"');
+        expect(onHtml).toContain("Cookies OK?");
+        expect(onHtml).toContain('type="application/json"');
+    });
+});
+
+describe("static client assets", () => {
+    it("serves a built asset from <clientDir>/assets and blocks traversal", async () => {
+        const clientDir = join(dir, "clientdir");
+        await mkdir(join(clientDir, "assets"), {recursive: true});
+        await writeFile(join(clientDir, "assets", "main-abc123.js"), "console.log('hi')", "utf8");
+        await writeFile(join(dir, "secret.txt"), "top secret", "utf8");
+
+        const resolver = createQueryResolver({content});
+        const assetApp = createSiteApp({resolver, pluginHost: stubHost, cache: createRenderCache(), clientDir});
+
+        const ok = await assetApp.request("/assets/main-abc123.js");
+        expect(ok.status).toBe(200);
+        expect(await ok.text()).toContain("console.log");
+        expect(ok.headers.get("content-type")).toContain("javascript");
+
+        // Path traversal must not escape the assets root.
+        expect((await assetApp.request("/assets/../secret.txt")).status).toBe(404);
+        expect((await assetApp.request("/assets/nope.js")).status).toBe(404);
+    });
 });

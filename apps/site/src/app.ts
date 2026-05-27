@@ -1,6 +1,6 @@
 import {createHash, timingSafeEqual} from "node:crypto";
 import {createReadStream, existsSync, statSync} from "node:fs";
-import {extname, resolve as resolvePath} from "node:path";
+import {extname, resolve as resolvePath, sep} from "node:path";
 import {Readable} from "node:stream";
 import {createElement} from "react";
 import {renderToString} from "react-dom/server";
@@ -500,11 +500,13 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
 
   // Vite-built client assets — immutable cache since filenames are content-hashed.
   if (deps.clientDir) {
-    const safeRoot = resolvePath(deps.clientDir);
+      const assetsRoot = resolvePath(deps.clientDir, "assets");
     app.get("/assets/*", (c) => {
-      const rel = c.req.path.slice("/assets".length);
-      const abs = resolvePath(safeRoot, "assets", rel);
-      if (!abs.startsWith(safeRoot) || !existsSync(abs) || !statSync(abs).isFile()) {
+        // Strip the FULL "/assets/" prefix — keeping the leading slash makes the
+        // segment absolute and `resolve()` escapes the root (404 for every asset).
+        const rel = c.req.path.slice("/assets/".length);
+        const abs = resolvePath(assetsRoot, rel);
+        if (!abs.startsWith(assetsRoot + sep) || !existsSync(abs) || !statSync(abs).isFile()) {
         return c.notFound();
       }
       const mime = MIME_TYPES[extname(abs)] ?? "application/octet-stream";
@@ -957,6 +959,28 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
           // SEO is best-effort — never block a page render on it.
         }
       }
+
+        // Cookie-consent banner config (GDPR). Injected as a CSP-safe JSON payload
+        // the bundled client reads; only present when the operator enabled it. The
+        // payload is cached with the page, so toggling consent takes effect as pages
+        // re-render (acceptable — it changes rarely).
+        if (deps.settings) {
+            try {
+                const consent = (await deps.settings.getSettings()).consent;
+                if (consent.enabled) {
+                    const payload = JSON.stringify({
+                        message: consent.message,
+                        policyUrl: consent.policyUrl,
+                    }).replace(/<\//g, "<\\/");
+                    html = html.replace(
+                        "</body>",
+                        `<script type="application/json" id="pressh-consent">${payload}</script></body>`,
+                    );
+                }
+            } catch {
+                // Best-effort — never block a page render on settings.
+            }
+        }
 
       deps.cache.set(path, html, version, [`content:${resolved.id}`]);
       c.header("X-Cache", "MISS");

@@ -350,3 +350,62 @@ describe("updateProfile", () => {
         });
     });
 });
+
+describe("admin management", () => {
+    async function makeVerifiedMember(email: string, name: string): Promise<string> {
+        const {member, verifyToken} = await svc.register({email, password: "hunter2hunter2", displayName: name});
+        await svc.verifyEmail({token: verifyToken});
+        return member.id;
+    }
+
+    it("lists members newest-first without secrets", async () => {
+        clock += 1000;
+        await makeVerifiedMember("a@example.com", "A");
+        clock += 1000;
+        await makeVerifiedMember("b@example.com", "B");
+        const list = await svc.listMembers();
+        expect(list.map((m) => m.email)).toEqual(["b@example.com", "a@example.com"]);
+        expect(Object.keys(list[0]!)).not.toContain("passwordHash");
+    });
+
+    it("suspends a member, revoking active sessions and blocking login", async () => {
+        const id = await makeVerifiedMember("c@example.com", "C");
+        const {token} = await svc.authenticate({email: "c@example.com", password: "hunter2hunter2"});
+        expect(await svc.validateSession(token)).not.toBeNull();
+
+        const suspended = await svc.setMemberStatus(id, "suspended", "admin-1");
+        expect(suspended.status).toBe("suspended");
+        // The previously-valid session is now dead.
+        expect(await svc.validateSession(token)).toBeNull();
+        // And a fresh login is refused.
+        await expect(
+            svc.authenticate({email: "c@example.com", password: "hunter2hunter2"}),
+        ).rejects.toMatchObject({code: "unauthorized"});
+    });
+
+    it("reactivates a suspended member", async () => {
+        const id = await makeVerifiedMember("d@example.com", "D");
+        await svc.setMemberStatus(id, "suspended");
+        await svc.setMemberStatus(id, "active");
+        const ok = await svc.authenticate({email: "d@example.com", password: "hunter2hunter2"});
+        expect(ok.member.status).toBe("active");
+    });
+
+    it("deletes a member along with their sessions and tokens", async () => {
+        const id = await makeVerifiedMember("e@example.com", "E");
+        const {token} = await svc.authenticate({email: "e@example.com", password: "hunter2hunter2"});
+        await svc.deleteMember(id, "admin-1");
+        expect(await svc.getMember(id)).toBeNull();
+        expect(await svc.validateSession(token)).toBeNull();
+        // Sessions + tokens for the member are gone.
+        const sessions = await storage.query("member_sessions", {where: {memberId: id}});
+        const tokens = await storage.query("member_tokens", {where: {memberId: id}});
+        expect(sessions.ok && sessions.value.items).toEqual([]);
+        expect(tokens.ok && tokens.value.items).toEqual([]);
+    });
+
+    it("rejects status/delete for an unknown member", async () => {
+        await expect(svc.setMemberStatus("ghost", "suspended")).rejects.toMatchObject({code: "not_found"});
+        await expect(svc.deleteMember("ghost")).rejects.toMatchObject({code: "not_found"});
+    });
+});

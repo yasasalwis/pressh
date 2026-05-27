@@ -1,6 +1,7 @@
 export interface User {
     email: string;
     mustChangePassword?: boolean;
+    mfaEnabled?: boolean;
 }
 
 export interface Me {

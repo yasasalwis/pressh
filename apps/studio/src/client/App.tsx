@@ -8,14 +8,17 @@ import {Shell} from "./components/Shell";
 import {Dashboard} from "./components/Dashboard";
 import {Placeholder} from "./components/Placeholder";
 import {PasswordModal} from "./components/PasswordModal";
+import {MfaModal} from "./components/MfaModal";
 import {Pages} from "./components/sections/Pages";
 import {Types} from "./components/sections/Types";
 import {Media} from "./components/sections/Media";
 import {Users} from "./components/sections/Users";
+import {Members} from "./components/sections/Members";
 import {Appearance} from "./components/sections/Appearance";
 import {Settings} from "./components/sections/Settings";
 import {Plugins} from "./components/sections/Plugins";
 import {Database} from "./components/sections/Database";
+import {Backups} from "./components/sections/Backups";
 import {Privacy} from "./components/sections/Privacy";
 import {Audit} from "./components/sections/Audit";
 import {Designer} from "./components/designer/Designer";
@@ -46,24 +49,28 @@ const SECTION_TITLE: Record<string, string> = {
   types: "Content Types",
   media: "Media",
   users: "Users",
+    members: "Members",
   appearance: "Appearance",
   settings: "Settings",
   plugins: "Plugins",
   privacy: "Privacy & GDPR",
   audit: "Audit Log",
   database: "Database",
+    backups: "Backups",
 };
 
 const SECTION_CAP: Record<string, string> = {
   types: "types.manage",
   media: "media.read",
   users: "users.manage",
+    members: "members.manage",
   appearance: "themes.manage",
   settings: "settings.manage",
   plugins: "plugins.manage",
   privacy: "gdpr.manage",
   audit: "audit.read",
   database: "db.manage",
+    backups: "backups.manage",
 };
 
 function renderSection(section: string, can: (cap: string) => boolean): ReactNode {
@@ -78,6 +85,8 @@ function renderSection(section: string, can: (cap: string) => boolean): ReactNod
       return <Media can={can}/>;
     case "users":
       return <Users/>;
+      case "members":
+          return <Members/>;
     case "appearance":
       return <Appearance/>;
     case "settings":
@@ -86,6 +95,8 @@ function renderSection(section: string, can: (cap: string) => boolean): ReactNod
       return <Plugins/>;
     case "database":
       return <Database/>;
+      case "backups":
+          return <Backups/>;
     case "privacy":
       return <Privacy/>;
     case "audit":
@@ -102,6 +113,7 @@ export function App() {
   const [route, setRoute] = useState<Route>(parseHash());
   const [acceptToken, setAcceptToken] = useState("");
   const [pwModal, setPwModal] = useState<"closed" | "open" | "forced">("closed");
+    const [mfaModal, setMfaModal] = useState(false);
 
   const boot = useCallback(async () => {
     const meRes = await api<Me>("/admin/api/me");
@@ -190,6 +202,7 @@ export function App() {
             title={title}
             onLogout={logout}
             onOpenPassword={() => setPwModal("open")}
+            onOpenSecurity={() => setMfaModal(true)}
         >
           {content}
         </Shell>
@@ -204,6 +217,17 @@ export function App() {
                 }}
             />
         )}
+          {mfaModal && (
+              <MfaModal
+                  enabled={me.user.mfaEnabled ?? false}
+                  onClose={() => setMfaModal(false)}
+                  onChanged={(nowEnabled) => {
+                      setMe((prev) => (prev ? {...prev, user: {...prev.user, mfaEnabled: nowEnabled}} : prev));
+                      setMfaModal(false);
+                      toast(nowEnabled ? "Two-factor enabled" : "Two-factor disabled");
+                  }}
+              />
+          )}
       </>
   );
 }

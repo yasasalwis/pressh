@@ -27,8 +27,10 @@ const GROUPS: NavGroup[] = [
     },
     {
         label: "People",
-        cap: "users.manage",
-        items: [{section: "users", label: "Users", icon: "👥", cap: "users.manage"}],
+        items: [
+            {section: "users", label: "Users", icon: "👥", cap: "users.manage"},
+            {section: "members", label: "Members", icon: "🧑‍🤝‍🧑", cap: "members.manage"},
+        ],
     },
     {
         label: "Site",
@@ -44,6 +46,7 @@ const GROUPS: NavGroup[] = [
         items: [
             {section: "plugins", label: "Plugins", icon: "🧩", cap: "plugins.manage"},
             {section: "database", label: "Database", icon: "💾", cap: "db.manage"},
+            {section: "backups", label: "Backups", icon: "🗄", cap: "backups.manage"},
             {section: "privacy", label: "Privacy & GDPR", icon: "🔒", cap: "gdpr.manage"},
             {section: "audit", label: "Audit Log", icon: "📜", cap: "audit.read"},
         ],
@@ -57,6 +60,7 @@ export function Shell({
                           title,
                           onLogout,
                           onOpenPassword,
+                          onOpenSecurity,
                           children,
                       }: {
     me: Me;
@@ -65,6 +69,7 @@ export function Shell({
     title: string;
     onLogout: () => void;
     onOpenPassword: () => void;
+    onOpenSecurity: () => void;
     children: ReactNode;
 }) {
     const [open, setOpen] = useState(false);
@@ -118,6 +123,11 @@ export function Shell({
                             <button className="ghost" onClick={onOpenPassword}>
                                 Password
                             </button>
+                            <button className="ghost" onClick={onOpenSecurity}>
+                                {me.user.mfaEnabled ? "2FA ✓" : "2FA"}
+                            </button>
+                        </div>
+                        <div className="row">
                             <button className="ghost danger" onClick={onLogout}>
                                 Sign out
                             </button>

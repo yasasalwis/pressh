@@ -1,10 +1,21 @@
 import {timingSafeEqual} from "node:crypto";
 import {readFile} from "node:fs/promises";
+import {createReadStream, statSync} from "node:fs";
+import {Readable} from "node:stream";
 import type {Context, Next} from "hono";
 import {Hono} from "hono";
 import {deleteCookie, getCookie, setCookie} from "hono/cookie";
-import type {AuditLog, AuthService, CsrfProtection, RoleName, SecretsBackend, StorageAdapter, User} from "@pressh/core";
-import {CapabilityGate, createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
+import type {
+    AuditLog,
+    AuthService,
+    CsrfProtection,
+    MemberAuthService,
+    RoleName,
+    SecretsBackend,
+    StorageAdapter,
+    User
+} from "@pressh/core";
+import {CapabilityGate, createMetrics, createRateLimiter, isMfaChallenge, PressError, requestId} from "@pressh/core";
 import type {
   ContentEntry,
   ContentService,
@@ -83,6 +94,26 @@ export interface PluginControlProvider {
   designerPresets?(): { plugin: string; presets: unknown[] }[];
 }
 
+/** Scheduled-backup admin surface (wired from the server when PRESSH_BACKUP_DIR is set). */
+export interface BackupAdmin {
+    dir: string;
+    intervalMs: number;
+    keep: number;
+
+    /** Run a backup now (timestamped + pruned). Throws a PressError on failure. */
+    run(): Promise<{ name: string; items: number; pruned: number }>;
+
+    list(): Promise<{ name: string; createdAt: string; sizeBytes: number }[]>;
+
+    /** Restore drill on a named backup (latest when omitted) — never touches live data. */
+    verify(name?: string): Promise<{
+        ok: boolean;
+        collections: Record<string, number>;
+        totalRecords: number;
+        message: string
+    }>;
+}
+
 const SESSION_COOKIE = "pressh_session";
 
 export interface StudioAppDeps {
@@ -96,6 +127,10 @@ export interface StudioAppDeps {
   settings: SettingsService;
     /** Vault used to reveal sealed sensitive content fields to authorized editors. */
     secrets?: SecretsBackend;
+    /** Site-member management (list/suspend/erase) — shares the Site's member store. */
+    memberAuth?: MemberAuthService;
+    /** Scheduled-backup admin (list / run now / restore drill). Absent when unconfigured. */
+    backups?: BackupAdmin;
   panels?: PanelProvider;
   pluginInfo?: PluginInfoProvider;
   pluginControl?: PluginControlProvider;
@@ -339,7 +374,12 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
               );
           }
       await deps.auth.createUser({ email, password, roles: ["owner"] });
-      const { token, user } = await deps.auth.authenticate({ email, password });
+          const result = await deps.auth.authenticate({email, password});
+          // A brand-new owner has no MFA yet, so this is always a full session.
+          if (isMfaChallenge(result)) {
+              return c.json({error: {code: "internal", message: "internal"}}, 500);
+          }
+          const {token, user} = result;
       setCookie(c, SESSION_COOKIE, token, {
         httpOnly: true,
         sameSite: "Lax",
@@ -361,7 +401,32 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.post("/admin/api/auth/login", rateLimit(authLimiter), async (c) => {
     const { email, password } = await c.req.json<{ email: string; password: string }>();
     try {
-      const { token, user } = await deps.auth.authenticate({ email, password });
+        const result = await deps.auth.authenticate({email, password});
+        // MFA-enabled: no cookie yet — the client must complete /auth/mfa/verify.
+        if (isMfaChallenge(result)) {
+            return c.json({mfaRequired: true, challenge: result.challenge});
+        }
+        setCookie(c, SESSION_COOKIE, result.token, {
+            httpOnly: true,
+            sameSite: "Lax",
+            secure: cookieSecure(c),
+            path: "/",
+        });
+        return c.json({user: result.user});
+    } catch (error) {
+        const {status} = mapError(error);
+        return c.json({error: {code: "unauthorized", message: "Invalid credentials"}}, status);
+    }
+  });
+
+    // Completes a two-step login: exchange the challenge + TOTP/recovery code for a session.
+    app.post("/admin/api/auth/mfa/verify", rateLimit(authLimiter), async (c) => {
+        const {challenge, code} = await c.req.json<{ challenge: string; code: string }>();
+        try {
+            const {token, user} = await deps.auth.verifyMfaLogin({
+                challenge: String(challenge ?? ""),
+                code: String(code ?? ""),
+            });
       setCookie(c, SESSION_COOKIE, token, {
         httpOnly: true,
         sameSite: "Lax",
@@ -371,7 +436,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       return c.json({ user });
     } catch (error) {
       const { status } = mapError(error);
-      return c.json({ error: { code: "unauthorized", message: "Invalid credentials" } }, status);
+            return c.json({error: {code: "unauthorized", message: "Invalid authentication code"}}, status);
     }
   });
 
@@ -380,6 +445,98 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.json({ ok: true });
   });
+
+    // --- MFA enrollment (manage your own second factor) ---
+    app.post("/admin/api/auth/mfa/begin", requireSession, requireCsrf, async (c) =>
+        run(c, () => deps.auth.beginMfaEnrollment(c.get("user").id)),
+    );
+    app.post("/admin/api/auth/mfa/confirm", requireSession, requireCsrf, async (c) => {
+        const {code} = await c.req.json<{ code?: string }>();
+        return run(c, async () => deps.auth.confirmMfaEnrollment(c.get("user").id, String(code ?? "")));
+    });
+    app.post("/admin/api/auth/mfa/disable", requireSession, requireCsrf, async (c) => {
+        const {code} = await c.req.json<{ code?: string }>();
+        return run(c, async () => {
+            await deps.auth.disableMfa(c.get("user").id, String(code ?? ""));
+            return {ok: true};
+        });
+    });
+
+    // --- site member management (capability: members.manage) ---
+    const requireMembers = (c: Context<Vars>): MemberAuthService => {
+        if (!gate.check(caps(c), "members.manage") || !deps.memberAuth) {
+            throw new PressError("forbidden", "forbidden");
+        }
+        return deps.memberAuth;
+    };
+
+    app.get("/admin/api/members", requireSession, async (c) =>
+        run(c, async () => ({items: await requireMembers(c).listMembers()})),
+    );
+
+    app.post("/admin/api/members/:id/suspend", requireSession, requireCsrf, async (c) =>
+        run(c, () => requireMembers(c).setMemberStatus(c.req.param("id") ?? "", "suspended", c.get("user").id)),
+    );
+
+    app.post("/admin/api/members/:id/activate", requireSession, requireCsrf, async (c) =>
+        run(c, () => requireMembers(c).setMemberStatus(c.req.param("id") ?? "", "active", c.get("user").id)),
+    );
+
+    // Export a member's data (Art. 15/20): public profile (never the password hash)
+    // plus their subject-linked records via the GDPR service, keyed by email.
+    app.get("/admin/api/members/:id/export", requireSession, async (c) =>
+        run(c, async () => {
+            const members = requireMembers(c);
+            const profile = await members.getMember(c.req.param("id") ?? "");
+            if (!profile) throw new PressError("not_found", "Member not found");
+            const data = deps.gdpr ? (await deps.gdpr.export(caps(c), profile.email)).records : {};
+            return {profile, data};
+        }),
+    );
+
+    // GDPR right-to-be-forgotten: erase the member's subject-linked data, then the
+    // account itself (with its sessions + tokens).
+    app.post("/admin/api/members/:id/erase", requireSession, requireCsrf, async (c) =>
+        run(c, async () => {
+            const members = requireMembers(c);
+            const id = c.req.param("id") ?? "";
+            const member = await members.getMember(id);
+            if (!member) throw new PressError("not_found", "Member not found");
+            if (deps.gdpr) await deps.gdpr.erase(caps(c), member.email);
+            await members.deleteMember(id, c.get("user").id);
+            return {ok: true};
+        }),
+    );
+
+    // --- scheduled backups (capability: backups.manage) ---
+    const requireBackups = (c: Context<Vars>): BackupAdmin => {
+        if (!gate.check(caps(c), "backups.manage")) throw new PressError("forbidden", "forbidden");
+        if (!deps.backups) throw new PressError("not_found", "Backups are not configured (set PRESSH_BACKUP_DIR)");
+        return deps.backups;
+    };
+
+    app.get("/admin/api/backups", requireSession, async (c) =>
+        run(c, async () => {
+            if (!gate.check(caps(c), "backups.manage")) throw new PressError("forbidden", "forbidden");
+            if (!deps.backups) return {configured: false, items: []};
+            return {
+                configured: true,
+                dir: deps.backups.dir,
+                intervalMs: deps.backups.intervalMs,
+                keep: deps.backups.keep,
+                items: await deps.backups.list(),
+            };
+        }),
+    );
+
+    app.post("/admin/api/backups/run", requireSession, requireCsrf, async (c) =>
+        run(c, () => requireBackups(c).run()),
+    );
+
+    app.post("/admin/api/backups/verify", requireSession, requireCsrf, async (c) => {
+        const {name} = await c.req.json<{ name?: string }>().catch(() => ({name: undefined}));
+        return run(c, () => requireBackups(c).verify(typeof name === "string" ? name : undefined));
+    });
 
   app.get("/admin/api/me", requireSession, (c) => {
     const user = c.get("user");
@@ -692,12 +849,23 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.get("/admin/api/media/:id/raw", requireSession, requireCap("media.read"), async (c) => {
     const rec = await deps.media.get(c.req.param("id") ?? "");
     if (!rec) return c.text("Not found", 404);
-    const buf = await readFile(rec.path);
-    c.header("Content-Type", rec.mime);
-    c.header("X-Content-Type-Options", "nosniff");
-    c.header("Content-Disposition", "inline");
-    c.header("Cache-Control", "private, max-age=300");
-    return c.body(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+      // Stream the file rather than buffering the whole blob (up to 25 MB) into the
+      // admin process heap — keeps the footprint flat on a small VM.
+      let size: number;
+      try {
+          size = statSync(rec.path).size;
+      } catch {
+          return c.text("Not found", 404);
+      }
+      return new Response(Readable.toWeb(createReadStream(rec.path)) as ReadableStream, {
+          headers: {
+              "content-type": rec.mime,
+              "content-length": String(size),
+              "x-content-type-options": "nosniff",
+              "content-disposition": "inline",
+              "cache-control": "private, max-age=300",
+          },
+      });
   });
 
   app.delete("/admin/api/media/:id", requireSession, requireCsrf, requireCap("media.write"), (c) =>

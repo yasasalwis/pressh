@@ -60,7 +60,11 @@ const pendingService = new Map<
   { resolve: (value: unknown) => void; reject: (error: Error) => void }
 >();
 
-function serviceCall(service: "storage" | "secrets", method: string, args: unknown[]): Promise<unknown> {
+function serviceCall(
+    service: "storage" | "secrets" | "pii",
+    method: string,
+    args: unknown[],
+): Promise<unknown> {
   const id = nextServiceId++;
   return new Promise((resolve, reject) => {
     pendingService.set(id, { resolve, reject });
@@ -84,6 +88,12 @@ const host: HostApi = {
   secrets: {
     get: (name) => serviceCall("secrets", "get", [name]) as Promise<string>,
   },
+    pii: {
+        protect: (subjectRef, value) =>
+            serviceCall("pii", "protect", [subjectRef, value]) as Promise<{ $enc: string }>,
+        recordConsent: (subjectRef, scope, granted) =>
+            serviceCall("pii", "recordConsent", [subjectRef, scope, granted]).then(() => undefined),
+    },
 };
 
 let pluginModule: PluginModule | null = null;

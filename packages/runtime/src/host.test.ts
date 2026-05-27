@@ -341,13 +341,14 @@ describe("PluginHost", () => {
 });
 
 describe("PluginHost enable/disable", () => {
-  it("registers without spawning a worker; enabling starts it, disabling stops it", async () => {
-    const host = new PluginHost({ storage, audit, allowUnsigned: true, workerScript: WORKER });
+    it("registers disabled; enabling marks it enabled, disabling stops it", async () => {
+        // Idle teardown off so this test reasons only about enable/disable.
+        const host = new PluginHost({storage, audit, allowUnsigned: true, workerScript: WORKER, idleTimeoutMs: 0});
     const pluginDir = await writePlugin("toggle", []);
 
     await host.register(pluginDir);
     expect(host.isRegistered("toggle")).toBe(true);
-    expect(host.has("toggle")).toBe(false); // registered but no worker yet
+        expect(host.has("toggle")).toBe(false); // registered but not enabled
     // A disabled plugin serves no endpoints and cannot be invoked.
     await expect(host.invoke("toggle", "greet", { name: "x" })).rejects.toMatchObject({
       code: "not_found",
@@ -362,6 +363,43 @@ describe("PluginHost enable/disable", () => {
     expect(host.isRegistered("toggle")).toBe(true); // still known, just not running
     await host.stopAll();
   });
+
+    it("lazy-spawns: enabling starts no worker until the first invoke", async () => {
+        const host = new PluginHost({storage, audit, allowUnsigned: true, workerScript: WORKER, idleTimeoutMs: 0});
+        await host.load(await writePlugin("lazy", [])); // load = register + enable
+
+        expect(host.has("lazy")).toBe(true); // enabled…
+        expect(host.isRunning("lazy")).toBe(false); // …but no worker spawned yet
+
+        expect(await host.invoke("lazy", "greet", {name: "go"})).toBe("GO");
+        expect(host.isRunning("lazy")).toBe(true); // the invoke spawned it
+
+        await host.stopAll();
+    });
+
+    it("tears an idle worker down after the timeout, then respawns it on the next call", async () => {
+        const host = new PluginHost({
+            storage,
+            audit,
+            allowUnsigned: true,
+            workerScript: WORKER,
+            idleTimeoutMs: 100,
+        });
+        await host.load(await writePlugin("idler", []));
+
+        expect(await host.invoke("idler", "greet", {name: "one"})).toBe("ONE");
+        expect(host.isRunning("idler")).toBe(true);
+
+        // After the idle window the worker is reclaimed but the plugin stays enabled.
+        await new Promise((r) => setTimeout(r, 300));
+        expect(host.isRunning("idler")).toBe(false);
+        expect(host.has("idler")).toBe(true);
+
+        // The next call transparently respawns the worker.
+        expect(await host.invoke("idler", "greet", {name: "two"})).toBe("TWO");
+        expect(host.isRunning("idler")).toBe(true);
+        await host.stopAll();
+    });
 
   it("persists the enabled set through the state store and auto-starts on register", async () => {
     const enabled = new Set<string>();
@@ -378,10 +416,13 @@ describe("PluginHost enable/disable", () => {
     expect(enabled.has("persisted")).toBe(true); // wrote through
     await host1.stopAll();
 
-    // A fresh host (e.g. the Site process) sees the persisted state and auto-starts.
+      // A fresh host (e.g. the Site process) sees the persisted state and treats
+      // the plugin as enabled; the worker still spawns lazily on first invoke.
     const host2 = new PluginHost({ storage, audit, allowUnsigned: true, workerScript: WORKER, state });
     await host2.register(pluginDir);
-    expect(host2.has("persisted")).toBe(true);
+      expect(host2.has("persisted")).toBe(true); // enabled from persisted state…
+      expect(host2.isRunning("persisted")).toBe(false); // …but not spawned at register
+      expect(await host2.invoke("persisted", "greet", {name: "z"})).toBe("Z"); // spawns on demand
     await host2.stopAll();
   });
 

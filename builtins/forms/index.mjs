@@ -3,6 +3,13 @@
 // for data-subject export/erasure (subjectRef). Abuse defence: a hidden honeypot
 // field (`_hp`) here, plus a per-IP rate limit applied host-side at the Site's
 // plugin dispatch. Field values are length-capped and type-restricted on save.
+//
+// PII protection (baseline #6): fields the operator's form marks sensitive (via
+// the `sensitiveFields` array in the payload) are sealed in the vault through the
+// gated `host.pii.protect` RPC, so the plaintext never lands in storage/backups —
+// it is recoverable only via a host-side GDPR export and crypto-shredded on erase.
+// The subjectRef/email stays plaintext: it is the GDPR lookup key and the
+// operator's contact handle. On opt-in, a GDPR consent record is written.
 
 import { randomUUID } from "node:crypto";
 
@@ -36,15 +43,36 @@ export async function submit(args, host) {
   if (typeof args?._hp === "string" && args._hp.trim() !== "") return { ok: true };
   const data = sanitizeFields(args?.fields);
   const subjectRef = String(args?.subjectRef ?? data.email ?? "").slice(0, 320);
+    const formId = String(args?.formId ?? "default").slice(0, MAX_KEY_LEN);
+
+    // Seal operator-declared sensitive fields. A self-submitter who strips the list
+    // only weakens confidentiality of their OWN data; the threat we defend against
+    // is bulk exfiltration of PII honest submitters entrusted to the operator.
+    const sensitive = Array.isArray(args?.sensitiveFields)
+        ? args.sensitiveFields.filter((k) => typeof k === "string")
+        : [];
+    for (const key of sensitive) {
+        const value = data[key];
+        if (typeof value === "string" && value !== "") {
+            data[key] = await host.pii.protect(subjectRef, value);
+        }
+    }
+
+    const consent = args?.consent === true;
   const doc = {
     id: randomUUID(),
-    formId: String(args?.formId ?? "default").slice(0, MAX_KEY_LEN),
+      formId,
     data,
     subjectRef,
-    consent: args?.consent === true,
+      consent,
     at: new Date().toISOString(),
   };
   await host.storage.put(COLLECTION, doc);
+
+    // Verifiable proof of consent (GDPR Art. 7), linked to the subject for export/erase.
+    if (consent && subjectRef) {
+        await host.pii.recordConsent(subjectRef, `form:${formId}`, true);
+    }
   return { ok: true, id: doc.id };
 }
 

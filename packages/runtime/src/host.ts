@@ -16,8 +16,28 @@ import {
 } from "./plugin-signature.js";
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 5000;
-const DEFAULT_MAX_MEMORY_MB = 128;
+// Per-plugin worker heap cap. Lower than V8's multi-GB default so a handful of
+// enabled plugins still fit a small VM (a busy plugin GCs at 64MB instead of
+// ballooning until the kernel OOM-kills the whole process). Override per
+// deployment with PRESSH_PLUGIN_MAX_MEMORY_MB.
+const DEFAULT_MAX_MEMORY_MB = 64;
+// Young-generation (scavenge) cap per worker. RPC handlers aren't allocation
+// hot-loops, so a small young gen trims resident memory at negligible GC cost.
+const DEFAULT_MAX_YOUNG_MB = 8;
+// Tear a plugin's worker down after this long with no invocation, reclaiming its
+// memory while leaving the plugin ENABLED — the next call re-spawns it (and
+// re-verifies its signature). 0 disables idle teardown (always-on workers).
+// Override with PRESSH_PLUGIN_IDLE_MS.
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const MANIFEST_FILE = "pressh.plugin.json";
+
+/** Parses a non-negative integer env var; returns undefined when unset/invalid. */
+function envInt(name: string): number | undefined {
+    const raw = process.env[name];
+    if (raw === undefined) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
 
 /**
  * The Node permission model is the OS-level half of the plugin sandbox. It is
@@ -50,10 +70,24 @@ function resolveWithin(baseDir: string, relative: string): string {
   return target;
 }
 
+/**
+ * Host-side privacy backend exposed to plugins as `host.pii.*` (gated). Kept as a
+ * structural interface so the runtime stays decoupled from the engine — the
+ * engine's GdprService satisfies it. `protect` seals under the subject namespace
+ * (so GDPR erase crypto-shreds it); there is intentionally no reveal.
+ */
+export interface PluginPiiService {
+    protect(subjectRef: string, value: string): Promise<{ $enc: string }>;
+
+    recordConsent(subjectRef: string, scope: string, granted: boolean): Promise<void>;
+}
+
 export interface PluginHostOptions {
   storage: StorageAdapter;
   audit: AuditLog;
   secrets?: SecretsBackend;
+    /** Backs the gated `host.pii.protect` / `host.pii.recordConsent` plugin RPCs. */
+    pii?: PluginPiiService;
   logger?: Logger;
   /** Production sets this false: unsigned/invalid plugins are refused (ADR-011). */
   allowUnsigned?: boolean;
@@ -66,7 +100,14 @@ export interface PluginHostOptions {
   invokeTimeoutMs?: number;
   /** Override the compiled worker script (used in tests running from src). */
   workerScript?: string;
+    /** Per-worker old-generation heap cap (MB). Defaults to PRESSH_PLUGIN_MAX_MEMORY_MB or 64. */
   maxMemoryMb?: number;
+    /**
+     * Idle timeout (ms) after which an enabled plugin's worker is torn down to
+     * reclaim memory; the next invoke re-spawns it. Defaults to
+     * PRESSH_PLUGIN_IDLE_MS or 5 minutes. 0 keeps workers running indefinitely.
+     */
+    idleTimeoutMs?: number;
   /** When set, plugins flagged by the CVE feed are refused at load (baseline #11). */
   cve?: CveChecker;
   /**
@@ -256,8 +297,18 @@ interface PluginRecord {
   dir: string;
   manifest: PluginManifest;
   builtin: boolean;
-  /** Non-null only while a worker is running (i.e. the plugin is enabled). */
+    /** Operator's persisted intent: does this plugin serve requests? Independent of
+     * whether a worker is currently spawned (workers are lazy + idle-reclaimed). */
+    enabled: boolean;
+    /** Non-null only while a worker is actually running. An enabled plugin may have
+     * a null instance before its first invoke or after an idle teardown. */
   instance: PluginInstance | null;
+    /** In-flight spawn shared by concurrent invokes so only one worker is created. */
+    spawning: Promise<PluginInstance> | null;
+    /** Outstanding invocations; the idle timer only arms once this hits zero. */
+    inflight: number;
+    /** Fires after the idle timeout to terminate an idle worker. */
+    idleTimer: ReturnType<typeof setTimeout> | null;
   /** Designer presets the plugin contributes (loaded at register; may be empty). */
   presets: DesignerPreset[];
 }
@@ -267,6 +318,9 @@ export class PluginHost {
   readonly #gate = new CapabilityGate();
   readonly #workerScript: string;
   readonly #timeout: number;
+    readonly #maxMemoryMb: number;
+    readonly #maxYoungMb: number;
+    readonly #idleMs: number;
     readonly #signingKey: Buffer | null;
   readonly #registry = new Map<string, PluginRecord>();
 
@@ -283,30 +337,36 @@ export class PluginHost {
       }
     this.#opts = opts;
     this.#timeout = opts.invokeTimeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
+      this.#maxMemoryMb = opts.maxMemoryMb ?? envInt("PRESSH_PLUGIN_MAX_MEMORY_MB") ?? DEFAULT_MAX_MEMORY_MB;
+      this.#maxYoungMb = DEFAULT_MAX_YOUNG_MB;
+      this.#idleMs = opts.idleTimeoutMs ?? envInt("PRESSH_PLUGIN_IDLE_MS") ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.#workerScript = opts.workerScript ?? fileURLToPath(new URL("./worker-entry.js", import.meta.url));
       this.#signingKey = opts.signingSecret ? derivePluginSigningKey(opts.signingSecret) : null;
   }
 
   /**
    * Validates a plugin (manifest, signature, CVE feed) and registers it WITHOUT
-   * spawning a worker. If a state store reports it as enabled, it is started.
-   * This is how both processes discover plugins at boot: disabled ones cost
-   * nothing beyond the metadata read.
+   * spawning a worker. A plugin the state store reports as enabled is marked
+   * enabled but its worker is spawned LAZILY on first invoke — so boot carries
+   * zero plugin workers and an enabled-but-unused plugin costs nothing until it
+   * is actually hit. Disabled plugins cost only the metadata read.
    */
   async register(pluginDir: string, opts: { builtin?: boolean } = {}): Promise<PluginManifest> {
     const manifest = await this.#readManifest(pluginDir);
       await this.#validate(pluginDir, manifest);
+      const enabled = this.#opts.state ? await this.#opts.state.isEnabled(manifest.name) : false;
     const record: PluginRecord = {
       dir: pluginDir,
       manifest,
       builtin: opts.builtin ?? false,
+        enabled,
       instance: null,
+        spawning: null,
+        inflight: 0,
+        idleTimer: null,
       presets: await this.#loadPresets(pluginDir, manifest),
     };
     this.#registry.set(manifest.name, record);
-    if (this.#opts.state && (await this.#opts.state.isEnabled(manifest.name))) {
-        record.instance = await this.#spawn(record.dir, record.manifest, record.builtin);
-    }
     return manifest;
   }
 
@@ -333,21 +393,26 @@ export class PluginHost {
         }
     }
 
-  /** Spawns the worker for a registered plugin and persists the enabled state. Idempotent. */
+    /**
+     * Marks a registered plugin enabled and persists that intent. The worker is
+     * NOT spawned here — it starts lazily on the first invoke (and is torn down
+     * again after the idle timeout). Validates up front so an enable of a
+     * tampered/CVE-flagged plugin still fails loudly. Idempotent.
+     */
   async enable(name: string): Promise<void> {
     const record = this.#registry.get(name);
     if (!record) throw new PressError("not_found", `Plugin not registered: ${name}`);
-    if (!record.instance) {
         await this.#validate(record.dir, record.manifest);
-        record.instance = await this.#spawn(record.dir, record.manifest, record.builtin);
-    }
+        record.enabled = true;
     await this.#opts.state?.setEnabled(name, true);
   }
 
-  /** Terminates the worker (zero footprint) and persists the disabled state. Idempotent. */
+    /** Disables the plugin: terminates any worker (zero footprint) and persists the state. Idempotent. */
   async disable(name: string): Promise<void> {
     const record = this.#registry.get(name);
     if (!record) return;
+        record.enabled = false;
+        this.#clearIdle(record);
     if (record.instance) {
       await record.instance.terminate();
       record.instance = null;
@@ -355,8 +420,15 @@ export class PluginHost {
     await this.#opts.state?.setEnabled(name, false);
   }
 
-  /** True only while a worker is running for the plugin (registered AND enabled). */
+    /** True when the plugin is enabled (serves requests), regardless of whether its
+     * worker is currently spawned — workers are lazy and idle-reclaimed. */
   has(name: string): boolean {
+        return this.#registry.get(name)?.enabled === true;
+    }
+
+    /** True only while a worker thread is actually live for the plugin (for
+     * observability/metrics; an enabled plugin may be idle with no worker). */
+    isRunning(name: string): boolean {
     return this.#registry.get(name)?.instance != null;
   }
 
@@ -373,7 +445,7 @@ export class PluginHost {
   endpoints(): LoadedEndpoint[] {
     const out: LoadedEndpoint[] = [];
     for (const [, record] of this.#registry) {
-      if (!record.instance) continue; // disabled plugins serve no endpoints
+        if (!record.enabled) continue; // disabled plugins serve no endpoints
       for (const ep of record.manifest.endpoints ?? []) {
         out.push({ plugin: record.manifest.name, method: ep.method, path: ep.path, handler: ep.handler });
       }
@@ -391,7 +463,7 @@ export class PluginHost {
         capabilities: record.manifest.capabilities ?? [],
         endpoints: (record.manifest.endpoints ?? []).length,
         hasPanel: Boolean(record.manifest.panel),
-        enabled: record.instance != null,
+          enabled: record.enabled,
         builtin: record.builtin,
       });
     }
@@ -406,7 +478,7 @@ export class PluginHost {
   designerPresets(): { plugin: string; presets: DesignerPreset[] }[] {
     const out: { plugin: string; presets: DesignerPreset[] }[] = [];
     for (const [, record] of this.#registry) {
-      if (record.instance && record.presets.length) {
+        if (record.enabled && record.presets.length) {
         out.push({ plugin: record.manifest.name, presets: record.presets });
       }
     }
@@ -417,7 +489,7 @@ export class PluginHost {
   panels(): { plugin: string; title: string }[] {
     const out: { plugin: string; title: string }[] = [];
     for (const [, record] of this.#registry) {
-      if (record.instance && record.manifest.panel) {
+        if (record.enabled && record.manifest.panel) {
         out.push({ plugin: record.manifest.name, title: record.manifest.panel.title });
       }
     }
@@ -427,33 +499,89 @@ export class PluginHost {
     /** Reads an enabled plugin's admin panel script bundle (inlined into a sandboxed iframe). */
     async panel(name: string): Promise<{ title: string; script: string } | null> {
     const record = this.#registry.get(name);
-    if (!record || !record.instance || !record.manifest.panel) return null;
+        if (!record || !record.enabled || !record.manifest.panel) return null;
         const script = await readFile(resolveWithin(record.dir, record.manifest.panel.entry), "utf8");
         return {title: record.manifest.panel.title, script};
   }
 
   async invoke(name: string, method: string, args: unknown): Promise<unknown> {
     const record = this.#registry.get(name);
-    if (!record || !record.instance) throw new PressError("not_found", `Plugin not enabled: ${name}`);
-    const instance = record.instance;
+      if (!record || !record.enabled) throw new PressError("not_found", `Plugin not enabled: ${name}`);
+      // Lazy-spawn: an enabled plugin's worker starts on its first invoke (or
+      // respawns after an idle teardown). The spawn re-verifies the signature.
+      const instance = await this.#ensureInstance(record);
+      record.inflight++;
+      this.#clearIdle(record); // never reclaim a worker that's mid-call
     try {
       return await instance.invoke(method, args, this.#timeout);
     } catch (e) {
       if (isTimeout(e)) {
-        // Kill the (possibly wedged) worker and respawn so the next call works.
+          // Kill the (possibly wedged) worker; the next call respawns it lazily.
         await instance.terminate().catch(() => undefined);
-          record.instance = await this.#spawn(record.dir, record.manifest, record.builtin);
+          record.instance = null;
       }
       throw e;
+    } finally {
+        record.inflight--;
+        if (record.inflight === 0 && record.instance) this.#armIdle(record);
     }
   }
 
   async stop(name: string): Promise<void> {
     const record = this.#registry.get(name);
     if (!record) return;
+      this.#clearIdle(record);
     if (record.instance) await record.instance.terminate();
     this.#registry.delete(name);
   }
+
+    /**
+     * Returns the plugin's live worker, spawning one if it isn't running (lazy
+     * start / idle respawn). Concurrent invokes share a single in-flight spawn so
+     * exactly one worker is ever created.
+     */
+    async #ensureInstance(record: PluginRecord): Promise<PluginInstance> {
+        if (record.instance) return record.instance;
+        if (record.spawning) return record.spawning;
+        record.spawning = (async () => {
+            // Re-validate (signature + CVE feed) on every cold spawn so a plugin whose
+            // files changed on disk, or that was flagged after it was enabled, is
+            // refused here rather than silently respawned.
+            await this.#validate(record.dir, record.manifest);
+            const instance = await this.#spawn(record.dir, record.manifest, record.builtin);
+            record.instance = instance;
+            return instance;
+        })();
+        try {
+            return await record.spawning;
+        } finally {
+            record.spawning = null;
+        }
+    }
+
+    /** Arms the idle-teardown timer; fires once the worker has been quiet for the
+     * configured timeout, terminating it to reclaim memory (the plugin stays
+     * enabled and respawns on the next invoke). */
+    #armIdle(record: PluginRecord): void {
+        if (this.#idleMs <= 0) return; // idle teardown disabled — keep workers resident
+        this.#clearIdle(record);
+        const timer = setTimeout(() => {
+            record.idleTimer = null;
+            if (record.inflight > 0) return; // a call arrived first; leave it running
+            const instance = record.instance;
+            record.instance = null;
+            void instance?.terminate().catch(() => undefined);
+        }, this.#idleMs);
+        timer.unref?.(); // an idle worker must never keep the process alive
+        record.idleTimer = timer;
+    }
+
+    #clearIdle(record: PluginRecord): void {
+        if (record.idleTimer) {
+            clearTimeout(record.idleTimer);
+            record.idleTimer = null;
+        }
+    }
 
   async stopAll(): Promise<void> {
     await Promise.all([...this.#registry.keys()].map((name) => this.stop(name)));
@@ -490,7 +618,7 @@ export class PluginHost {
     const worker = new Worker(this.#workerScript, {
       env: {},
         execArgv: this.#sandboxExecArgv(realDir),
-        resourceLimits: {maxOldGenerationSizeMb: this.#opts.maxMemoryMb ?? DEFAULT_MAX_MEMORY_MB},
+        resourceLimits: {maxOldGenerationSizeMb: this.#maxMemoryMb, maxYoungGenerationSizeMb: this.#maxYoungMb},
         // The sandbox loader confines the plugin's own (relative/absolute/file:)
         // imports to this directory at the JS layer — defense-in-depth so a broad
         // fs-read grant can't be abused to import host/runtime files.
@@ -677,6 +805,19 @@ export class PluginHost {
       if (!this.#opts.secrets) throw new PressError("internal", "Secrets backend not configured");
       return this.#opts.secrets.getSecret(name);
     }
+
+      if (service === "pii") {
+          if (method === "protect") {
+              this.#gate.assert(caps, "pii.protect");
+              if (!this.#opts.pii) throw new PressError("internal", "PII service not configured");
+              return this.#opts.pii.protect(String(args[0]), String(args[1]));
+          }
+          if (method === "recordConsent") {
+              this.#gate.assert(caps, "pii.consent");
+              if (!this.#opts.pii) throw new PressError("internal", "PII service not configured");
+              return this.#opts.pii.recordConsent(String(args[0]), String(args[1]), args[2] === true);
+          }
+      }
 
     throw new PressError("validation", `Unknown service: ${service}.${method}`);
   }

@@ -36,6 +36,14 @@ function makeHost() {
       },
     },
     secrets: { async get() { return ""; } },
+      pii: {
+          async protect(_subjectRef: string, value: string) {
+              return {$enc: `field:${value}`};
+          },
+          async recordConsent() {
+              /* no-op stub */
+          },
+      },
   };
 }
 

@@ -21,8 +21,10 @@ export const ROLE_CAPABILITIES: Record<RoleName, readonly string[]> = {
     "menus.manage",
     "forms.manage",
     "gdpr.manage",
+      "members.manage",
     "audit.read",
     "db.manage",
+      "backups.manage",
   ],
   editor: [
     "content.create",

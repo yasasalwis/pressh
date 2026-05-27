@@ -123,3 +123,43 @@ describe("SettingsService", () => {
     ).rejects.toMatchObject({ code: "validation" });
   });
 });
+
+describe("consent settings", () => {
+    it("defaults to a disabled banner", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        const s = await svc.getSettings();
+        expect(s.consent.enabled).toBe(false);
+        expect(s.consent.message).toBeTruthy();
+        expect(s.consent.policyUrl).toBe("");
+    });
+
+    it("enables the banner and stores message + policy URL", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        const s = await svc.updateSettings(ADMIN, {
+            consent: {enabled: true, message: "Cookies?", policyUrl: "/privacy"},
+        });
+        expect(s.consent).toEqual({enabled: true, message: "Cookies?", policyUrl: "/privacy"});
+        // Persists across reads.
+        expect((await svc.getSettings()).consent.enabled).toBe(true);
+    });
+
+    it("accepts http(s) and relative policy URLs but rejects others", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        await expect(svc.updateSettings(ADMIN, {consent: {policyUrl: "https://x.com/p"}})).resolves.toBeTruthy();
+        await expect(svc.updateSettings(ADMIN, {consent: {policyUrl: "/privacy"}})).resolves.toBeTruthy();
+        await expect(svc.updateSettings(ADMIN, {consent: {policyUrl: ""}})).resolves.toBeTruthy();
+        await expect(
+            svc.updateSettings(ADMIN, {consent: {policyUrl: "javascript:alert(1)"}}),
+        ).rejects.toMatchObject({code: "validation"});
+    });
+
+    it("caps the message length and requires settings.manage", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        await expect(
+            svc.updateSettings(ADMIN, {consent: {message: "x".repeat(501)}}),
+        ).rejects.toMatchObject({code: "validation"});
+        await expect(
+            svc.updateSettings(VIEWER, {consent: {enabled: true}}),
+        ).rejects.toMatchObject({code: "capability_denied"});
+    });
+});

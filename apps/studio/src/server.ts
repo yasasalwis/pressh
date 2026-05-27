@@ -3,7 +3,19 @@ import {pathToFileURL} from "node:url";
 import {readdir} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
 import {serve} from "@hono/node-server";
-import {createAuthService, createCsrf, createFileAuditLog, createScheduler, watchStorageConfig,} from "@pressh/core";
+import {
+    createAuthService,
+    createCsrf,
+    createFileAuditLog,
+    createMemberAuthService,
+    createScheduler,
+    listBackups,
+    PressError,
+    runScheduledBackup,
+    verifyBackup,
+    watchStorageConfig,
+} from "@pressh/core";
+import type {BackupTargets} from "@pressh/core";
 import {STORAGE_FACTORIES} from "./storage.js";
 import {hasMasterSecret, openConfiguredStorage} from "./bootstrap.js";
 import {
@@ -15,7 +27,7 @@ import {
 } from "@pressh/engine";
 import type {CveFeedSource} from "@pressh/runtime";
 import {createCveService, createPluginStateStore, PluginHost} from "@pressh/runtime";
-import type {PanelProvider, PluginControlProvider, PluginInfoProvider} from "./app.js";
+import type {BackupAdmin, PanelProvider, PluginControlProvider, PluginInfoProvider} from "./app.js";
 import {createStudioApp, seedDemoContent} from "./app.js";
 import {createMediaService} from "./media.js";
 import {createMigrationLock} from "./migration-lock.js";
@@ -96,7 +108,9 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
         path: auditPath,
         ...(opts.signingSecret ? {sealSecret: opts.signingSecret} : {}),
     });
-  const auth = await createAuthService({ storage, audit });
+    const auth = await createAuthService({storage, audit, ...(secrets ? {secrets} : {})});
+    // Site members live in shared storage; the Studio manages them (list/suspend/erase).
+    const memberAuth = await createMemberAuthService({storage, audit});
   const scheduler = createScheduler({ storage, audit });
     const content = createContentService({storage, audit, scheduler, ...(secrets ? {secrets} : {})});
   scheduler.register(PUBLISH_JOB_TYPE, async (payload) => {
@@ -105,7 +119,78 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
       await content.transition(["content.publish"], entryId, "published").catch(() => undefined);
     }
   });
+
+    // Scheduled offsite backups (RUNBOOK DR). Deploy-time config: point
+    // PRESSH_BACKUP_DIR at a mounted offsite volume. Runs ONLY on the Studio
+    // (the Site has no scheduler) so backups never double-run. The job
+    // re-schedules itself, forming a single recurring chain that survives restarts.
+    const BACKUP_JOB = "backup.run";
+    const backupDir = process.env["PRESSH_BACKUP_DIR"]?.trim() || "";
+    const backupKeep = Math.max(1, Number(process.env["PRESSH_BACKUP_KEEP"] ?? 7) || 7);
+    const backupIntervalMs = Math.max(
+        60_000,
+        Number(process.env["PRESSH_BACKUP_INTERVAL_MS"] ?? 24 * 60 * 60 * 1000) || 24 * 60 * 60 * 1000,
+    );
+    const backupTargets: BackupTargets = {
+        contentRoot: opts.contentRoot,
+        mediaRoot: opts.mediaRoot,
+        vaultPath,
+        auditPath,
+    };
+    let backups: BackupAdmin | undefined;
+    if (backupDir) {
+        scheduler.register(BACKUP_JOB, async () => {
+            const r = await runScheduledBackup({targets: backupTargets, backupDir, keep: backupKeep});
+            await audit.append(
+                r.ok
+                    ? {
+                        action: "backup.run",
+                        actorId: null,
+                        detail: {name: r.value.name, items: r.value.items, pruned: r.value.pruned}
+                    }
+                    : {action: "backup.failed", actorId: null, detail: {error: r.error.message}},
+            );
+            // Always chain the next run so one failure can't stop scheduled backups.
+            await scheduler.schedule({type: BACKUP_JOB, runAt: Date.now() + backupIntervalMs});
+        });
+        backups = {
+            dir: backupDir,
+            intervalMs: backupIntervalMs,
+            keep: backupKeep,
+            run: async () => {
+                const r = await runScheduledBackup({targets: backupTargets, backupDir, keep: backupKeep});
+                if (!r.ok) throw r.error;
+                await audit.append({action: "backup.run", actorId: null, detail: {...r.value, manual: true}});
+                return r.value;
+            },
+            list: async () => {
+                const r = await listBackups(backupDir);
+                if (!r.ok) throw r.error;
+                return r.value.map((b) => ({name: b.name, createdAt: b.createdAt, sizeBytes: b.sizeBytes}));
+            },
+            verify: async (name) => {
+                const listed = await listBackups(backupDir);
+                if (!listed.ok) throw listed.error;
+                const target = name ? listed.value.find((b) => b.name === name) : listed.value[0];
+                if (!target) throw new PressError("not_found", "No backup available to verify");
+                const v = await verifyBackup(target.path);
+                if (!v.ok) throw v.error;
+                await audit.append({
+                    action: "backup.verify",
+                    actorId: null,
+                    detail: {name: target.name, ok: v.value.ok}
+                });
+                return v.value;
+            },
+        };
+    }
+
   scheduler.start();
+
+    // Boot-schedule a single recurring backup chain if none is pending yet.
+    if (backupDir && !(await scheduler.pending()).some((j) => j.type === BACKUP_JOB)) {
+        await scheduler.schedule({type: BACKUP_JOB, runAt: Date.now() + backupIntervalMs});
+    }
   const media = createMediaService({ storage, audit, mediaRoot: opts.mediaRoot });
   const theme = createThemeService({ storage, audit });
 
@@ -114,6 +199,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const gdpr = createGdprService({
     storage,
     audit,
+      // Secrets let GDPR export reveal sealed PII (e.g. encrypted form fields).
+      ...(secrets ? {secrets} : {}),
     scopes: [
       { collection: "form_submissions", subjectField: "subjectRef", timestampField: "at" },
       { collection: "media", subjectField: "ownerRef" },
@@ -147,6 +234,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
         allowUnsigned: !opts.production,
         cve,
         state: pluginState,
+        // Gated PII primitives for plugins (parity with the Site host).
+        pii: gdpr,
         ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
         ...(opts.workerScript ? {workerScript: opts.workerScript} : {}),
     });
@@ -192,6 +281,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     storage,
     audit,
     settings,
+      memberAuth,
+      ...(backups ? {backups} : {}),
       ...(secrets ? {secrets} : {}),
     panels,
     pluginInfo,

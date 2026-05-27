@@ -11,6 +11,12 @@ interface Smtp {
     hasPassword?: boolean;
 }
 
+interface Consent {
+    enabled?: boolean;
+    message?: string;
+    policyUrl?: string;
+}
+
 interface SettingsData {
     baseUrl?: string;
     defaultLocale?: string;
@@ -18,6 +24,7 @@ interface SettingsData {
     maintenanceMode?: boolean;
     smtp?: Smtp;
     smtpAvailable?: boolean;
+    consent?: Consent;
 }
 
 export function Settings() {
@@ -43,6 +50,10 @@ function SettingsForm({initial}: { initial: SettingsData }) {
     const [user, setUser] = useState(smtp.username || "");
     const [pass, setPass] = useState("");
     const [secure, setSecure] = useState(!!smtp.secure);
+    const consent = initial.consent || {};
+    const [consentOn, setConsentOn] = useState(!!consent.enabled);
+    const [consentMsg, setConsentMsg] = useState(consent.message || "");
+    const [consentPolicy, setConsentPolicy] = useState(consent.policyUrl || "");
     const [error, setError] = useState("");
 
     async function save() {
@@ -52,6 +63,11 @@ function SettingsForm({initial}: { initial: SettingsData }) {
             defaultLocale: locale.trim(),
             timezone: tz.trim(),
             maintenanceMode: maint,
+            consent: {
+                enabled: consentOn,
+                message: consentMsg.trim(),
+                policyUrl: consentPolicy.trim(),
+            },
         };
         if (host.trim()) {
             body["smtp"] = {
@@ -119,6 +135,36 @@ function SettingsForm({initial}: { initial: SettingsData }) {
                     <input type="checkbox" checked={maint} onChange={(e) => setMaint(e.target.checked)}/>
                     <span>Take the public site offline for maintenance</span>
                 </label>
+            </div>
+
+            <div className="card">
+                <h3>Cookie consent</h3>
+                <p className="hint">
+                    Show a consent banner on the public site. Each choice is recorded (anonymously) for GDPR
+                    proof-of-consent. Leave the policy link empty to omit it.
+                </p>
+                <label className="dp-check-row">
+                    <input type="checkbox" checked={consentOn} onChange={(e) => setConsentOn(e.target.checked)}/>
+                    <span>Show the cookie-consent banner</span>
+                </label>
+                <div className="field-grid" style={{marginTop: ".6rem"}}>
+                    <div className="full">
+                        <label>Banner message</label>
+                        <input
+                            placeholder="We use cookies to keep this site running…"
+                            value={consentMsg}
+                            onChange={(e) => setConsentMsg(e.target.value)}
+                        />
+                    </div>
+                    <div className="full">
+                        <label>Privacy policy URL</label>
+                        <input
+                            placeholder="/privacy or https://example.com/privacy"
+                            value={consentPolicy}
+                            onChange={(e) => setConsentPolicy(e.target.value)}
+                        />
+                    </div>
+                </div>
             </div>
 
             <div className="card">

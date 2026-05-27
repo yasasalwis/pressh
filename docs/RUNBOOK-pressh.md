@@ -158,6 +158,28 @@ curl -fsS https://<host>/healthz
 - **Data recovery (partial):** restore a single content tree/media set from the archive without a full restore.
 - **Comms template:** "We are investigating an issue affecting <scope> beginning <time>. Next update in <interval>." Update on cadence until resolved; follow with a postmortem.
 
+### Scheduled backups (automated)
+
+Set these on the **Studio** process to enable recurring backups (the Site has no scheduler, so backups never
+double-run):
+
+- `PRESSH_BACKUP_DIR` — destination directory. **Point it at a mounted offsite volume** (NFS, a separate disk, or an
+  `rclone`/S3 FUSE mount) to get true offsite copies with no extra dependency. Created `0700`; it holds the vault +
+  audit log, so keep it on restricted/encrypted storage and never expose it over HTTP.
+- `PRESSH_BACKUP_INTERVAL_MS` — interval between runs (default `86400000` = 24h).
+- `PRESSH_BACKUP_KEEP` — how many timestamped backups to retain (default `7`); older ones are pruned automatically.
+
+Each run writes `PRESSH_BACKUP_DIR/backup-<ISO>/` (content, media, vault, audit) and the job re-schedules the next run,
+forming a single recurring chain that survives restarts. Operators with `backups.manage` (Owner/Admin) manage this from
+**Studio → System → Backups**: see the schedule, **Back up now**, and **Run restore drill** (restores the latest backup
+into a throwaway sandbox and reports per-collection record counts — proving the backup is restorable without touching
+live data). Failures and manual runs are audited (`backup.run` / `backup.failed` / `backup.verify`).
+
+**Native cloud target (S3/GCS):** scheduled backups use a pluggable `BackupTarget` (`@pressh/core`). The filesystem
+target ships in core; a cloud target is a drop-in implementing the same `store`/`list` shape (kept out of core to avoid
+bundling a cloud SDK + credential surface). For most self-hosters, `PRESSH_BACKUP_DIR` on a mounted offsite volume is
+the recommended path.
+
 ## Maintenance Procedures
 - **Database / index migrations:** `pressh migrate` (idempotent, forward); test on a restored backup first; index rebuild is always safe (derived from canonical files).
 - **Switching the storage backend (Database Manager):** Studio → **Database** changes the active store (File → SQLite /

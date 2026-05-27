@@ -4,8 +4,17 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
 import type {StorageAdapter} from "@pressh/core";
-import {createAuthService, createCsrf, createFileAuditLog, createFileSystemStorage,} from "@pressh/core";
-import {createContentService, createSettingsService, createThemeService} from "@pressh/engine";
+import {
+    createAuthService,
+    createCsrf,
+    createFileAuditLog,
+    createFileSecretsBackend,
+    createFileSystemStorage,
+    createMemberAuthService,
+    totp,
+} from "@pressh/core";
+import type {AuthService, MemberAuthService, SecretsBackend} from "@pressh/core";
+import {createContentService, createGdprService, createSettingsService, createThemeService} from "@pressh/engine";
 import {createStudioApp} from "./app";
 import {createMediaService} from "./media";
 
@@ -350,4 +359,349 @@ describe("revisions", () => {
     });
     expect(restore.status).toBe(200);
   });
+});
+
+describe("studio MFA endpoints (TOTP, vault-backed)", () => {
+    let mdir: string;
+    let mstorage: StorageAdapter;
+    let secrets: SecretsBackend;
+    let auth: AuthService;
+    let mapp: ReturnType<typeof createStudioApp>;
+
+    beforeEach(async () => {
+        mdir = await mkdtemp(join(tmpdir(), "pressh-studio-mfa-"));
+        mstorage = createFileSystemStorage({root: join(mdir, "content")});
+        const audit = await createFileAuditLog({path: join(mdir, "audit.log")});
+        secrets = await createFileSecretsBackend({path: join(mdir, "vault.json"), key: randomBytes(32)});
+        auth = await createAuthService({storage: mstorage, audit, secrets});
+        await auth.createUser({email: "admin@x.com", password: "adminpass1", roles: ["owner"]});
+        const content = createContentService({storage: mstorage, audit, secrets});
+        const media = createMediaService({storage: mstorage, audit, mediaRoot: join(mdir, "media")});
+        const theme = createThemeService({storage: mstorage, audit});
+        const settings = createSettingsService({storage: mstorage, audit});
+        const csrf = createCsrf(randomBytes(32));
+        mapp = createStudioApp({auth, content, media, theme, settings, csrf, storage: mstorage, audit, secrets});
+    });
+
+    afterEach(async () => {
+        mstorage.close();
+        await rm(mdir, {recursive: true, force: true});
+    });
+
+    async function loginSession(): Promise<{ cookie: string; csrf: string }> {
+        const res = await mapp.request("/admin/api/auth/login", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email: "admin@x.com", password: "adminpass1"}),
+        });
+        const token = /pressh_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
+        const cookie = `pressh_session=${token}`;
+        const me = (await (await mapp.request("/admin/api/me", {headers: {cookie}})).json()) as { csrfToken: string };
+        return {cookie, csrf: me.csrfToken};
+    }
+
+    async function enrollOverHttp(s: { cookie: string; csrf: string }): Promise<string> {
+        const begin = await mapp.request("/admin/api/auth/mfa/begin", {
+            method: "POST",
+            headers: {cookie: s.cookie, "x-csrf-token": s.csrf, "content-type": "application/json"},
+        });
+        const beginBody = (await begin.json()) as { data: { secret: string } };
+        const secret = beginBody.data.secret;
+        const confirm = await mapp.request("/admin/api/auth/mfa/confirm", {
+            method: "POST",
+            headers: {cookie: s.cookie, "x-csrf-token": s.csrf, "content-type": "application/json"},
+            body: JSON.stringify({code: totp(secret)}),
+        });
+        expect(confirm.status).toBe(200);
+        const confirmBody = (await confirm.json()) as { data: { recoveryCodes: string[] } };
+        expect(confirmBody.data.recoveryCodes).toHaveLength(10);
+        return secret;
+    }
+
+    it("enrolls over HTTP and then requires a code at login", async () => {
+        const session = await loginSession();
+        const secret = await enrollOverHttp(session);
+
+        // Password step now returns a challenge and sets NO session cookie.
+        const pwRes = await mapp.request("/admin/api/auth/login", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email: "admin@x.com", password: "adminpass1"}),
+        });
+        expect(pwRes.headers.get("set-cookie")).toBeNull();
+        const challengeBody = (await pwRes.json()) as { mfaRequired?: boolean; challenge?: string };
+        expect(challengeBody.mfaRequired).toBe(true);
+        const challenge = challengeBody.challenge!;
+
+        // Wrong code is refused.
+        const bad = await mapp.request("/admin/api/auth/mfa/verify", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({challenge, code: "000000"}),
+        });
+        expect(bad.status).toBe(401);
+
+        // Correct code completes the login and issues a working session.
+        const ok = await mapp.request("/admin/api/auth/mfa/verify", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({challenge, code: totp(secret)}),
+        });
+        expect(ok.status).toBe(200);
+        const token = /pressh_session=([^;]+)/.exec(ok.headers.get("set-cookie") ?? "")?.[1] ?? "";
+        const me = await mapp.request("/admin/api/me", {headers: {cookie: `pressh_session=${token}`}});
+        expect(me.status).toBe(200);
+    });
+
+    it("disables MFA with a valid code, reverting to single-factor login", async () => {
+        const session = await loginSession();
+        const secret = await enrollOverHttp(session);
+        const dis = await mapp.request("/admin/api/auth/mfa/disable", {
+            method: "POST",
+            headers: {cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json"},
+            body: JSON.stringify({code: totp(secret)}),
+        });
+        expect(dis.status).toBe(200);
+
+        // Login is single-factor again: a session cookie is set immediately.
+        const res = await mapp.request("/admin/api/auth/login", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email: "admin@x.com", password: "adminpass1"}),
+        });
+        expect(res.headers.get("set-cookie")).toContain("pressh_session=");
+    });
+
+    it("rejects enrollment endpoints without a session/CSRF", async () => {
+        const res = await mapp.request("/admin/api/auth/mfa/begin", {method: "POST"});
+        expect(res.status).toBe(401);
+    });
+});
+
+describe("studio member management", () => {
+    let mdir: string;
+    let mstorage: StorageAdapter;
+    let memberAuth: MemberAuthService;
+    let mapp: ReturnType<typeof createStudioApp>;
+
+    async function makeMember(email: string): Promise<string> {
+        const {member, verifyToken} = await memberAuth.register({email, password: "memberpass1", displayName: "M"});
+        await memberAuth.verifyEmail({token: verifyToken});
+        return member.id;
+    }
+
+    async function sessionFor(email: string, password: string): Promise<{ cookie: string; csrf: string }> {
+        const res = await mapp.request("/admin/api/auth/login", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email, password}),
+        });
+        const token = /pressh_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
+        const cookie = `pressh_session=${token}`;
+        const me = (await (await mapp.request("/admin/api/me", {headers: {cookie}})).json()) as { csrfToken: string };
+        return {cookie, csrf: me.csrfToken};
+    }
+
+    beforeEach(async () => {
+        mdir = await mkdtemp(join(tmpdir(), "pressh-studio-members-"));
+        mstorage = createFileSystemStorage({root: join(mdir, "content")});
+        const audit = await createFileAuditLog({path: join(mdir, "audit.log")});
+        const auth = await createAuthService({storage: mstorage, audit});
+        await auth.createUser({email: "owner@x.com", password: "ownerpass1", roles: ["owner"]});
+        await auth.createUser({email: "author@x.com", password: "authorpass1", roles: ["author"]});
+        memberAuth = await createMemberAuthService({storage: mstorage, audit});
+        const content = createContentService({storage: mstorage, audit});
+        const media = createMediaService({storage: mstorage, audit, mediaRoot: join(mdir, "media")});
+        const theme = createThemeService({storage: mstorage, audit});
+        const settings = createSettingsService({storage: mstorage, audit});
+        const gdpr = createGdprService({
+            storage: mstorage,
+            audit,
+            scopes: [{collection: "form_submissions", subjectField: "subjectRef", timestampField: "at"}],
+        });
+        const csrf = createCsrf(randomBytes(32));
+        mapp = createStudioApp({
+            auth,
+            content,
+            media,
+            theme,
+            settings,
+            csrf,
+            storage: mstorage,
+            audit,
+            memberAuth,
+            gdpr
+        });
+    });
+
+    afterEach(async () => {
+        mstorage.close();
+        await rm(mdir, {recursive: true, force: true});
+    });
+
+    it("lets an owner list members but forbids an author", async () => {
+        await makeMember("m1@example.com");
+        const owner = await sessionFor("owner@x.com", "ownerpass1");
+        const list = await mapp.request("/admin/api/members", {headers: {cookie: owner.cookie}});
+        expect(list.status).toBe(200);
+        const body = (await list.json()) as { data: { items: { email: string }[] } };
+        expect(body.data.items.some((m) => m.email === "m1@example.com")).toBe(true);
+
+        const author = await sessionFor("author@x.com", "authorpass1");
+        const denied = await mapp.request("/admin/api/members", {headers: {cookie: author.cookie}});
+        expect(denied.status).toBe(403);
+    });
+
+    it("suspends and reactivates a member", async () => {
+        const id = await makeMember("m2@example.com");
+        const owner = await sessionFor("owner@x.com", "ownerpass1");
+        const hdr = {cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json"};
+
+        const sus = await mapp.request(`/admin/api/members/${id}/suspend`, {method: "POST", headers: hdr});
+        expect(((await sus.json()) as { data: { status: string } }).data.status).toBe("suspended");
+        // Suspended member can't log in on the site service.
+        await expect(memberAuth.authenticate({
+            email: "m2@example.com",
+            password: "memberpass1"
+        })).rejects.toMatchObject({code: "unauthorized"});
+
+        const act = await mapp.request(`/admin/api/members/${id}/activate`, {method: "POST", headers: hdr});
+        expect(((await act.json()) as { data: { status: string } }).data.status).toBe("active");
+    });
+
+    it("exports a member's data without the password hash", async () => {
+        const id = await makeMember("m3@example.com");
+        const owner = await sessionFor("owner@x.com", "ownerpass1");
+        const res = await mapp.request(`/admin/api/members/${id}/export`, {headers: {cookie: owner.cookie}});
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { data: { profile: Record<string, unknown>; data: unknown } };
+        expect(body.data.profile["email"]).toBe("m3@example.com");
+        expect(JSON.stringify(body.data)).not.toContain("passwordHash");
+    });
+
+    it("erases a member (right-to-be-forgotten)", async () => {
+        const id = await makeMember("m4@example.com");
+        const owner = await sessionFor("owner@x.com", "ownerpass1");
+        const res = await mapp.request(`/admin/api/members/${id}/erase`, {
+            method: "POST",
+            headers: {cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json"},
+        });
+        expect(res.status).toBe(200);
+        expect(await memberAuth.getMember(id)).toBeNull();
+    });
+
+    it("requires CSRF for mutations", async () => {
+        const id = await makeMember("m5@example.com");
+        const owner = await sessionFor("owner@x.com", "ownerpass1");
+        const res = await mapp.request(`/admin/api/members/${id}/suspend`, {
+            method: "POST",
+            headers: {cookie: owner.cookie, "content-type": "application/json"},
+        });
+        expect(res.status).toBe(403);
+    });
+});
+
+describe("studio backups endpoints", () => {
+    let bdir: string;
+    let bstorage: StorageAdapter;
+    let bapp: ReturnType<typeof createStudioApp>;
+    let ran = 0;
+
+    const fakeBackups = {
+        dir: "/data/backups",
+        intervalMs: 86_400_000,
+        keep: 7,
+        run: async () => {
+            ran++;
+            return {name: "backup-2026", items: 4, pruned: 1};
+        },
+        list: async () => [{name: "backup-2026", createdAt: "2026-05-27T00:00:00.000Z", sizeBytes: 2048}],
+        verify: async () => ({ok: true, collections: {posts: 2}, totalRecords: 2, message: "ok"}),
+    };
+
+    async function sess(email: string, password: string): Promise<{ cookie: string; csrf: string }> {
+        const res = await bapp.request("/admin/api/auth/login", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email, password}),
+        });
+        const token = /pressh_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
+        const cookie = `pressh_session=${token}`;
+        const me = (await (await bapp.request("/admin/api/me", {headers: {cookie}})).json()) as { csrfToken: string };
+        return {cookie, csrf: me.csrfToken};
+    }
+
+    beforeEach(async () => {
+        bdir = await mkdtemp(join(tmpdir(), "pressh-studio-bk-"));
+        bstorage = createFileSystemStorage({root: join(bdir, "content")});
+        const audit = await createFileAuditLog({path: join(bdir, "audit.log")});
+        const auth = await createAuthService({storage: bstorage, audit});
+        await auth.createUser({email: "owner@x.com", password: "ownerpass1", roles: ["owner"]});
+        await auth.createUser({email: "author@x.com", password: "authorpass1", roles: ["author"]});
+        const content = createContentService({storage: bstorage, audit});
+        const media = createMediaService({storage: bstorage, audit, mediaRoot: join(bdir, "media")});
+        const theme = createThemeService({storage: bstorage, audit});
+        const settings = createSettingsService({storage: bstorage, audit});
+        const csrf = createCsrf(randomBytes(32));
+        ran = 0;
+        bapp = createStudioApp({
+            auth,
+            content,
+            media,
+            theme,
+            settings,
+            csrf,
+            storage: bstorage,
+            audit,
+            backups: fakeBackups
+        });
+    });
+
+    afterEach(async () => {
+        bstorage.close();
+        await rm(bdir, {recursive: true, force: true});
+    });
+
+    it("lists backups + config for an owner, forbids an author", async () => {
+        const owner = await sess("owner@x.com", "ownerpass1");
+        const res = await bapp.request("/admin/api/backups", {headers: {cookie: owner.cookie}});
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { data: { configured: boolean; keep: number; items: unknown[] } };
+        expect(body.data.configured).toBe(true);
+        expect(body.data.keep).toBe(7);
+        expect(body.data.items).toHaveLength(1);
+
+        const author = await sess("author@x.com", "authorpass1");
+        const denied = await bapp.request("/admin/api/backups", {headers: {cookie: author.cookie}});
+        expect(denied.status).toBe(403);
+    });
+
+    it("runs a backup now (CSRF required)", async () => {
+        const owner = await sess("owner@x.com", "ownerpass1");
+        const noCsrf = await bapp.request("/admin/api/backups/run", {method: "POST", headers: {cookie: owner.cookie}});
+        expect(noCsrf.status).toBe(403);
+        expect(ran).toBe(0);
+
+        const ok = await bapp.request("/admin/api/backups/run", {
+            method: "POST",
+            headers: {cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json"},
+        });
+        expect(ok.status).toBe(200);
+        expect(((await ok.json()) as { data: { items: number } }).data.items).toBe(4);
+        expect(ran).toBe(1);
+    });
+
+    it("runs a restore drill (verify)", async () => {
+        const owner = await sess("owner@x.com", "ownerpass1");
+        const res = await bapp.request("/admin/api/backups/verify", {
+            method: "POST",
+            headers: {cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json"},
+            body: JSON.stringify({}),
+        });
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { data: { ok: boolean; totalRecords: number } }).data).toMatchObject({
+            ok: true,
+            totalRecords: 2
+        });
+    });
 });

@@ -103,6 +103,8 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
   const gdpr = createGdprService({
     storage,
     audit,
+      // Secrets back `pii.protect` (sealing form PII) and let GDPR export reveal it.
+      ...(secrets ? {secrets} : {}),
       scopes: [
           {collection: "form_submissions", subjectField: "subjectRef", timestampField: "at"},
           // Storefront orders carry customer PII; `subjectRef` is the lowercased email.
@@ -120,6 +122,8 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
         allowUnsigned: !opts.production,
         cve,
         state: pluginState,
+        // Gated PII primitives for plugins (e.g. forms encrypting submitted PII).
+        pii: gdpr,
         ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
         ...(opts.workerScript ? {workerScript: opts.workerScript} : {}),
     });

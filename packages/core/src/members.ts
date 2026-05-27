@@ -135,6 +135,23 @@ export interface MemberAuthService {
         memberId: string,
         input: { displayName?: string; bio?: string },
     ): Promise<Member>;
+
+    // --- admin management (gated by `members.manage` at the route layer) ---
+    /** All members, newest first. Never includes secrets. */
+    listMembers(): Promise<Member[]>;
+
+    /**
+     * Suspend or reactivate a member. Suspending also revokes their active
+     * sessions so an open session can't outlive the ban.
+     */
+    setMemberStatus(
+        memberId: string,
+        status: "active" | "suspended",
+        actorId?: string,
+    ): Promise<Member>;
+
+    /** Permanently delete a member's account, sessions, and tokens. */
+    deleteMember(memberId: string, actorId?: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +453,62 @@ class MemberAuthServiceImpl implements MemberAuthService {
         record.updatedAt = new Date(this.#now()).toISOString();
         must(await this.#storage.put(MEMBER_ACCOUNTS, record));
         return toPublic(record);
+    }
+
+    async listMembers(): Promise<Member[]> {
+        const page = must(await this.#storage.query<MemberAccountRecord>(MEMBER_ACCOUNTS, {}));
+        return page.items
+            .slice()
+            .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+            .map(toPublic);
+    }
+
+    async setMemberStatus(
+        memberId: string,
+        status: "active" | "suspended",
+        actorId?: string,
+    ): Promise<Member> {
+        const record = must(await this.#storage.get<MemberAccountRecord>(MEMBER_ACCOUNTS, memberId));
+        if (!record) throw new PressError("not_found", "Member not found");
+        record.status = status;
+        record.updatedAt = new Date(this.#now()).toISOString();
+        must(await this.#storage.put(MEMBER_ACCOUNTS, record));
+        // A ban must take effect immediately: drop the member's live sessions so a
+        // still-open session can't outlive the suspension until natural expiry.
+        if (status === "suspended") await this.#revokeAllSessions(memberId);
+        await this.#audit.append({
+            action: status === "suspended" ? "member.suspend" : "member.activate",
+            actorId: actorId ?? null,
+            detail: {memberId, email: record.email},
+        });
+        return toPublic(record);
+    }
+
+    async deleteMember(memberId: string, actorId?: string): Promise<void> {
+        const record = must(await this.#storage.get<MemberAccountRecord>(MEMBER_ACCOUNTS, memberId));
+        if (!record) throw new PressError("not_found", "Member not found");
+        await this.#revokeAllSessions(memberId);
+        await this.#deleteMemberTokens(memberId);
+        must(await this.#storage.delete(MEMBER_ACCOUNTS, memberId));
+        await this.#audit.append({
+            action: "member.delete",
+            actorId: actorId ?? null,
+            detail: {memberId, email: record.email},
+        });
+    }
+
+    async #revokeAllSessions(memberId: string): Promise<void> {
+        const page = must(
+            await this.#storage.query<MemberSessionRecord>(MEMBER_SESSIONS, {where: {memberId}}),
+        );
+        for (const s of page.items) await this.#storage.delete(MEMBER_SESSIONS, s.id);
+    }
+
+    async #deleteMemberTokens(memberId: string): Promise<void> {
+        const page = must(
+            await this.#storage.query<MemberTokenRecord>(MEMBER_TOKENS, {where: {memberId}}),
+        );
+        for (const t of page.items) await this.#storage.delete(MEMBER_TOKENS, t.id);
     }
 
     async #findByEmail(email: string): Promise<MemberAccountRecord | null> {

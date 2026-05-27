@@ -2,10 +2,12 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { PressError } from "../errors.js";
 import type { Result } from "../result.js";
 import type { AuditLog } from "../audit.js";
+import type {SecretsBackend} from "../secrets.js";
 import type { StorageAdapter, StoredDoc } from "../storage/types.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { capabilitiesForRoles, isRoleName } from "./roles.js";
 import type { RoleName } from "./roles.js";
+import {generateTotpSecret, otpauthUri, verifyTotp} from "./totp.js";
 
 const USERS = "users";
 const SESSIONS = "sessions";
@@ -17,12 +19,23 @@ const MAX_LOCKOUT_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_PASSWORD_LENGTH = 8;
+/** A password-verified login awaiting its TOTP code must complete within 5 min. */
+const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+/** Code attempts allowed per challenge before it is discarded (anti-brute-force). */
+const MAX_MFA_ATTEMPTS = 5;
+const RECOVERY_CODE_COUNT = 10;
+/** Issuer label shown in the authenticator app. */
+const MFA_ISSUER = "Pressh";
+/** Vault secret name holding a user's TOTP seed. */
+const mfaSecretName = (userId: string): string => `mfa:${userId}`;
 
 interface UserRecord extends StoredDoc {
   email: string;
   passwordHash: string;
   roles: RoleName[];
   mfaEnabled: boolean;
+    /** SHA-256 hashes of unused single-use recovery codes (the codes themselves are shown once). */
+    mfaRecoveryHashes?: string[];
   status: "active" | "disabled";
   mustChangePassword: boolean;
   failedAttempts: number;
@@ -35,6 +48,10 @@ interface SessionRecord extends StoredDoc {
   createdAt: string;
   expiresAt: number;
   revoked: boolean;
+    /** True while a password-verified login still awaits its TOTP code — NOT a valid session. */
+    mfaPending?: boolean;
+    /** Failed TOTP attempts against this pending challenge. */
+    mfaAttempts?: number;
 }
 
 interface InviteRecord extends StoredDoc {
@@ -75,6 +92,25 @@ export interface LoginResult {
   user: User;
 }
 
+/** Returned by `authenticate` when the password is valid but a TOTP code is still required. */
+export interface MfaChallenge {
+    mfaRequired: true;
+    /** Short-lived token to present alongside the code at `verifyMfaLogin`. */
+    challenge: string;
+}
+
+export function isMfaChallenge(result: LoginResult | MfaChallenge): result is MfaChallenge {
+    return (result as MfaChallenge).mfaRequired === true;
+}
+
+/** Enrollment payload — the secret/URI are shown ONCE so the user can add the authenticator. */
+export interface MfaEnrollment {
+    /** Base32 TOTP secret (manual-entry key). */
+    secret: string;
+    /** `otpauth://` URI for an authenticator app (QR or manual import). */
+    otpauthUri: string;
+}
+
 export interface AuthServiceOptions {
   storage: StorageAdapter;
   audit: AuditLog;
@@ -82,15 +118,38 @@ export interface AuthServiceOptions {
   maxFailedAttempts?: number;
   lockoutMs?: number;
   sessionTtlMs?: number;
+    /**
+     * Vault used to store per-user TOTP seeds (`mfa:<userId>`), keeping them out of
+     * the content DB. Required for MFA — enrollment fails closed without it.
+     */
+    secrets?: SecretsBackend;
 }
 
 export interface AuthService {
   createUser(input: { email: string; password: string; roles: RoleName[] }): Promise<User>;
-  authenticate(input: { email: string; password: string }): Promise<LoginResult>;
+
+    /**
+     * Verifies the password. For an MFA-enabled user, returns an `MfaChallenge`
+     * (no session issued yet); otherwise returns a full `LoginResult`.
+     */
+    authenticate(input: { email: string; password: string }): Promise<LoginResult | MfaChallenge>;
+
+    /** Completes a two-step login: checks the TOTP (or a recovery) code, issues the session. */
+    verifyMfaLogin(input: { challenge: string; code: string }): Promise<LoginResult>;
   validateSession(token: string): Promise<User | null>;
   logout(token: string): Promise<void>;
   capabilitiesFor(user: User): string[];
   getUserByEmail(email: string): Promise<User | null>;
+
+    // --- MFA enrollment (gated by an authenticated session at the route layer) ---
+    /** Begins TOTP enrollment: stores a fresh seed in the vault, returns the secret + URI. */
+    beginMfaEnrollment(userId: string): Promise<MfaEnrollment>;
+
+    /** Confirms enrollment with a code; enables MFA and returns one-time recovery codes. */
+    confirmMfaEnrollment(userId: string, code: string): Promise<{ recoveryCodes: string[] }>;
+
+    /** Disables MFA after verifying a current TOTP/recovery code; clears the seed + recovery codes. */
+    disableMfa(userId: string, code: string): Promise<void>;
   /** True once at least one user exists — gates the first-run setup wizard. */
   hasAnyUser(): Promise<boolean>;
 
@@ -179,6 +238,25 @@ function generateTempPassword(): string {
   return randomBytes(12).toString("base64url");
 }
 
+function hashRecoveryCode(code: string): string {
+    return createHash("sha256").update(normalizeRecoveryCode(code)).digest("hex");
+}
+
+/** Strip formatting so "abcd-1234" and "ABCD 1234" match the stored hash. */
+function normalizeRecoveryCode(code: string): string {
+    return code.replace(/[\s-]/gu, "").toUpperCase();
+}
+
+/** 10-char codes shown as XXXXX-XXXXX; base32 alphabet avoids ambiguous chars. */
+function generateRecoveryCodes(count: number): string[] {
+    const codes: string[] = [];
+    for (let i = 0; i < count; i++) {
+        const raw = randomBytes(7).toString("base64url").replace(/[^a-zA-Z0-9]/gu, "").toUpperCase().slice(0, 10).padEnd(10, "0");
+        codes.push(`${raw.slice(0, 5)}-${raw.slice(5)}`);
+    }
+    return codes;
+}
+
 class AuthServiceImpl implements AuthService {
   readonly #storage: StorageAdapter;
   readonly #audit: AuditLog;
@@ -187,6 +265,7 @@ class AuthServiceImpl implements AuthService {
   readonly #lockoutMs: number;
   readonly #sessionTtlMs: number;
   readonly #dummyHash: string;
+    readonly #secrets: SecretsBackend | undefined;
 
   constructor(opts: AuthServiceOptions, dummyHash: string) {
     this.#storage = opts.storage;
@@ -196,6 +275,33 @@ class AuthServiceImpl implements AuthService {
     this.#lockoutMs = opts.lockoutMs ?? DEFAULT_LOCKOUT_MS;
     this.#sessionTtlMs = opts.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
     this.#dummyHash = dummyHash;
+      this.#secrets = opts.secrets;
+  }
+
+    /** Creates a full (non-pending) session for an authenticated user and audits the login. */
+    async #issueSession(record: UserRecord, email: string): Promise<LoginResult> {
+        const t = this.#now();
+        const token = randomBytes(32).toString("base64url");
+        const session: SessionRecord = {
+            id: tokenId(token),
+            userId: record.id,
+            createdAt: new Date(t).toISOString(),
+            expiresAt: t + this.#sessionTtlMs,
+            revoked: false,
+        };
+        must(await this.#storage.put(SESSIONS, session));
+        await this.#audit.append({action: "user.login", actorId: record.id, detail: {email}});
+        return {token, user: toPublic(record)};
+    }
+
+    #requireSecrets(): SecretsBackend {
+        if (!this.#secrets) {
+            throw new PressError(
+                "validation",
+                "Two-factor auth requires the secrets vault. Set PRESSH_MASTER_KEY to enable it.",
+            );
+        }
+        return this.#secrets;
   }
 
   async #findRecordByEmail(email: string): Promise<UserRecord | null> {
@@ -279,7 +385,7 @@ class AuthServiceImpl implements AuthService {
     return toPublic(record);
   }
 
-  async authenticate(input: { email: string; password: string }): Promise<LoginResult> {
+    async authenticate(input: { email: string; password: string }): Promise<LoginResult | MfaChallenge> {
     const email = normalizeEmail(input.email);
     const record = await this.#findRecordByEmail(email);
     const t = this.#now();
@@ -339,30 +445,141 @@ class AuthServiceImpl implements AuthService {
       throw new PressError("unauthorized", "Invalid credentials");
     }
 
-      // Success: reset counters, prune this user's stale sessions, rotate a fresh
-      // session in.
+        // Password OK: reset the failure counter/lockout (the password factor
+        // succeeded) and prune stale sessions.
     record.failedAttempts = 0;
     record.lockedUntil = null;
     must(await this.#storage.put(USERS, record));
       await this.#pruneUserSessions(record.id, t);
 
-    const token = randomBytes(32).toString("base64url");
-    const session: SessionRecord = {
-      id: tokenId(token),
-      userId: record.id,
-      createdAt: new Date(t).toISOString(),
-      expiresAt: t + this.#sessionTtlMs,
-      revoked: false,
-    };
-    must(await this.#storage.put(SESSIONS, session));
-    await this.#audit.append({ action: "user.login", actorId: record.id, detail: { email } });
+        // Second factor: when enabled, issue a SHORT-LIVED pending session (rejected by
+        // validateSession) and return a challenge — the real session is minted only
+        // after verifyMfaLogin checks the code.
+        if (record.mfaEnabled) {
+            const token = randomBytes(32).toString("base64url");
+            const pending: SessionRecord = {
+                id: tokenId(token),
+                userId: record.id,
+                createdAt: new Date(t).toISOString(),
+                expiresAt: t + MFA_CHALLENGE_TTL_MS,
+                revoked: false,
+                mfaPending: true,
+                mfaAttempts: 0,
+            };
+            must(await this.#storage.put(SESSIONS, pending));
+            await this.#audit.append({action: "user.mfa.challenge", actorId: record.id, detail: {email}});
+            return {mfaRequired: true, challenge: token};
+        }
 
-    return { token, user: toPublic(record) };
+        return this.#issueSession(record, email);
+    }
+
+    async verifyMfaLogin(input: { challenge: string; code: string }): Promise<LoginResult> {
+        const t = this.#now();
+        const session = must(await this.#storage.get<SessionRecord>(SESSIONS, tokenId(input.challenge)));
+        if (!session || !session.mfaPending || session.revoked || session.expiresAt <= t) {
+            throw new PressError("unauthorized", "Invalid or expired login challenge");
+        }
+        const record = must(await this.#storage.get<UserRecord>(USERS, session.userId));
+        if (!record || record.status === "disabled") {
+            await this.#storage.delete(SESSIONS, session.id);
+            throw new PressError("unauthorized", "Invalid or expired login challenge");
+        }
+        if ((session.mfaAttempts ?? 0) >= MAX_MFA_ATTEMPTS) {
+            await this.#storage.delete(SESSIONS, session.id);
+            throw new PressError("unauthorized", "Too many attempts — start over");
+        }
+
+        const secret = await this.#secrets?.getSecret(mfaSecretName(record.id)).catch(() => null);
+        const totpOk = typeof secret === "string" && verifyTotp(secret, input.code, {time: t});
+        const recoveryOk = !totpOk && this.#consumeRecoveryCode(record, input.code);
+
+        if (!totpOk && !recoveryOk) {
+            session.mfaAttempts = (session.mfaAttempts ?? 0) + 1;
+            must(await this.#storage.put(SESSIONS, session));
+            await this.#audit.append({
+                action: "user.mfa.failed",
+                actorId: record.id,
+                detail: {attempts: session.mfaAttempts}
+            });
+            throw new PressError("unauthorized", "Invalid authentication code");
+        }
+
+        // Promote the pending session to a full one (same opaque token the client holds).
+        if (recoveryOk) must(await this.#storage.put(USERS, record)); // a code was consumed
+        session.mfaPending = false;
+        session.mfaAttempts = 0;
+        session.expiresAt = t + this.#sessionTtlMs;
+    must(await this.#storage.put(SESSIONS, session));
+        await this.#audit.append({
+            action: "user.mfa.verify",
+            actorId: record.id,
+            detail: {method: totpOk ? "totp" : "recovery"},
+        });
+        await this.#audit.append({action: "user.login", actorId: record.id, detail: {email: record.email}});
+        return {token: input.challenge, user: toPublic(record)};
+    }
+
+    /** Removes a matching unused recovery code from the record; true if one matched. */
+    #consumeRecoveryCode(record: UserRecord, code: string): boolean {
+        const hashes = record.mfaRecoveryHashes ?? [];
+        const candidate = hashRecoveryCode(code);
+        const idx = hashes.indexOf(candidate);
+        if (idx === -1) return false;
+        record.mfaRecoveryHashes = hashes.filter((_, i) => i !== idx);
+        return true;
+    }
+
+    async beginMfaEnrollment(userId: string): Promise<MfaEnrollment> {
+        const secrets = this.#requireSecrets();
+        const record = must(await this.#storage.get<UserRecord>(USERS, userId));
+        if (!record) throw new PressError("not_found", "User not found");
+        const secret = generateTotpSecret();
+        await secrets.setSecret(mfaSecretName(userId), secret);
+        await this.#audit.append({action: "user.mfa.enroll.begin", actorId: userId, detail: {}});
+        return {secret, otpauthUri: otpauthUri({secret, account: record.email, issuer: MFA_ISSUER})};
+    }
+
+    async confirmMfaEnrollment(userId: string, code: string): Promise<{ recoveryCodes: string[] }> {
+        const secrets = this.#requireSecrets();
+        const record = must(await this.#storage.get<UserRecord>(USERS, userId));
+        if (!record) throw new PressError("not_found", "User not found");
+        const secret = await secrets.getSecret(mfaSecretName(userId)).catch(() => null);
+        if (!secret) throw new PressError("validation", "Start enrollment before confirming");
+        if (!verifyTotp(secret, code, {time: this.#now()})) {
+            throw new PressError("unauthorized", "Invalid authentication code");
+        }
+        const recoveryCodes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
+        record.mfaEnabled = true;
+        record.mfaRecoveryHashes = recoveryCodes.map(hashRecoveryCode);
+        must(await this.#storage.put(USERS, record));
+        await this.#audit.append({action: "user.mfa.enable", actorId: userId, detail: {}});
+        return {recoveryCodes};
+    }
+
+    async disableMfa(userId: string, code: string): Promise<void> {
+        const record = must(await this.#storage.get<UserRecord>(USERS, userId));
+        if (!record) throw new PressError("not_found", "User not found");
+        if (!record.mfaEnabled) return; // idempotent
+        const secret = await this.#secrets?.getSecret(mfaSecretName(userId)).catch(() => null);
+        const ok =
+            (typeof secret === "string" && verifyTotp(secret, code, {time: this.#now()})) ||
+            this.#consumeRecoveryCode(record, code);
+        if (!ok) throw new PressError("unauthorized", "Invalid authentication code");
+        record.mfaEnabled = false;
+        record.mfaRecoveryHashes = [];
+        must(await this.#storage.put(USERS, record));
+        await this.#secrets?.deleteSecret(mfaSecretName(userId)).catch(() => undefined);
+        await this.#audit.append({action: "user.mfa.disable", actorId: userId, detail: {}});
   }
 
   async validateSession(token: string): Promise<User | null> {
     const session = must(await this.#storage.get<SessionRecord>(SESSIONS, tokenId(token)));
-    if (!session || session.revoked || session.expiresAt <= this.#now()) return null;
+      // A pending (password-only) session is NOT a valid auth session until the
+      // second factor is verified — treat it as no session at all.
+      if (!session || session.revoked || session.mfaPending || session.expiresAt <= this.#now()) {
+          return null;
+      }
     const user = must(await this.#storage.get<UserRecord>(USERS, session.userId));
     if (!user || user.status === "disabled") return null;
     return toPublic(user);
@@ -583,7 +800,9 @@ class AuthServiceImpl implements AuthService {
       detail: { inviteId: invite.id, userId: record.id },
     });
 
-    return this.authenticate({ email: invite.email, password: input.password });
+      // A freshly invited user has no MFA yet, so issue the session directly
+      // (avoids re-verifying the password and the authenticate union).
+      return this.#issueSession(record, record.email);
   }
 }
 

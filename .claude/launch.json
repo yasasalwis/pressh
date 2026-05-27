@@ -12,7 +12,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "PRESSH_CONTENT_ROOT=/tmp/pressh-smoke/content PRESSH_MEDIA_ROOT=/tmp/pressh-smoke/media PRESSH_STUDIO_PORT=4123 PRESSH_MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef npx tsx apps/studio/src/server.ts"
+        "PRESSH_CONTENT_ROOT=/tmp/pressh-smoke/content PRESSH_MEDIA_ROOT=/tmp/pressh-smoke/media PRESSH_STUDIO_PORT=4123 PRESSH_MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef PRESSH_BACKUP_DIR=/tmp/pressh-smoke/backups PRESSH_BACKUP_INTERVAL_MS=86400000 PRESSH_BACKUP_KEEP=5 npx tsx apps/studio/src/server.ts"
       ],
       "port": 4123
     },

@@ -66,6 +66,15 @@ export type { AuditEntry, AuditEntryInput, AuditLog, AuditQuery } from "./audit.
 
 export { hashPassword, verifyPassword } from "./auth/password.js";
 export {
+    base32Decode,
+    base32Encode,
+    generateTotpSecret,
+    otpauthUri,
+    totp,
+    verifyTotp,
+} from "./auth/totp.js";
+export type {TotpOptions} from "./auth/totp.js";
+export {
   ROLE_CAPABILITIES,
   ROLE_NAMES,
   capabilitiesForRoles,
@@ -76,13 +85,35 @@ export { createCsrf } from "./auth/csrf.js";
 export type { CsrfProtection } from "./auth/csrf.js";
 export { createRateLimiter } from "./auth/rate-limit.js";
 export type { RateLimiter, RateLimiterOptions } from "./auth/rate-limit.js";
-export { createAuthService } from "./auth/service.js";
-export type { AuthService, AuthServiceOptions, Invite, LoginResult, User } from "./auth/service.js";
+export {createAuthService, isMfaChallenge} from "./auth/service.js";
+export type {
+    AuthService,
+    AuthServiceOptions,
+    Invite,
+    LoginResult,
+    MfaChallenge,
+    MfaEnrollment,
+    User,
+} from "./auth/service.js";
 
 export { createMetrics, requestId } from "./observability.js";
 export type { Labels, Metrics } from "./observability.js";
-export { createBackup, restoreBackup } from "./ops/backup.js";
-export type { BackupTargets } from "./ops/backup.js";
+export {
+    createBackup,
+    restoreBackup,
+    listBackups,
+    pruneBackups,
+    runScheduledBackup,
+    verifyBackup,
+    createFilesystemBackupTarget,
+} from "./ops/backup.js";
+export type {
+    BackupTargets,
+    BackupInfo,
+    BackupVerification,
+    BackupTarget,
+    ScheduledBackupOptions,
+} from "./ops/backup.js";
 
 export {createMemberAuthService} from "./members.js";
 export type {

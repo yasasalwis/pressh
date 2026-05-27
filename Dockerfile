@@ -21,6 +21,18 @@ RUN npm ci && npm run build
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Memory/CPU tuning for small VMs (target: a 512 MB box without throttling).
+# Each of the two processes (site + studio) runs in its own container and gets
+# these. --max-old-space-size forces V8 to GC at ~112 MB instead of letting the
+# heap grow until the kernel OOM-kills the process; with two processes that caps
+# their combined heap near ~224 MB, leaving headroom for plugin workers + RSS.
+# MALLOC_ARENA_MAX trims glibc's per-thread arena bloat (a classic RSS win for
+# threaded Node), and UV_THREADPOOL_SIZE shrinks the libuv pool — better-sqlite3
+# is synchronous and argon2 runs single-lane, so the default 4 threads is waste.
+# Override NODE_OPTIONS (e.g. larger heap) on roomier hosts.
+ENV NODE_OPTIONS="--max-old-space-size=112 --max-semi-space-size=16" \
+    MALLOC_ARENA_MAX=2 \
+    UV_THREADPOOL_SIZE=2
 # Ship ONLY the standalone build, flattened so /app IS the `.pressh/` folder:
 #   /app/{site,studio}/server.js, /app/builtins, /app/plugins,
 #   /app/node_modules (native sqlite), /app/sign-builtins.mjs, /app/package.json
