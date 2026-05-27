@@ -19,7 +19,7 @@ import type {
   QueryResolver,
   ThemeService,
 } from "@pressh/engine";
-import {DESIGNER_LAYOUT_BLOCK, renderTree, SYSTEM_SLUGS} from "@pressh/engine";
+import {DESIGNER_LAYOUT_BLOCK, renderTree, subscribeConfirmEmail, SYSTEM_SLUGS} from "@pressh/engine";
 import type {RenderCache} from "./cache.js";
 import {escapeHtml, renderMaintenanceFallback, renderNotFound, renderPage, renderServerError,} from "./render.js";
 import {getMemberFromContext, MEMBER_COOKIE, SESSION_MAX_AGE} from "./members.js";
@@ -57,6 +57,10 @@ export interface SiteAppDeps {
     memberRouter?: import("hono").Hono;
     /** When present, enables members-only content gating and built-in account pages. */
     memberAuth?: MemberAuthService;
+  /** When present, subscription confirm/unsubscribe routes become active. */
+  email?: import("@pressh/engine").EmailService;
+  /** Needed to read siteName for subscription confirmation emails. */
+  settings?: import("@pressh/engine").SettingsService;
 }
 
 /** Constant-time string compare so a bearer-token check can't be timed out. */
@@ -627,6 +631,121 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
         c.set("styleCsp", styleSrcDirective(html));
         return c.html(html);
     });
+
+  // ── Subscription routes ────────────────────────────────────────────────────
+
+  // POST /account/subscribe — initiate double opt-in
+  // Accepts both JSON and form POST so it works from a plain HTML form.
+  app.post("/account/subscribe", async (c) => {
+    if (!deps.pluginHost.has("subscriptions")) {
+      return c.json({error: {code: "not_found", message: "Subscriptions plugin not enabled"}}, 404);
+    }
+
+    let email = "";
+    let memberId: string | undefined;
+
+    const ct = c.req.header("content-type") ?? "";
+    if (ct.includes("application/json")) {
+      let body: Record<string, unknown> = {};
+      try {
+        body = (await c.req.json()) as Record<string, unknown>;
+      } catch {
+        return c.json({error: {code: "validation", message: "Invalid JSON"}}, 400);
+      }
+      email = String(body.email ?? "");
+    } else {
+      // application/x-www-form-urlencoded (plain HTML form)
+      try {
+        const fd = await c.req.formData();
+        email = String(fd.get("email") ?? "");
+      } catch {
+        return c.json({error: {code: "validation", message: "Invalid form data"}}, 400);
+      }
+    }
+
+    // Attach member identity if the visitor is logged in.
+    if (deps.memberAuth) {
+      const member = await getMemberFromContext(c, deps.memberAuth);
+      if (member) memberId = member.id;
+    }
+
+    let result: Record<string, unknown>;
+    try {
+      result = (await deps.pluginHost.invoke("subscriptions", "subscribe", {
+        email,
+        ...(memberId ? {memberId} : {}),
+      })) as Record<string, unknown>;
+    } catch (err) {
+      const {status, code} = mapError(err);
+      return c.json({error: {code, message: String((err as Error).message)}}, status);
+    }
+
+    if (result.alreadySubscribed) {
+      return c.json({ok: true, alreadySubscribed: true});
+    }
+
+    // Send confirmation email when email service is configured.
+    if (deps.email && result.confirmToken) {
+      const base = deps.baseUrl ?? "";
+      const siteName = deps.settings
+          ? ((await deps.settings.getSettings()) as { siteName?: string }).siteName ?? "Pressh"
+          : "Pressh";
+      const confirmUrl = `${base}/account/subscribe/confirm?token=${encodeURIComponent(String(result.confirmToken))}`;
+      const unsubscribeUrl = `${base}/account/unsubscribe?token=${encodeURIComponent(String(result.unsubscribeToken))}`;
+      const tpl = subscribeConfirmEmail({confirmUrl, unsubscribeUrl, siteName});
+      try {
+        await deps.email.send({to: email, subject: tpl.subject, html: tpl.html, text: tpl.text});
+      } catch {
+        // Email delivery failure is non-fatal; the subscription record is already created.
+      }
+    }
+
+    return c.json({ok: true});
+  });
+
+  // GET /account/subscribe/confirm?token=<raw> — single-click confirmation
+  app.get("/account/subscribe/confirm", async (c) => {
+    if (!deps.pluginHost.has("subscriptions")) {
+      return c.html("<p>Subscriptions are not enabled on this site.</p>", 404);
+    }
+
+    const token = c.req.query("token") ?? "";
+    try {
+      await deps.pluginHost.invoke("subscriptions", "confirm", {token});
+    } catch (err) {
+      const msg = err instanceof Error ? escapeHtml(err.message) : "Unknown error";
+      return c.html(
+          `<!DOCTYPE html><html><head><title>Subscription</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><p style="color:#dc2626">${msg}</p></body></html>`,
+          400,
+      );
+    }
+
+    return c.html(
+        `<!DOCTYPE html><html><head><title>Subscribed</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><h2>&#10003; You're subscribed!</h2><p>Your subscription has been confirmed. Thank you.</p></body></html>`,
+    );
+  });
+
+  // GET /account/unsubscribe?token=<raw> — one-click unsubscribe (GDPR-friendly)
+  app.get("/account/unsubscribe", async (c) => {
+    if (!deps.pluginHost.has("subscriptions")) {
+      return c.html("<p>Subscriptions are not enabled on this site.</p>", 404);
+    }
+
+    const token = c.req.query("token") ?? "";
+    try {
+      await deps.pluginHost.invoke("subscriptions", "unsubscribe", {token});
+    } catch (err) {
+      const msg = err instanceof Error ? escapeHtml(err.message) : "Unknown error";
+      return c.html(
+          `<!DOCTYPE html><html><head><title>Unsubscribe</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><p style="color:#dc2626">${msg}</p></body></html>`,
+          400,
+      );
+    }
+
+    return c.html(
+        `<!DOCTYPE html><html><head><title>Unsubscribed</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><h2>You've been unsubscribed</h2><p>Your email address has been removed from the mailing list.</p></body></html>`,
+    );
+  });
 
   // Dynamic plugin endpoints — runtime dispatch, manifest-enforced (FR-024).
   app.all("/api/p/:plugin/:action", async (c) => {

@@ -1,0 +1,19 @@
+{
+  "name": "subscriptions",
+  "version": "1.0.0",
+  "main": "index.mjs",
+  "capabilities": [
+    "storage.read:subscriptions",
+    "storage.write:subscriptions"
+  ],
+  "endpoints": [],
+  "panel": {
+    "title": "Subscribers",
+    "entry": "panel.js"
+  },
+  "panelActions": [
+    "list",
+    "getStats",
+    "remove"
+  ]
+}

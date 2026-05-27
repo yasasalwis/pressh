@@ -168,6 +168,38 @@ export function welcomeEmail(opts: { displayName: string; siteName: string }): E
     return {subject, html, text};
 }
 
+export function subscribeConfirmEmail(opts: {
+    confirmUrl: string;
+    unsubscribeUrl: string;
+    siteName: string;
+}): EmailTemplate {
+    const {confirmUrl, unsubscribeUrl, siteName} = opts;
+    const subject = `Confirm your subscription — ${siteName}`;
+    const html = wrap(
+        siteName,
+        subject,
+        h1("Confirm your subscription") +
+        p(`You asked to subscribe to ${siteName}. Click below to confirm — we won't send anything until you do.`) +
+        p("This link expires in 24 hours.", true) +
+        ctaButton(confirmUrl, "Confirm subscription") +
+        p("If you didn't request this, you can safely ignore this email.", true) +
+        `<p style="margin:16px 0 0;font-size:12px;color:#9ca3af;line-height:1.5;">
+          Don't want to subscribe? <a href="${escHtml(unsubscribeUrl)}" style="color:#9ca3af;">Unsubscribe</a>
+        </p>`,
+    );
+    const text = [
+        `Confirm your subscription — ${siteName}`,
+        "",
+        `You asked to subscribe to ${siteName}. Click the link below to confirm (expires in 24 hours):`,
+        confirmUrl,
+        "",
+        "If you didn't request this, ignore this email.",
+        "",
+        `Unsubscribe: ${unsubscribeUrl}`,
+    ].join("\n");
+    return {subject, html, text};
+}
+
 export function inviteEmail(opts: {
     inviteUrl: string;
     siteName: string;

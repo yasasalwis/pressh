@@ -177,6 +177,8 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     clientDir,
       memberRouter,
       memberAuth,
+      ...(emailSvc ? {email: emailSvc} : {}),
+      settings: settingsSvc,
     ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
     ...(opts.production !== undefined ? { production: opts.production } : {}),
   });

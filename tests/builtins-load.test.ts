@@ -13,7 +13,7 @@ import {createPluginStateStore, PluginHost} from "@pressh/runtime";
 const WORKER = fileURLToPath(new URL("../packages/runtime/dist/worker-entry.js", import.meta.url));
 const BUILTINS = fileURLToPath(new URL("../builtins", import.meta.url));
 
-const EXPECTED = ["analytics", "comments", "db", "forms", "inventory", "seo"];
+const EXPECTED = ["analytics", "comments", "db", "forms", "inventory", "seo", "subscriptions"];
 
 let dir: string;
 let storage: StorageAdapter;

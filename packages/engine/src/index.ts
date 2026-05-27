@@ -62,6 +62,7 @@ export {
   magicLinkEmail,
   passwordResetEmail,
   welcomeEmail,
+    subscribeConfirmEmail,
   inviteEmail,
 } from "./email-templates.js";
 export type {EmailTemplate} from "./email-templates.js";
