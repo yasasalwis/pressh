@@ -116,6 +116,19 @@ class SqliteStorageAdapter implements StorageAdapter {
           for (const field of spec.indexes ?? []) {
               this.#db.exec(`CREATE INDEX IF NOT EXISTS "idx_${spec.table}_${field}" ON "${spec.table}" ("${field}");`);
           }
+          // Add any columns present in the spec but missing from the live table.
+          // SQLite only supports ADD COLUMN (no DROP, no type change), which is
+          // exactly what we need for forward-only schema evolution.
+          const existing = new Set(
+              (this.#db.pragma(`table_info("${spec.table}")`) as { name: string }[]).map((r) => r.name),
+          );
+          for (const col of spec.columns) {
+              if (!existing.has(col.field)) {
+                  const colDef = `${sqlType(col.kind)}${col.notNull ? " NOT NULL DEFAULT ''" : ""}`;
+                  this.#db.exec(`ALTER TABLE "${spec.table}"
+                      ADD COLUMN "${col.field}" ${colDef};`);
+              }
+          }
       }
   }
 

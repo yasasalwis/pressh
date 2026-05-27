@@ -269,7 +269,13 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       return c.json({ ok: true, data });
     } catch (error) {
       const { status, code } = mapError(error);
-      return c.json({ error: { code, message: code } }, status);
+        const message =
+            error instanceof PressError
+                ? error.message
+                : code === "internal"
+                    ? "An unexpected error occurred. Please try again."
+                    : code;
+        return c.json({error: {code, message}}, status);
     }
   }
 

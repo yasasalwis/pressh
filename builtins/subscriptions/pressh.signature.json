@@ -3,6 +3,7 @@
   "files": {
     "index.mjs": "25ce110ea79272d0f78b3e614516d40c0c2692a24e2c4fd4b1b62244fedd517b",
     "panel.js": "3796b9502c825f78d19023fc7d612d2e2f1f569f82ef815a2c53f889dcdc045e",
-    "pressh.plugin.json": "f7de311e8e530b8743369239de4949feda86d06686999fbea36d84a6663d4c1a"
+    "pressh.plugin.json": "f7de311e8e530b8743369239de4949feda86d06686999fbea36d84a6663d4c1a",
+    "subscriptions.test.ts": "45cd719ec77828ba82f74534aea069394d3c619dd45e8eaf53a0c9703c7ab062"
   }
 }
