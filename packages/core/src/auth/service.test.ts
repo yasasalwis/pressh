@@ -2,13 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {randomBytes} from "node:crypto";
 import {
   CapabilityGate,
   createAuthService,
   createFileAuditLog,
+    createFileSecretsBackend,
   createFileSystemStorage,
+    isMfaChallenge,
+    totp,
 } from "@pressh/core";
-import type { AuditLog, AuthService, StorageAdapter } from "@pressh/core";
+import type {AuditLog, AuthService, SecretsBackend, StorageAdapter} from "@pressh/core";
 
 let dir: string;
 let storage: StorageAdapter;
@@ -77,10 +81,12 @@ describe("AuthService", () => {
     for (let i = 0; i < 3; i++) {
       await expect(auth.authenticate({ email: "a@b.com", password: "bad" })).rejects.toBeDefined();
     }
-    // Even the correct password is now rejected (locked).
+      // Even the correct password is now rejected — but with the SAME generic
+      // error as a bad password, so a locked account is indistinguishable from a
+      // wrong password (no enumeration via the error code).
     await expect(
       auth.authenticate({ email: "a@b.com", password: "supersecret" }),
-    ).rejects.toMatchObject({ code: "rate_limited" });
+    ).rejects.toMatchObject({code: "unauthorized"});
 
     const locked = await audit.query({ action: "user.account.locked" });
     expect(locked).toHaveLength(1);
@@ -90,6 +96,81 @@ describe("AuthService", () => {
     const { token } = await auth.authenticate({ email: "a@b.com", password: "supersecret" });
     expect(token).toBeTruthy();
   });
+
+    it("does not reset the failure counter on lockout — a single post-window failure re-locks immediately", async () => {
+        await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        // Trip the first lockout (3 failures → locked for lockoutMs = 60s).
+        for (let i = 0; i < 3; i++) {
+            await expect(auth.authenticate({email: "a@b.com", password: "bad"})).rejects.toBeDefined();
+        }
+        // Wait out the first window, then fail ONCE more.
+        clock += 61_000;
+        await expect(auth.authenticate({email: "a@b.com", password: "bad"})).rejects.toBeDefined();
+        // Because the counter was NOT reset, that single failure re-locked the
+        // account immediately — the correct password is refused within the new
+        // window. The attacker gets at most one try per window, not a fresh batch.
+        await expect(
+            auth.authenticate({email: "a@b.com", password: "supersecret"}),
+        ).rejects.toMatchObject({code: "unauthorized"});
+    });
+
+    it("escalates the lockout backoff as failures accumulate", async () => {
+        await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        const DAY = 26 * 60 * 60 * 1000; // longer than any backoff, so each lock expires
+        // 3 failures → first lock; then drive 3 more isolated failures (waiting out
+        // each lock) to push the counter to 6 and reach the next backoff tier.
+        for (let i = 0; i < 3; i++) {
+            await auth.authenticate({email: "a@b.com", password: "bad"}).catch(() => {
+            });
+        }
+        for (let i = 0; i < 3; i++) {
+            clock += DAY;
+            await auth.authenticate({email: "a@b.com", password: "bad"}).catch(() => {
+            });
+        }
+        const locks = await audit.query({action: "user.account.locked"});
+        const backoffs = locks.map((e) => Number(e.detail?.lockedForMs)).filter(Number.isFinite);
+        // The latest backoff is strictly larger than the first — it grew.
+        expect(Math.max(...backoffs)).toBeGreaterThan(backoffs[0]!);
+    });
+
+    it("a locked account and a nonexistent account return the identical error (no enumeration)", async () => {
+        await auth.createUser({email: "real@b.com", password: "supersecret", roles: ["author"]});
+        for (let i = 0; i < 3; i++) {
+            await expect(auth.authenticate({email: "real@b.com", password: "bad"})).rejects.toBeDefined();
+        }
+        const lockedErr = await auth
+            .authenticate({email: "real@b.com", password: "supersecret"})
+            .catch((e) => e);
+        const ghostErr = await auth
+            .authenticate({email: "ghost@b.com", password: "whatever"})
+            .catch((e) => e);
+        expect(lockedErr.code).toBe("unauthorized");
+        expect(ghostErr.code).toBe(lockedErr.code);
+        expect(lockedErr.message).toBe(ghostErr.message);
+    });
+
+    it("prunes a user's expired sessions on a fresh login (no unbounded growth)", async () => {
+        await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        await auth.authenticate({email: "a@b.com", password: "supersecret"}); // session 1
+        // Advance past the session TTL so session 1 is expired, then log in again.
+        clock += 8 * 24 * 60 * 60 * 1000;
+        await auth.authenticate({email: "a@b.com", password: "supersecret"}); // session 2
+
+        const sessions = await storage.query("sessions", {});
+        expect(sessions.ok && sessions.value.items).toHaveLength(1); // expired one pruned
+    });
+
+    it("revokes existing sessions when a user's roles change", async () => {
+        const user = await auth.createUser({email: "a@b.com", password: "supersecret", roles: ["author"]});
+        const {token} = await auth.authenticate({email: "a@b.com", password: "supersecret"});
+        expect(await auth.validateSession(token)).not.toBeNull();
+
+        await auth.updateUser(user.id, {roles: ["editor"]});
+        // The pre-existing session no longer validates — the user must re-auth so
+        // the new role set takes effect immediately.
+        expect(await auth.validateSession(token)).toBeNull();
+    });
 
   it("resolves capabilities from the user's roles", async () => {
     const user = await auth.createUser({
@@ -210,4 +291,102 @@ describe("AuthService — invitations", () => {
     await auth.revokeInvite(invite.id);
     expect((await auth.listInvites()).some((i) => i.id === invite.id)).toBe(false);
   });
+});
+
+describe("AuthService — MFA (TOTP)", () => {
+    let mdir: string;
+    let mstorage: StorageAdapter;
+    let maudit: AuditLog;
+    let secrets: SecretsBackend;
+    let mclock: number;
+    let mauth: AuthService;
+    let userId: string;
+    const PW = "supersecret";
+
+    beforeEach(async () => {
+        mdir = await mkdtemp(join(tmpdir(), "pressh-mfa-"));
+        mstorage = createFileSystemStorage({root: join(mdir, "content")});
+        maudit = await createFileAuditLog({path: join(mdir, "audit.log")});
+        secrets = await createFileSecretsBackend({path: join(mdir, "vault.json"), key: randomBytes(32)});
+        mclock = 1_000_000;
+        mauth = await createAuthService({storage: mstorage, audit: maudit, secrets, now: () => mclock});
+        const user = await mauth.createUser({email: "mfa@example.com", password: PW, roles: ["admin"]});
+        userId = user.id;
+    });
+
+    afterEach(async () => {
+        mstorage.close();
+        await rm(mdir, {recursive: true, force: true});
+    });
+
+    async function enroll(): Promise<{ secret: string; recoveryCodes: string[] }> {
+        const {secret} = await mauth.beginMfaEnrollment(userId);
+        const {recoveryCodes} = await mauth.confirmMfaEnrollment(userId, totp(secret, {time: mclock}));
+        return {secret, recoveryCodes};
+    }
+
+    it("enrolls and returns 10 one-time recovery codes", async () => {
+        const {recoveryCodes} = await enroll();
+        expect(recoveryCodes).toHaveLength(10);
+        expect((await mauth.getUser(userId))!.mfaEnabled).toBe(true);
+    });
+
+    it("rejects enrollment confirmation with a wrong code", async () => {
+        await mauth.beginMfaEnrollment(userId);
+        await expect(mauth.confirmMfaEnrollment(userId, "000000")).rejects.toMatchObject({code: "unauthorized"});
+        expect((await mauth.getUser(userId))!.mfaEnabled).toBe(false);
+    });
+
+    it("requires a TOTP code after the password (no session until verified)", async () => {
+        const {secret} = await enroll();
+        const result = await mauth.authenticate({email: "mfa@example.com", password: PW});
+        expect(isMfaChallenge(result)).toBe(true);
+        const challenge = (result as { challenge: string }).challenge;
+        // The pending challenge is NOT a usable session.
+        expect(await mauth.validateSession(challenge)).toBeNull();
+        const {token, user} = await mauth.verifyMfaLogin({challenge, code: totp(secret, {time: mclock})});
+        expect(user.id).toBe(userId);
+        expect((await mauth.validateSession(token))!.id).toBe(userId);
+    });
+
+    it("accepts a recovery code once, then rejects its reuse", async () => {
+        const {recoveryCodes} = await enroll();
+        const code = recoveryCodes[0]!;
+        const r1 = await mauth.authenticate({email: "mfa@example.com", password: PW});
+        const session = await mauth.verifyMfaLogin({challenge: (r1 as { challenge: string }).challenge, code});
+        expect(session.token).toBeTruthy();
+        // Reuse fails on a fresh challenge.
+        const r2 = await mauth.authenticate({email: "mfa@example.com", password: PW});
+        await expect(
+            mauth.verifyMfaLogin({challenge: (r2 as { challenge: string }).challenge, code}),
+        ).rejects.toMatchObject({code: "unauthorized"});
+    });
+
+    it("discards the challenge after too many wrong codes", async () => {
+        await enroll();
+        const r = await mauth.authenticate({email: "mfa@example.com", password: PW});
+        const challenge = (r as { challenge: string }).challenge;
+        for (let i = 0; i < 5; i++) {
+            await expect(mauth.verifyMfaLogin({
+                challenge,
+                code: "000000"
+            })).rejects.toMatchObject({code: "unauthorized"});
+        }
+        // Sixth attempt: challenge is gone.
+        await expect(mauth.verifyMfaLogin({challenge, code: "000000"})).rejects.toMatchObject({code: "unauthorized"});
+    });
+
+    it("disables MFA with a valid code and reverts to single-factor login", async () => {
+        const {secret} = await enroll();
+        await mauth.disableMfa(userId, totp(secret, {time: mclock}));
+        expect((await mauth.getUser(userId))!.mfaEnabled).toBe(false);
+        const result = await mauth.authenticate({email: "mfa@example.com", password: PW});
+        expect(isMfaChallenge(result)).toBe(false);
+    });
+
+    it("fails closed: enrollment without a vault is rejected", async () => {
+        const noVault = await createAuthService({storage: mstorage, audit: maudit, now: () => mclock});
+        const u = await noVault.createUser({email: "x@y.com", password: PW, roles: ["editor"]});
+        await expect(noVault.beginMfaEnrollment(u.id)).rejects.toMatchObject({code: "validation"});
+    });
 });

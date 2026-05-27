@@ -1,73 +1,41 @@
 #!/usr/bin/env node
-// Signs every first-party plugin under builtins/ by writing a
-// pressh.signature.json (sha256 of the manifest's `main` file). The PluginHost
-// refuses unsigned/tampered plugins in production (allowUnsigned=false), so this
-// runs as part of `npm run build` to keep shipped built-ins loadable in prod.
+// Dev/build signer: signs every first-party plugin under builtins/ by writing a
+// pressh.signature.json (a keyed HMAC over every file in the plugin directory).
+// The PluginHost refuses unsigned/tampered plugins in production.
+//
+// The signing key is derived from PRESSH_MASTER_KEY (or PRESSH_PLUGIN_SIGNING_KEY)
+// — the same per-deployment secret the host verifies against. Without a key it
+// falls back to a clearly-marked DEV key so `npm run build` still produces
+// loadable (dev-only) signatures; the deploy entrypoint re-signs with the real
+// key (via the bundled .pressh/sign-builtins.mjs) once it is provisioned.
 
-import {readdir, readFile, writeFile} from "node:fs/promises";
-import {createHash} from "node:crypto";
 import {dirname, join} from "node:path";
 import {fileURLToPath} from "node:url";
+import {signBuiltinsDir} from "./sign-core.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const BUILTINS = join(ROOT, "builtins");
-const SIGNATURE_FILE = "pressh.signature.json";
-const MANIFEST_FILE = "pressh.plugin.json";
+const DEV_FALLBACK = "pressh-dev-only-unsigned-key";
 
-async function sign() {
-  let dirs;
-  try {
-    dirs = await readdir(BUILTINS, { withFileTypes: true });
-  } catch {
-    console.log("No builtins/ directory — nothing to sign.");
-    return;
-  }
-
-  let count = 0;
-  for (const entry of dirs) {
-    if (!entry.isDirectory()) continue;
-    const dir = join(BUILTINS, entry.name);
-
-    let manifest;
-    try {
-      manifest = JSON.parse(await readFile(join(dir, MANIFEST_FILE), "utf8"));
-    } catch {
-      console.warn(`skip ${entry.name}: no readable ${MANIFEST_FILE}`);
-      continue;
-    }
-    if (!manifest.main) {
-      console.warn(`skip ${entry.name}: manifest has no "main"`);
-      continue;
-    }
-
-    const content = await readFile(join(dir, manifest.main));
-    const hash = createHash("sha256").update(content).digest("hex");
-      const signature = {algorithm: "sha256", hash};
-
-      // Also sign manifest-referenced auxiliary files (e.g. contributed designer
-      // presets) so the host can reject a tampered file at load (must match the
-      // `files` map PluginHost#verifySignature checks).
-      const auxFiles = [manifest.designerPresets].filter(Boolean);
-      if (auxFiles.length) {
-          signature.files = {};
-          for (const rel of auxFiles) {
-              const aux = await readFile(join(dir, rel));
-              signature.files[rel] = createHash("sha256").update(aux).digest("hex");
-          }
-      }
-
-    await writeFile(
-      join(dir, SIGNATURE_FILE),
-        JSON.stringify(signature, null, 2) + "\n",
-      "utf8",
-    );
-    count++;
-    console.log(`signed ${manifest.name}@${manifest.version}`);
-  }
-  console.log(`Signed ${count} built-in plugin(s).`);
+// Honor a project-root .env so `npm run build` signs with the same key the
+// runtime verifies against. loadEnvFile never overrides an already-set var, and
+// a missing file is a no-op.
+try {
+    process.loadEnvFile();
+} catch { /* no .env — rely on the real environment */
 }
 
-sign().catch((e) => {
-  console.error(e);
-  process.exit(1);
+function resolveSecret() {
+    const secret = process.env["PRESSH_MASTER_KEY"] || process.env["PRESSH_PLUGIN_SIGNING_KEY"];
+    if (secret) return secret;
+    console.warn(
+        "sign-builtins: no PRESSH_MASTER_KEY set — signing with a DEV key. These\n" +
+        "  signatures are NOT valid in production; the deploy entrypoint re-signs\n" +
+        "  with the real key once it is provisioned.",
+    );
+    return DEV_FALLBACK;
+}
+
+signBuiltinsDir(join(ROOT, "builtins"), resolveSecret()).catch((e) => {
+    console.error(e);
+    process.exit(1);
 });

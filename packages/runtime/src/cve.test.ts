@@ -85,4 +85,19 @@ describe("PluginHost CVE gate", () => {
     await expect(host.load(await writePlugin("safe"))).resolves.toBeDefined();
     await host.stopAll();
   });
+
+    it("re-checks the CVE feed on enable: a plugin flagged AFTER registration is refused", async () => {
+        // Clean at registration, flagged later (the feed synced a new advisory).
+        let flagged = false;
+        const checker = {isFlagged: async () => flagged};
+        const host = new PluginHost({storage, audit, allowUnsigned: true, workerScript: WORKER, cve: checker});
+
+        await host.register(await writePlugin("latebloomer"));
+        expect(host.isRegistered("latebloomer")).toBe(true);
+
+        flagged = true;
+        await expect(host.enable("latebloomer")).rejects.toMatchObject({code: "forbidden"});
+        expect(host.has("latebloomer")).toBe(false); // never spawned a worker
+        await host.stopAll();
+    });
 });

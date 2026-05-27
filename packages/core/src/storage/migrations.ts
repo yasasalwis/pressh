@@ -1,10 +1,23 @@
 import type Database from "better-sqlite3";
+import {STORAGE_INDEX_FIELDS} from "./indexes.js";
 
 type DB = Database.Database;
 
 interface Migration {
   version: number;
   up: (db: DB) => void;
+}
+
+/**
+ * SQLite expression index for one hot field. Indexes `(collection,
+ * json_extract(doc,'$.field'), id)` so a `WHERE collection=? AND
+ * json_extract(doc,'$.field')=? … ORDER BY id` query both seeks the match and
+ * walks the cursor in id order from the index alone. `field` is from the
+ * STORAGE_INDEX_FIELDS allowlist (`[A-Za-z0-9_]+`), so inlining it into the
+ * path literal — required for the planner to match this index — is injection-safe.
+ */
+function fieldIndexSql(field: string): string {
+    return `CREATE INDEX IF NOT EXISTS idx_docs_${field} ON docs (collection, json_extract(doc, '$.${field}'), id);`;
 }
 
 /** Index schema migrations. The index is derived; canonical truth is the FS. */
@@ -23,6 +36,13 @@ const MIGRATIONS: Migration[] = [
       );
     },
   },
+    {
+        version: 2,
+        up: (db) => {
+            // Secondary expression indexes on the fields callers actually filter on.
+            for (const field of STORAGE_INDEX_FIELDS) db.exec(fieldIndexSql(field));
+        },
+    },
 ];
 
 export function runMigrations(db: DB): void {

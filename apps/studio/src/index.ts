@@ -1,9 +1,8 @@
 /**
- * @pressh/studio — admin process (Hono admin API + served admin client).
+ * @pressh/studio — admin process (Hono admin API + served React admin client).
  *
- * Phase 10: session/CSRF/capability middleware, no-code content-type modeling,
- * block-based authoring, validated media upload, and the seed CLI. The
- * Vite/React/ui-kit visual drag-drop builder is the next increment.
+ * Session/CSRF/capability middleware, no-code content-type modeling, the visual
+ * primitive designer, validated media upload, and the seed CLI.
  */
 export { createStudioApp } from "./app.js";
 export type { StudioAppDeps } from "./app.js";

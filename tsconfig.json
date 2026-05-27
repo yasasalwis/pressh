@@ -5,7 +5,9 @@
     { "path": "packages/engine" },
     { "path": "packages/sdk" },
     { "path": "packages/runtime" },
-    { "path": "packages/ui-kit" },
+    {
+      "path": "packages/panel-kit"
+    },
     { "path": "adapters/sqlite" },
     { "path": "adapters/postgres" },
     { "path": "adapters/mysql" },

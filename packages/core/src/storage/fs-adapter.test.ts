@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { createFileSystemStorage } from "@pressh/core";
-import type { Result, StorageAdapter, StoredDoc } from "@pressh/core";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomUUID} from "node:crypto";
+import Database from "better-sqlite3";
+import type {Result, StorageAdapter, StoredDoc} from "@pressh/core";
+import {createFileSystemStorage} from "@pressh/core";
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw result.error;
@@ -42,6 +43,61 @@ describe("FileSystemStorageAdapter — CRUD", () => {
     unwrap(await store.delete("posts", id));
     expect(unwrap(await store.get("posts", id))).toBeNull();
   });
+});
+
+describe("FileSystemStorageAdapter — secondary indexes", () => {
+    it("uses an expression index (not a full scan) for a filtered query", async () => {
+        for (let i = 0; i < 30; i++) {
+            await store.put("content_entries", {id: `e${i}`, status: i % 2 ? "draft" : "published", slug: `p${i}`});
+        }
+        // Inspect the derived index DB directly: the planner must SEARCH via the
+        // per-field index, not SCAN the table.
+        const idx = new Database(join(dir, ".index.sqlite"), {readonly: true});
+        const detail = idx
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT id, doc FROM docs WHERE collection = ? AND json_extract(doc, '$.status') = ? ORDER BY id ASC LIMIT ?",
+            )
+            .all("content_entries", "published", 50)
+            .map((r) => (r as { detail: string }).detail)
+            .join(" | ");
+        idx.close();
+        expect(detail).toContain("USING INDEX idx_docs_status");
+        expect(detail).not.toContain("SCAN");
+    });
+
+    it("still returns correct results through the index", async () => {
+        await store.put("content_entries", {id: "a", status: "published"});
+        await store.put("content_entries", {id: "b", status: "draft"});
+        await store.put("content_entries", {id: "c", status: "published"});
+        const page = unwrap(await store.query("content_entries", {where: {status: "published"}}));
+        expect(page.items.map((i) => i.id).sort()).toEqual(["a", "c"]);
+    });
+});
+
+describe("FileSystemStorageAdapter — transactions", () => {
+    it("commits all writes when the body succeeds", async () => {
+        const result = await store.transaction(async (tx) => {
+            unwrap(await tx.put("posts", {id: "a", n: 1}));
+            unwrap(await tx.put("posts", {id: "b", n: 2}));
+            return "ok";
+        });
+        expect(result.ok).toBe(true);
+        expect(unwrap(await store.get("posts", "a"))).not.toBeNull();
+        expect(unwrap(await store.get("posts", "b"))).not.toBeNull();
+    });
+
+    it("rolls back every write (and restores overwritten rows) when the body throws", async () => {
+        unwrap(await store.put("posts", {id: "keep", title: "original"}));
+        const result = await store.transaction(async (tx) => {
+            unwrap(await tx.put("posts", {id: "keep", title: "modified"}));
+            unwrap(await tx.put("posts", {id: "new", title: "added"}));
+            unwrap(await tx.delete("posts", "keep")); // even a delete is undone
+            throw new Error("boom");
+        });
+        expect(result.ok).toBe(false);
+        expect(unwrap(await store.get("posts", "new"))).toBeNull();
+        expect(unwrap(await store.get<{ title: string }>("posts", "keep"))?.title).toBe("original");
+    });
 });
 
 describe("FileSystemStorageAdapter — query", () => {

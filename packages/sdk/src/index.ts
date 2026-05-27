@@ -75,6 +75,18 @@ export interface HostApi {
   secrets: {
     get(name: string): Promise<string>;
   };
+    /**
+     * Privacy primitives for plugins that handle personal data (capability-gated,
+     * default-deny like every other host service). `protect` seals a value in the
+     * vault under the subject's namespace and returns an opaque `{$enc}` reference
+     * the plugin can store — the plaintext is recoverable only via a host-side GDPR
+     * export and is crypto-shredded on erasure. There is deliberately NO reveal:
+     * a compromised worker can encrypt PII but never read sealed PII back.
+     */
+    pii: {
+        protect(subjectRef: string, value: string): Promise<{ $enc: string }>;
+        recordConsent(subjectRef: string, scope: string, granted: boolean): Promise<void>;
+    };
 }
 
 export type PluginHandler = (args: unknown, host: HostApi) => unknown | Promise<unknown>;
@@ -99,4 +111,4 @@ export type WorkerToHost =
   | { kind: "log"; level: "debug" | "info" | "warn" | "error"; message: string; fields: Record<string, unknown> }
   | { kind: "invoke-result"; id: number; ok: true; value: unknown }
   | { kind: "invoke-result"; id: number; ok: false; error: RpcError }
-  | { kind: "service-call"; id: number; service: "storage" | "secrets"; method: string; args: unknown[] };
+    | { kind: "service-call"; id: number; service: "storage" | "secrets" | "pii"; method: string; args: unknown[] };

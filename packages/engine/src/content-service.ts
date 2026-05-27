@@ -1,13 +1,16 @@
-import { randomUUID } from "node:crypto";
-import { CapabilityGate, PressError } from "@pressh/core";
-import type { AuditLog, Result, Scheduler, StorageAdapter } from "@pressh/core";
-import { createBlockRegistry } from "./blocks/registry.js";
-import { sanitizeBlocks } from "./blocks/sanitize.js";
-import type { BlockRegistry } from "./blocks/types.js";
-import { validateFields } from "./schema.js";
-import { capabilityForTransition, isAllowedTransition } from "./state-machine.js";
-import { SYSTEM_SLUGS } from "./types.js";
-import type { ContentEntry, ContentStatus, ContentType, FieldDef, Revision } from "./types.js";
+import {randomUUID} from "node:crypto";
+import type {AuditLog, Result, Scheduler, SecretsBackend, StorageAdapter} from "@pressh/core";
+import {CapabilityGate, PressError} from "@pressh/core";
+import {createBlockRegistry} from "./blocks/registry.js";
+import {sanitizeBlocks} from "./blocks/sanitize.js";
+import type {BlockRegistry} from "./blocks/types.js";
+import {protectSensitive} from "./sensitive.js";
+import {validateFields} from "./schema.js";
+import {capabilityForTransition, isAllowedTransition} from "./state-machine.js";
+import {DESIGNER_LAYOUT_BLOCK} from "./primitives/types.js";
+import {getPrebuiltPage} from "./primitives/prebuilt.js";
+import type {ContentEntry, ContentStatus, ContentType, FieldDef, Revision} from "./types.js";
+import {SYSTEM_SLUGS} from "./types.js";
 
 const TYPES = "content_types";
 const ENTRIES = "content_entries";
@@ -22,6 +25,47 @@ function must<T>(result: Result<T>): T {
 
 function revisionId(entryId: string, version: number): string {
   return `${entryId}.${version}`;
+}
+
+/** A public content search result. */
+export interface SearchHit {
+    slug: string;
+    title: string;
+    excerpt: string;
+    locale: string;
+}
+
+const SEARCH_SCAN_CAP = 500;
+const EXCERPT_RADIUS = 80;
+
+/** Collects plain-string text from arbitrary field/block values; skips objects
+ * (including `{$enc}` sensitive refs) and arrays of non-strings — so encrypted
+ * values are never indexed and the haystack stays human text. */
+function collectText(value: unknown, out: string[], depth = 0): void {
+    if (depth > 6) return;
+    if (typeof value === "string") {
+        out.push(value);
+    } else if (Array.isArray(value)) {
+        for (const v of value) collectText(v, out, depth + 1);
+    } else if (value && typeof value === "object") {
+        // Skip sensitive encrypted refs entirely.
+        if ("$enc" in (value as Record<string, unknown>)) return;
+        for (const v of Object.values(value as Record<string, unknown>)) collectText(v, out, depth + 1);
+    }
+}
+
+function buildSearchText(title: string, fields: Record<string, unknown>, blocks: unknown[]): string {
+    const parts: string[] = [title];
+    collectText(fields, parts);
+    collectText(blocks, parts);
+    // Strip tags so HTML-ish richtext doesn't pollute matches/excerpts.
+    return parts.join(" ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function makeExcerpt(text: string, matchIndex: number, matchLen: number): string {
+    const start = Math.max(0, matchIndex - EXCERPT_RADIUS);
+    const end = Math.min(text.length, matchIndex + matchLen + EXCERPT_RADIUS);
+    return (start > 0 ? "…" : "") + text.slice(start, end).trim() + (end < text.length ? "…" : "");
 }
 
 export interface CreateTypeInput {
@@ -52,6 +96,11 @@ export interface ContentServiceOptions {
   blockRegistry?: BlockRegistry;
   /** When set, scheduling content enqueues a `content.publish` job (Phase 14). */
   scheduler?: Scheduler;
+    /**
+     * Vault used to seal fields marked `sensitive` (baseline #6). Required for any
+     * content type that declares a sensitive field — writes fail closed without it.
+     */
+    secrets?: SecretsBackend;
 }
 
 /** Job type the scheduler runs to publish content at its scheduled time. */
@@ -83,6 +132,20 @@ export interface ContentService {
     opts?: { publicOnly?: boolean },
   ): Promise<ContentEntry | null>;
   /**
+   * Substring search over PUBLISHED, non-system content (title + text fields +
+   * block text). In-memory (storage has no full-text index) and capped, so it's
+   * sized for SMB content volumes. Sensitive (encrypted) field values are never
+   * indexed — only plain string values are.
+   */
+  searchPublished(
+      query: string,
+      opts?: { limit?: number; locale?: string },
+  ): Promise<SearchHit[]>;
+
+    /** Locales that have a PUBLISHED entry for a slug — drives hreflang + switcher. */
+    publishedLocalesForSlug(slug: string): Promise<string[]>;
+
+    /**
    * Idempotent: creates the built-in system pages (header, footer, home, 404,
    * 500, maintenance) if they do not yet exist, published and marked
    * non-deletable. A pre-existing page sharing a system slug (e.g. a seeded
@@ -98,6 +161,7 @@ class ContentServiceImpl implements ContentService {
   readonly #gate = new CapabilityGate();
   readonly #blocks: BlockRegistry;
   readonly #scheduler: Scheduler | undefined;
+    readonly #secrets: SecretsBackend | undefined;
 
   constructor(opts: ContentServiceOptions) {
     this.#storage = opts.storage;
@@ -105,6 +169,7 @@ class ContentServiceImpl implements ContentService {
     this.#now = opts.now ?? (() => Date.now());
     this.#blocks = opts.blockRegistry ?? createBlockRegistry();
     this.#scheduler = opts.scheduler;
+      this.#secrets = opts.secrets;
   }
 
   #iso(): string {
@@ -187,6 +252,9 @@ class ContentServiceImpl implements ContentService {
     const locale = input.locale ?? DEFAULT_LOCALE;
     const type = await this.#requireType(input.typeId);
     const validated = validateFields(type.fields, input.fields);
+      // Seal sensitive fields before any write so plaintext never reaches storage
+      // (fails closed without a vault — see protectSensitive).
+      const fields = await protectSensitive(validated, type.fields, this.#secrets);
     const blocks = sanitizeBlocks(this.#blocks, input.blocks ?? [], { capabilities });
 
     const existing = must(
@@ -210,7 +278,7 @@ class ContentServiceImpl implements ContentService {
       updatedAt: this.#iso(),
     };
     must(await this.#storage.put(ENTRIES, entry));
-    await this.#addRevision(entry, validated, blocks, input.authorId, 1);
+      await this.#addRevision(entry, fields, blocks, input.authorId, 1);
     await this.#audit.append({
       action: "content.create",
       actorId: input.authorId,
@@ -228,10 +296,19 @@ class ContentServiceImpl implements ContentService {
     const entry = await this.#requireEntry(entryId);
     const type = await this.#requireType(entry.typeId);
     const validated = validateFields(type.fields, input.fields);
+      // Carry forward the prior revision's ciphertext when a sensitive field comes
+      // back as the mask (editor couldn't reveal it, or left it untouched).
+      const priorRevision = await this.getRevision(entryId, entry.currentRevision);
+      const fields = await protectSensitive(
+          validated,
+          type.fields,
+          this.#secrets,
+          priorRevision?.fields,
+      );
     const blocks = sanitizeBlocks(this.#blocks, input.blocks ?? [], { capabilities });
 
     const version = entry.currentRevision + 1;
-    await this.#addRevision(entry, validated, blocks, input.editorId, version);
+      await this.#addRevision(entry, fields, blocks, input.editorId, version);
     entry.currentRevision = version;
     entry.updatedAt = this.#iso();
     must(await this.#storage.put(ENTRIES, entry));
@@ -249,6 +326,10 @@ class ContentServiceImpl implements ContentService {
     to: ContentStatus,
     opts: { scheduledFor?: string } = {},
   ): Promise<ContentEntry> {
+      // Authorize before touching the entry so an unauthorized caller can't probe
+      // existence (404) or transition legality (409) — every other mutating method
+      // asserts first too.
+      this.#gate.assert(capabilities, capabilityForTransition(to));
     const entry = await this.#requireEntry(entryId);
     if (entry.system && to !== "published") {
       throw new PressError("conflict", "System layout pages cannot be unpublished or archived");
@@ -256,7 +337,6 @@ class ContentServiceImpl implements ContentService {
     if (!isAllowedTransition(entry.status, to)) {
       throw new PressError("conflict", `Illegal transition: ${entry.status} → ${to}`);
     }
-    this.#gate.assert(capabilities, capabilityForTransition(to));
 
     const from = entry.status;
     entry.status = to;
@@ -342,6 +422,44 @@ class ContentServiceImpl implements ContentService {
     return entry;
   }
 
+    async searchPublished(
+        query: string,
+        opts: { limit?: number; locale?: string } = {},
+    ): Promise<SearchHit[]> {
+        const q = query.trim().toLowerCase();
+        if (!q) return [];
+        const limit = Math.min(Math.max(1, opts.limit ?? 20), 50);
+        const where: Record<string, string> = {status: "published"};
+        if (opts.locale) where["locale"] = opts.locale;
+        const page = must(
+            await this.#storage.query<ContentEntry>(ENTRIES, {where}, {limit: SEARCH_SCAN_CAP}),
+        );
+        const hits: SearchHit[] = [];
+        for (const entry of page.items) {
+            if (entry.system) continue;
+            const revision = await this.getRevision(entry.id, entry.currentRevision);
+            if (!revision) continue;
+            const title =
+                typeof revision.fields["title"] === "string"
+                    ? (revision.fields["title"] as string)
+                    : entry.slug;
+            const text = buildSearchText(title, revision.fields, revision.blocks);
+            const idx = text.toLowerCase().indexOf(q);
+            if (idx === -1) continue;
+            hits.push({slug: entry.slug, title, excerpt: makeExcerpt(text, idx, q.length), locale: entry.locale});
+            if (hits.length >= limit) break;
+        }
+        return hits;
+    }
+
+    async publishedLocalesForSlug(slug: string): Promise<string[]> {
+        const page = must(await this.#storage.query<ContentEntry>(ENTRIES, {where: {slug}}));
+        const locales = page.items
+            .filter((e) => e.status === "published" && !e.system)
+            .map((e) => e.locale);
+        return [...new Set(locales)].sort();
+    }
+
   async ensureSystemPages(ownerId: string): Promise<void> {
     // Find or create a shared "page" content type for system pages.
     const typesResult = must(await this.#storage.query<ContentType>(TYPES, { where: { slug: "page" } }));
@@ -360,45 +478,27 @@ class ContentServiceImpl implements ContentService {
       typeId = t.id;
     }
 
-    // Layout fragments (header/footer) start empty — they only matter once the
-    // operator designs them. Standalone pages (home/404/500/maintenance) ship
-    // with sensible starter content so they render meaningfully out of the box.
-    const systemPages: Array<{ slug: string; label: string; blocks: unknown[] }> = [
-      { slug: SYSTEM_SLUGS.header, label: "Header", blocks: [] },
-      { slug: SYSTEM_SLUGS.footer, label: "Footer", blocks: [] },
-      {
-        slug: SYSTEM_SLUGS.home,
-        label: "Home",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "Welcome to Pressh" },
-          { type: "paragraph", content: "The secure-first CMS built for the modern web. Publish content with confidence — no compromises." },
-        ],
-      },
-      {
-        slug: SYSTEM_SLUGS.notFound,
-        label: "Page not found",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "404 — Page not found" },
-          { type: "paragraph", content: "The page you are looking for does not exist or may have moved." },
-        ],
-      },
-      {
-        slug: SYSTEM_SLUGS.serverError,
-        label: "Server error",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "500 — Something went wrong" },
-          { type: "paragraph", content: "An unexpected error occurred on our side. Please try again in a moment." },
-        ],
-      },
-      {
-        slug: SYSTEM_SLUGS.maintenance,
-        label: "Down for maintenance",
-        blocks: [
-          { type: "heading", props: { level: 1 }, content: "We will be right back" },
-          { type: "paragraph", content: "The site is temporarily offline for scheduled maintenance. Please check back shortly." },
-        ],
-      },
+      // Every system page (the header/footer chrome, the home page, and the
+      // 404/500/maintenance pages) ships with a fully designed primitive tree —
+      // stored as a single `designer-layout` block — so a fresh install renders a
+      // proper, on-brand site out of the box that the operator can then edit in the
+      // visual designer. See ./primitives/prebuilt.ts for the layouts.
+      const systemSlugs = [
+          SYSTEM_SLUGS.header,
+          SYSTEM_SLUGS.footer,
+          SYSTEM_SLUGS.home,
+          SYSTEM_SLUGS.notFound,
+          SYSTEM_SLUGS.serverError,
+          SYSTEM_SLUGS.maintenance,
     ];
+      const systemPages = systemSlugs.map((slug) => {
+          const page = getPrebuiltPage(slug);
+          return {
+              slug,
+              label: page?.title ?? slug,
+              blocks: page ? [{type: DESIGNER_LAYOUT_BLOCK, props: {nodes: page.nodes}}] : [],
+          };
+      });
 
     for (const { slug, label, blocks } of systemPages) {
       const existing = await this.resolveBySlug(slug, DEFAULT_LOCALE);

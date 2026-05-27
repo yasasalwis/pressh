@@ -1,0 +1,31 @@
+{
+  "name": "comments",
+  "version": "1.0.0",
+  "main": "index.mjs",
+  "capabilities": [
+    "storage.read:comments",
+    "storage.write:comments"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/submit",
+      "handler": "submit"
+    },
+    {
+      "method": "GET",
+      "path": "/list",
+      "handler": "list"
+    }
+  ],
+  "panel": {
+    "title": "Comments",
+    "entry": "panel.js"
+  },
+  "panelActions": [
+    "listAll",
+    "approve",
+    "reject",
+    "remove"
+  ]
+}

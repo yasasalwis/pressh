@@ -154,3 +154,9 @@ export interface RenderResult {
   html: string;
   css: string;
 }
+
+/**
+ * BlockNode `type` that wraps a primitive layout tree inside a content entry's
+ * blocks array. Its payload is `{ nodes: PrimitiveNode[] }`.
+ */
+export const DESIGNER_LAYOUT_BLOCK = "designer-layout";

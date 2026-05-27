@@ -161,3 +161,13 @@
 .ps-checkout-summary {
     margin-bottom: 1.5rem;
 }
+
+/* Spam honeypot: kept in the DOM (and accessible-tree-hidden) but off-screen so
+   only automated submitters fill it. A filled `_hp` is dropped server-side. */
+.ps-hp {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}

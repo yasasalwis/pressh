@@ -1,9 +1,22 @@
+import {timingSafeEqual} from "node:crypto";
 import {readFile} from "node:fs/promises";
+import {createReadStream, statSync} from "node:fs";
+import {Readable} from "node:stream";
 import type {Context, Next} from "hono";
 import {Hono} from "hono";
 import {deleteCookie, getCookie, setCookie} from "hono/cookie";
-import type {AuditLog, AuthService, CsrfProtection, RoleName, StorageAdapter, User} from "@pressh/core";
-import {CapabilityGate, createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
+import type {
+    AuditLog,
+    AuthService,
+    CsrfProtection,
+    MemberAuthService,
+    RedirectService,
+    RoleName,
+    SecretsBackend,
+    StorageAdapter,
+    User
+} from "@pressh/core";
+import {CapabilityGate, createMetrics, createRateLimiter, isMfaChallenge, PressError, requestId} from "@pressh/core";
 import type {
   ContentEntry,
   ContentService,
@@ -15,19 +28,53 @@ import type {
   SettingsService,
   ThemeService,
 } from "@pressh/engine";
-import {PRESETS, PRIMITIVE_DEFS, renderTree} from "@pressh/engine";
+import {
+  prebuiltLayoutBlocks,
+  PRESETS,
+  PRIMITIVE_DEFS,
+  redactEncRefs,
+  renderTree,
+  REVEAL_CAPABILITY,
+  revealEncRefs
+} from "@pressh/engine";
 import type {CveService, PluginInfo} from "@pressh/runtime";
 import {panelFrameTag, wrapPanelHtml} from "@pressh/runtime";
 import type {MediaService} from "./media.js";
 import {MAX_UPLOAD_BYTES} from "./media.js";
 import type {MigrationLock} from "./migration-lock.js";
 import type {DbManagerService, StartMigrationInput} from "./db-manager.js";
-import {ADMIN_HTML} from "./admin-html.js";
+
+/** Constant-time string compare so a bearer-token check can't be timed out. */
+function timingSafeStrEqual(a: string, b: string): boolean {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
+
+/** Basic email shape check for the first-run setup wizard. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** The first Owner is the most privileged account, so require a longer password than the 8-char floor. */
+const MIN_OWNER_PASSWORD_LEN = 12;
+
+// React admin bundle (built by scripts/build-admin.mjs into dist/admin-next.html,
+// a sibling of this compiled module). Read once and cached; `null` when absent.
+let _adminNextHtml: string | null | undefined;
+
+async function readAdminNextHtml(): Promise<string | null> {
+    if (_adminNextHtml !== undefined) return _adminNextHtml;
+    try {
+        _adminNextHtml = await readFile(new URL("admin-next.html", import.meta.url), "utf8");
+    } catch {
+        _adminNextHtml = null;
+    }
+    return _adminNextHtml;
+}
 
 /** Source of plugin admin panels (wired from the PluginHost in the bootstrap). */
 export interface PanelProvider {
   list(): Promise<{ plugin: string; title: string }[]>;
-  get(plugin: string): Promise<{ title: string; html: string } | null>;
+
+    get(plugin: string): Promise<{ title: string; script: string } | null>;
 }
 
 /** Installed-plugin metadata for the Plugins screen (wired from the PluginHost). */
@@ -48,6 +95,26 @@ export interface PluginControlProvider {
   designerPresets?(): { plugin: string; presets: unknown[] }[];
 }
 
+/** Scheduled-backup admin surface (wired from the server when PRESSH_BACKUP_DIR is set). */
+export interface BackupAdmin {
+    dir: string;
+    intervalMs: number;
+    keep: number;
+
+    /** Run a backup now (timestamped + pruned). Throws a PressError on failure. */
+    run(): Promise<{ name: string; items: number; pruned: number }>;
+
+    list(): Promise<{ name: string; createdAt: string; sizeBytes: number }[]>;
+
+    /** Restore drill on a named backup (latest when omitted) — never touches live data. */
+    verify(name?: string): Promise<{
+        ok: boolean;
+        collections: Record<string, number>;
+        totalRecords: number;
+        message: string
+    }>;
+}
+
 const SESSION_COOKIE = "pressh_session";
 
 export interface StudioAppDeps {
@@ -59,6 +126,14 @@ export interface StudioAppDeps {
   storage: StorageAdapter;
   audit: AuditLog;
   settings: SettingsService;
+    /** Vault used to reveal sealed sensitive content fields to authorized editors. */
+    secrets?: SecretsBackend;
+    /** Site-member management (list/suspend/erase) — shares the Site's member store. */
+    memberAuth?: MemberAuthService;
+    /** URL redirect management (operator-defined from→to). */
+    redirects?: RedirectService;
+    /** Scheduled-backup admin (list / run now / restore drill). Absent when unconfigured. */
+    backups?: BackupAdmin;
   panels?: PanelProvider;
   pluginInfo?: PluginInfoProvider;
   pluginControl?: PluginControlProvider;
@@ -96,53 +171,14 @@ export async function seedDemoContent(content: ContentService, ownerId: string, 
   const pageFields: FieldDef[] = [{ id: "f0", name: "title", type: "text", required: true }];
   const pageType = await content.createType(caps, { name: "Page", slug: "page", fields: pageFields });
 
+    // The demo pages ship as fully designed primitive trees (see
+    // @pressh/engine prebuilt.ts), stored as a single `designer-layout` block, so a
+    // fresh install presents a real, on-brand site the operator can edit visually.
   const pages: { slug: string; title: string; blocks: unknown[] }[] = [
-    {
-      slug: "home",
-      title: "Home",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "Welcome to Pressh" },
-        { type: "paragraph", content: "The secure-first CMS built for the modern web. Publish content with confidence — no compromises." },
-        { type: "heading", props: { level: 2 }, content: "Built for security" },
-        { type: "paragraph", content: "Traditional CMS platforms bundle thousands of lines of third-party code you never audited. Pressh takes the opposite approach: a minimal, auditable core with plugins running in isolated sandboxes." },
-        { type: "heading", props: { level: 2 }, content: "Simple and powerful" },
-        { type: "paragraph", content: "No-code content modelling, workflow states, immutable revision history, and locale support — all included out of the box." },
-      ],
-    },
-    {
-      slug: "about",
-      title: "About",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "About Pressh" },
-        { type: "paragraph", content: "Pressh is a content management system that puts security first without sacrificing simplicity. We believe the web deserves better than the legacy CMS status quo." },
-        { type: "heading", props: { level: 2 }, content: "Our values" },
-        { type: "paragraph", content: "Security by default. Minimal surface area. Transparent architecture. We build tools that developers can audit and organisations can trust." },
-        { type: "heading", props: { level: 2 }, content: "Open by design" },
-        { type: "paragraph", content: "Pressh is open-source. Every line of code is auditable, every decision is documented, and every plugin runs in a worker sandbox with explicit capability grants." },
-      ],
-    },
-    {
-      slug: "blog",
-      title: "Blog",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "The Pressh Blog" },
-        { type: "paragraph", content: "Insights on content security, web performance, and the open web." },
-        { type: "heading", props: { level: 2 }, content: "Why we built Pressh" },
-        { type: "paragraph", content: "After watching yet another CMS get compromised by a vulnerable plugin, we decided enough was enough. The web needs a CMS that is secure by default, not as an afterthought." },
-        { type: "heading", props: { level: 2 }, content: "Getting started" },
-        { type: "paragraph", content: "Create your first content type, add some pages, and publish. The Studio walks you through every step with a clean, no-code interface." },
-      ],
-    },
-    {
-      slug: "contact",
-      title: "Contact",
-      blocks: [
-        { type: "heading", props: { level: 1 }, content: "Get in Touch" },
-        { type: "paragraph", content: "Have questions, feedback, or just want to say hello? We would love to hear from you." },
-        { type: "heading", props: { level: 2 }, content: "Contributing" },
-        { type: "paragraph", content: "Pressh is open-source. Bug reports, feature requests, and pull requests are all welcome on GitHub." },
-      ],
-    },
+      {slug: "home", title: "Home", blocks: prebuiltLayoutBlocks("home") ?? []},
+      {slug: "about", title: "About", blocks: prebuiltLayoutBlocks("about") ?? []},
+      {slug: "blog", title: "Blog", blocks: prebuiltLayoutBlocks("blog") ?? []},
+      {slug: "contact", title: "Contact", blocks: prebuiltLayoutBlocks("contact") ?? []},
   ];
 
   for (const page of pages) {
@@ -224,11 +260,23 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
   });
   app.get("/metrics", (c) => {
-    if (metricsToken && c.req.header("authorization") !== `Bearer ${metricsToken}`) {
+      if (metricsToken && !timingSafeStrEqual(c.req.header("authorization") ?? "", `Bearer ${metricsToken}`)) {
       return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
     }
     return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
   });
+
+    // Session cookies must be Secure whenever the connection is HTTPS — not only
+    // when NODE_ENV=production. Honoring x-forwarded-proto covers the common case
+    // of a TLS-terminating proxy where the app itself sees plain HTTP; localhost
+    // dev over HTTP still gets a usable (non-Secure) cookie.
+    const cookieSecure = (c: Context<Vars>): boolean =>
+        (deps.production ?? false) ||
+        (c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase() === "https");
+
+    // First-run setup serializer (one Studio process): prevents a race where two
+    // concurrent setup requests both create an Owner before either persists.
+    let setupInFlight = false;
 
   const requireSession = async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
     const token = getCookie(c, SESSION_COOKIE);
@@ -269,13 +317,32 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       return c.json({ ok: true, data });
     } catch (error) {
       const { status, code } = mapError(error);
-      return c.json({ error: { code, message: code } }, status);
+        const message =
+            error instanceof PressError
+                ? error.message
+                : code === "internal"
+                    ? "An unexpected error occurred. Please try again."
+                    : code;
+        return c.json({error: {code, message}}, status);
     }
   }
 
-  // --- served admin client ---
-  app.get("/", (c) => c.html(ADMIN_HTML));
-  app.get("/admin", (c) => c.html(ADMIN_HTML));
+    // --- served admin client (React + TS, built by `npm run build:admin` into
+    // dist/admin-next.html and inlined). Same-origin to /admin/api/*; the inline
+    // bundle needs script-src 'unsafe-inline'. ---
+    const serveAdmin = async (c: Context<Vars>): Promise<Response> => {
+        const html = await readAdminNextHtml();
+        if (!html) return c.text("Admin client not built — run: npm run build:admin", 503);
+        c.header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; " +
+            "img-src 'self' https: data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'",
+        );
+        c.header("X-Content-Type-Options", "nosniff");
+        return c.html(html);
+    };
+    app.get("/", serveAdmin);
+    app.get("/admin", serveAdmin);
 
   // --- first-run setup wizard (WordPress-style) ---
   // Public, but works ONLY while zero users exist; permanently disabled after.
@@ -284,17 +351,42 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   });
 
   app.post("/admin/api/setup", rateLimit(authLimiter), async (c) => {
-    if (await deps.auth.hasAnyUser()) {
-      return c.json({ error: { code: "conflict", message: "Already configured" } }, 409);
-    }
-    const { email, password } = await c.req.json<{ email: string; password: string }>();
-    try {
+      // Synchronous guard (set before the first await) so two concurrent requests
+      // on a fresh install can't both pass hasAnyUser() and create two Owners.
+      if (setupInFlight) {
+          return c.json({error: {code: "conflict", message: "Setup already in progress"}}, 409);
+      }
+      setupInFlight = true;
+      try {
+          if (await deps.auth.hasAnyUser()) {
+              return c.json({error: {code: "conflict", message: "Already configured"}}, 409);
+          }
+          const {email, password} = await c.req.json<{ email: string; password: string }>();
+          if (typeof email !== "string" || !EMAIL_RE.test(email)) {
+              return c.json({error: {code: "validation", message: "A valid email is required"}}, 400);
+          }
+          if (typeof password !== "string" || password.length < MIN_OWNER_PASSWORD_LEN) {
+              return c.json(
+                  {
+                      error: {
+                          code: "validation",
+                          message: `Owner password must be at least ${MIN_OWNER_PASSWORD_LEN} characters`,
+                      },
+                  },
+                  400,
+              );
+          }
       await deps.auth.createUser({ email, password, roles: ["owner"] });
-      const { token, user } = await deps.auth.authenticate({ email, password });
+          const result = await deps.auth.authenticate({email, password});
+          // A brand-new owner has no MFA yet, so this is always a full session.
+          if (isMfaChallenge(result)) {
+              return c.json({error: {code: "internal", message: "internal"}}, 500);
+          }
+          const {token, user} = result;
       setCookie(c, SESSION_COOKIE, token, {
         httpOnly: true,
         sameSite: "Lax",
-        secure: deps.production ?? false,
+          secure: cookieSecure(c),
         path: "/",
       });
       await seedDemoContent(deps.content, user.id, deps.auth.capabilitiesFor(user)).catch(() => {});
@@ -303,6 +395,8 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     } catch (error) {
       const { status, code } = mapError(error);
       return c.json({ error: { code, message: code } }, status);
+      } finally {
+          setupInFlight = false;
     }
   });
 
@@ -310,25 +404,173 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.post("/admin/api/auth/login", rateLimit(authLimiter), async (c) => {
     const { email, password } = await c.req.json<{ email: string; password: string }>();
     try {
-      const { token, user } = await deps.auth.authenticate({ email, password });
+        const result = await deps.auth.authenticate({email, password});
+        // MFA-enabled: no cookie yet — the client must complete /auth/mfa/verify.
+        if (isMfaChallenge(result)) {
+            return c.json({mfaRequired: true, challenge: result.challenge});
+        }
+        setCookie(c, SESSION_COOKIE, result.token, {
+            httpOnly: true,
+            sameSite: "Lax",
+            secure: cookieSecure(c),
+            path: "/",
+        });
+        return c.json({user: result.user});
+    } catch (error) {
+        const {status} = mapError(error);
+        return c.json({error: {code: "unauthorized", message: "Invalid credentials"}}, status);
+    }
+  });
+
+    // Completes a two-step login: exchange the challenge + TOTP/recovery code for a session.
+    app.post("/admin/api/auth/mfa/verify", rateLimit(authLimiter), async (c) => {
+        const {challenge, code} = await c.req.json<{ challenge: string; code: string }>();
+        try {
+            const {token, user} = await deps.auth.verifyMfaLogin({
+                challenge: String(challenge ?? ""),
+                code: String(code ?? ""),
+            });
       setCookie(c, SESSION_COOKIE, token, {
         httpOnly: true,
         sameSite: "Lax",
-        secure: deps.production ?? false,
+          secure: cookieSecure(c),
         path: "/",
       });
       return c.json({ user });
     } catch (error) {
       const { status } = mapError(error);
-      return c.json({ error: { code: "unauthorized", message: "Invalid credentials" } }, status);
+            return c.json({error: {code: "unauthorized", message: "Invalid authentication code"}}, status);
     }
   });
 
-  app.post("/admin/api/auth/logout", requireSession, async (c) => {
+    app.post("/admin/api/auth/logout", requireSession, requireCsrf, async (c) => {
     await deps.auth.logout(c.get("token"));
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.json({ ok: true });
   });
+
+    // --- MFA enrollment (manage your own second factor) ---
+    app.post("/admin/api/auth/mfa/begin", requireSession, requireCsrf, async (c) =>
+        run(c, () => deps.auth.beginMfaEnrollment(c.get("user").id)),
+    );
+    app.post("/admin/api/auth/mfa/confirm", requireSession, requireCsrf, async (c) => {
+        const {code} = await c.req.json<{ code?: string }>();
+        return run(c, async () => deps.auth.confirmMfaEnrollment(c.get("user").id, String(code ?? "")));
+    });
+    app.post("/admin/api/auth/mfa/disable", requireSession, requireCsrf, async (c) => {
+        const {code} = await c.req.json<{ code?: string }>();
+        return run(c, async () => {
+            await deps.auth.disableMfa(c.get("user").id, String(code ?? ""));
+            return {ok: true};
+        });
+    });
+
+    // --- site member management (capability: members.manage) ---
+    const requireMembers = (c: Context<Vars>): MemberAuthService => {
+        if (!gate.check(caps(c), "members.manage") || !deps.memberAuth) {
+            throw new PressError("forbidden", "forbidden");
+        }
+        return deps.memberAuth;
+    };
+
+    app.get("/admin/api/members", requireSession, async (c) =>
+        run(c, async () => ({items: await requireMembers(c).listMembers()})),
+    );
+
+    app.post("/admin/api/members/:id/suspend", requireSession, requireCsrf, async (c) =>
+        run(c, () => requireMembers(c).setMemberStatus(c.req.param("id") ?? "", "suspended", c.get("user").id)),
+    );
+
+    app.post("/admin/api/members/:id/activate", requireSession, requireCsrf, async (c) =>
+        run(c, () => requireMembers(c).setMemberStatus(c.req.param("id") ?? "", "active", c.get("user").id)),
+    );
+
+    // Export a member's data (Art. 15/20): public profile (never the password hash)
+    // plus their subject-linked records via the GDPR service, keyed by email.
+    app.get("/admin/api/members/:id/export", requireSession, async (c) =>
+        run(c, async () => {
+            const members = requireMembers(c);
+            const profile = await members.getMember(c.req.param("id") ?? "");
+            if (!profile) throw new PressError("not_found", "Member not found");
+            const data = deps.gdpr ? (await deps.gdpr.export(caps(c), profile.email)).records : {};
+            return {profile, data};
+        }),
+    );
+
+    // GDPR right-to-be-forgotten: erase the member's subject-linked data, then the
+    // account itself (with its sessions + tokens).
+    app.post("/admin/api/members/:id/erase", requireSession, requireCsrf, async (c) =>
+        run(c, async () => {
+            const members = requireMembers(c);
+            const id = c.req.param("id") ?? "";
+            const member = await members.getMember(id);
+            if (!member) throw new PressError("not_found", "Member not found");
+            if (deps.gdpr) await deps.gdpr.erase(caps(c), member.email);
+            await members.deleteMember(id, c.get("user").id);
+            return {ok: true};
+        }),
+    );
+
+    // --- scheduled backups (capability: backups.manage) ---
+    const requireBackups = (c: Context<Vars>): BackupAdmin => {
+        if (!gate.check(caps(c), "backups.manage")) throw new PressError("forbidden", "forbidden");
+        if (!deps.backups) throw new PressError("not_found", "Backups are not configured (set PRESSH_BACKUP_DIR)");
+        return deps.backups;
+    };
+
+    app.get("/admin/api/backups", requireSession, async (c) =>
+        run(c, async () => {
+            if (!gate.check(caps(c), "backups.manage")) throw new PressError("forbidden", "forbidden");
+            if (!deps.backups) return {configured: false, items: []};
+            return {
+                configured: true,
+                dir: deps.backups.dir,
+                intervalMs: deps.backups.intervalMs,
+                keep: deps.backups.keep,
+                items: await deps.backups.list(),
+            };
+        }),
+    );
+
+    app.post("/admin/api/backups/run", requireSession, requireCsrf, async (c) =>
+        run(c, () => requireBackups(c).run()),
+    );
+
+    app.post("/admin/api/backups/verify", requireSession, requireCsrf, async (c) => {
+        const {name} = await c.req.json<{ name?: string }>().catch(() => ({name: undefined}));
+        return run(c, () => requireBackups(c).verify(typeof name === "string" ? name : undefined));
+    });
+
+    // --- URL redirects (capability: redirects.manage) ---
+    const requireRedirects = (c: Context<Vars>): RedirectService => {
+        if (!gate.check(caps(c), "redirects.manage")) throw new PressError("forbidden", "forbidden");
+        if (!deps.redirects) throw new PressError("not_found", "Redirects are not available");
+        return deps.redirects;
+    };
+
+    app.get("/admin/api/redirects", requireSession, async (c) =>
+        run(c, async () => ({items: await requireRedirects(c).list()})),
+    );
+
+    app.post("/admin/api/redirects", requireSession, requireCsrf, async (c) => {
+        const body = await c.req
+            .json<{ from?: string; to?: string; code?: number }>()
+            .catch(() => ({}) as { from?: string; to?: string; code?: number });
+        return run(c, () =>
+            requireRedirects(c).create({
+                from: String(body.from ?? ""),
+                to: String(body.to ?? ""),
+                ...(body.code !== undefined ? {code: Number(body.code)} : {}),
+            }),
+        );
+    });
+
+    app.delete("/admin/api/redirects/:id", requireSession, requireCsrf, async (c) =>
+        run(c, async () => {
+            await requireRedirects(c).remove(c.req.param("id") ?? "");
+            return {ok: true};
+        }),
+    );
 
   app.get("/admin/api/me", requireSession, (c) => {
     const user = c.get("user");
@@ -370,9 +612,15 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     const entry = await deps.content.getEntry(c.req.param("id") ?? "");
     if (!entry) return c.json({ error: { code: "not_found", message: "not_found" } }, 404);
     const revision = await deps.content.getRevision(entry.id, entry.currentRevision);
+      const rawFields = revision?.fields ?? {};
+      // Editors with `content.reveal` load decrypted sensitive fields; everyone else
+      // gets the mask (and the unchanged mask round-trips back to ciphertext on save).
+      const fields = gate.check(caps(c), REVEAL_CAPABILITY)
+          ? await revealEncRefs(rawFields, deps.secrets)
+          : redactEncRefs(rawFields);
     return c.json({
       entry,
-      revision: revision ? { fields: revision.fields, blocks: revision.blocks } : { fields: {}, blocks: [] },
+        revision: {fields, blocks: revision?.blocks ?? []},
     });
   });
 
@@ -526,7 +774,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data:; frame-ancestors 'self'",
     );
     c.header("X-Content-Type-Options", "nosniff");
-    return c.html(wrapPanelHtml({ title: panel.title, body: panel.html }));
+      return c.html(wrapPanelHtml({title: panel.title, script: panel.script}));
   });
 
   // --- page designer: primitive library & live render ---
@@ -553,7 +801,9 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
           let fields: Record<string, unknown> = {};
           try {
             const rev = await deps.content.getRevision(entry.id, entry.currentRevision);
-            fields = rev?.fields ?? {};
+              // Bound list data renders into pages (incl. the public site), so sealed
+              // sensitive fields are always masked here — never revealed in a binding.
+              fields = redactEncRefs(rev?.fields ?? {}) as Record<string, unknown>;
           } catch {
             fields = {};
           }
@@ -587,8 +837,15 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.post("/admin/api/preview/render", requireSession, async (c) => {
     const body = await c.req.json<{ nodes: PrimitiveNode[] }>();
     const nodes = Array.isArray(body.nodes) ? body.nodes : [];
-    const { html, css } = await renderTree(nodes, makeDesignerContext(), { editor: true });
-    return c.json({ html, css });
+      try {
+          // renderTree caps node count + nesting depth, so an oversized preview
+          // body can't exhaust this (main-thread) request — it throws `validation`.
+          const {html, css} = await renderTree(nodes, makeDesignerContext(), {editor: true});
+          return c.json({html, css});
+      } catch (error) {
+          const {status, code} = mapError(error);
+          return c.json({error: {code, message: code}}, status);
+      }
   });
 
   // --- media upload (validated, stored outside web root) ---
@@ -596,6 +853,13 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     if (!gate.check(caps(c), "media.write")) {
       return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
     }
+      // Reject by declared size BEFORE parseBody buffers the whole multipart body
+      // into memory. 64KB of slack covers multipart boundaries/headers so a file at
+      // the limit still passes; the exact per-file check below is authoritative.
+      const declaredLength = Number(c.req.header("content-length") ?? "0");
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_BYTES + 64 * 1024) {
+          return c.json({error: {code: "validation", message: "File too large"}}, 413);
+      }
     const form = await c.req.parseBody();
     const file = form["file"];
     if (!(file instanceof File)) {
@@ -619,12 +883,23 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.get("/admin/api/media/:id/raw", requireSession, requireCap("media.read"), async (c) => {
     const rec = await deps.media.get(c.req.param("id") ?? "");
     if (!rec) return c.text("Not found", 404);
-    const buf = await readFile(rec.path);
-    c.header("Content-Type", rec.mime);
-    c.header("X-Content-Type-Options", "nosniff");
-    c.header("Content-Disposition", "inline");
-    c.header("Cache-Control", "private, max-age=300");
-    return c.body(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+      // Stream the file rather than buffering the whole blob (up to 25 MB) into the
+      // admin process heap — keeps the footprint flat on a small VM.
+      let size: number;
+      try {
+          size = statSync(rec.path).size;
+      } catch {
+          return c.text("Not found", 404);
+      }
+      return new Response(Readable.toWeb(createReadStream(rec.path)) as ReadableStream, {
+          headers: {
+              "content-type": rec.mime,
+              "content-length": String(size),
+              "x-content-type-options": "nosniff",
+              "content-disposition": "inline",
+              "cache-control": "private, max-age=300",
+          },
+      });
   });
 
   app.delete("/admin/api/media/:id", requireSession, requireCsrf, requireCap("media.write"), (c) =>
@@ -690,7 +965,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       setCookie(c, SESSION_COOKIE, session, {
         httpOnly: true,
         sameSite: "Lax",
-        secure: deps.production ?? false,
+          secure: cookieSecure(c),
         path: "/",
       });
       return c.json({ user });
@@ -715,6 +990,12 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.get("/admin/api/settings", requireSession, requireCap("settings.manage"), async (c) =>
     c.json({ settings: await deps.settings.getSettings() }),
   );
+
+    // Enabled locales — readable by any authed user (content authors need it to
+    // pick a locale, even without settings.manage).
+    app.get("/admin/api/locales", requireSession, async (c) =>
+        c.json({locales: (await deps.settings.getSettings()).locales}),
+    );
 
   app.put("/admin/api/settings", requireSession, requireCsrf, requireCap("settings.manage"), async (c) => {
     const body = await c.req.json();

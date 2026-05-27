@@ -22,13 +22,33 @@ function safeUrl(value) {
   return "";
 }
 
+// Valid `robots` meta directives. Anything else (free text, junk, control of
+// indexing via crafted strings) is dropped so the tag can only ever emit
+// recognized directives.
+const ROBOTS_DIRECTIVES = new Set([
+    "index", "noindex", "follow", "nofollow", "none", "all",
+    "noarchive", "nosnippet", "noimageindex", "notranslate", "nocache",
+]);
+const ROBOTS_VALUED = /^(max-snippet|max-image-preview|max-video-preview):[a-z0-9-]{1,20}$/;
+
+/** Keep only recognized robots directives, comma-joined. */
+function cleanRobots(value) {
+    return String(value ?? "")
+        .toLowerCase()
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => ROBOTS_DIRECTIVES.has(t) || ROBOTS_VALUED.test(t))
+        .slice(0, 8)
+        .join(", ");
+}
+
 function cleanMeta(meta) {
   return {
     description: String(meta?.description ?? "").slice(0, 320),
     ogTitle: String(meta?.ogTitle ?? "").slice(0, 200),
     ogDescription: String(meta?.ogDescription ?? "").slice(0, 320),
     ogImage: safeUrl(meta?.ogImage),
-    robots: String(meta?.robots ?? "").slice(0, 100),
+      robots: cleanRobots(meta?.robots),
   };
 }
 

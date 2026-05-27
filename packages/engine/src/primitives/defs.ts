@@ -181,10 +181,13 @@ export const PRIMITIVE_DEFS: PrimitiveDef[] = [
     type: "form",
     name: "Form",
     icon: "🗎",
+      // `submitTo:"forms"` routes submissions to the Forms plugin (captured + GDPR);
+      // `formId` groups submissions. Empty `submitTo` = a plain native form posting
+      // to `action`.
     category: "form",
     description: "Submittable form wrapper",
     isContainer: true,
-    defaultProps: { action: "#" },
+      defaultProps: {action: "#", submitTo: "", formId: "default"},
     defaultStyles: base({ gap: "1rem" }),
   },
   {

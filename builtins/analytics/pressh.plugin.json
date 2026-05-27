@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "main": "index.mjs",
   "capabilities": ["storage.read:analytics_daily", "storage.write:analytics_daily"],
-  "panel": { "title": "Analytics", "entry": "panel.html" },
+  "panel": {
+    "title": "Analytics",
+    "entry": "panel.js"
+  },
   "panelActions": ["summary"]
 }

@@ -19,6 +19,51 @@ jobs:
       - run: npm run tests
       - run: npm run lint
 
+  # Runs the StorageAdapter conformance suite against REAL Postgres, MySQL and
+  # MongoDB (the default test job only exercises FS + SQLite). Without this,
+  # these three adapters' SQL/filter/transaction behavior is never verified.
+  adapters:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pressh_test
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: pressh_test
+        ports: [ "3306:3306" ]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysql"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+      mongo:
+        image: mongo:7
+        ports: [ "27017:27017" ]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PRESSH_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/pressh_test
+      PRESSH_TEST_MYSQL_URL: mysql://root:mysql@localhost:3306/pressh_test
+      PRESSH_TEST_MONGO_URL: mongodb://localhost:27017
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The conformance suites activate only when the PRESSH_TEST_*_URL vars are set.
+      - run: npx vitest run adapters
+
   security:
     runs-on: ubuntu-latest
     steps:
@@ -33,12 +78,14 @@ jobs:
         run: npm audit --audit-level=high
       # Generate a CycloneDX SBOM artifact.
       - name: SBOM
-        run: npm sbom --sbom-format cyclonedx > sbom.json || true
+        id: sbom
+        run: npm sbom --sbom-format cyclonedx > sbom.json
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
+        if: steps.sbom.outcome == 'success'
         with:
           name: sbom
           path: sbom.json
-        if: always()
       # Lightweight secret scan — fail if obvious secrets are committed.
       # The aws key uses a [k] character class so this pattern does not match its own definition.
       - name: Secret scan

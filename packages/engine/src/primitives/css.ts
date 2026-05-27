@@ -11,8 +11,8 @@
 import {safeUrl} from "../url.js";
 import type {Breakpoint, PrimitiveNode, PrimitiveType, ResponsiveStyles, StyleProps, StyleState,} from "./types.js";
 
-export const TYPE_CLASS_PREFIX = "pst-";
-export const NODE_CLASS_PREFIX = "psn-";
+const TYPE_CLASS_PREFIX = "pst-";
+const NODE_CLASS_PREFIX = "psn-";
 
 /** Sanitises a node id into a CSS-class-safe token. */
 export function cssId(id: string): string {
@@ -407,7 +407,10 @@ const BASE_CSS: Partial<Record<PrimitiveType, string>> = {
   grid: "display:grid;grid-template-columns:repeat(3,1fr)",
   spacer: "display:block;height:2rem",
   divider: "border:0;border-top:1px solid currentColor;opacity:.15;margin:0",
-  heading: "margin:0;line-height:1.2",
+    // `-webkit-text-fill-color`/`background` reset the theme's prose-`h1` gradient
+    // text leak (it fills with `transparent` + a clipped gradient) so a designer
+    // heading always renders in its own `color` — e.g. solid white on a hero.
+    heading: "margin:0;line-height:1.2;background:none;-webkit-text-fill-color:currentColor",
   text: "margin:0;line-height:1.65",
   button: "display:inline-flex;align-items:center;justify-content:center;gap:.4rem;text-decoration:none;padding:.7rem 1.4rem;border-radius:8px;font-weight:600;cursor:pointer",
   image: "display:block;max-width:100%;height:auto;margin:0",

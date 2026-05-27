@@ -78,3 +78,54 @@ describe("FileAuditLog", () => {
     expect(await reopened.verifyChain()).toBe(true);
   });
 });
+
+describe("FileAuditLog — sealed tamper-evidence anchor", () => {
+    const SEAL = "test-seal-secret";
+
+    async function seedSealed(n: number) {
+        const log = await createFileAuditLog({path, sealSecret: SEAL});
+        for (let i = 0; i < n; i++) await log.append({action: `a${i}`, actorId: "u1"});
+        return log;
+    }
+
+    it("verifies a clean sealed chain", async () => {
+        const log = await seedSealed(3);
+        expect(await log.verifyChain()).toBe(true);
+    });
+
+    it("detects truncation of the tail (which an internal-only check misses)", async () => {
+        const log = await seedSealed(3);
+        const lines = (await readFile(path, "utf8")).split("\n").filter(Boolean);
+        // Drop the last entry. The remaining chain is still internally consistent…
+        await writeFile(path, `${lines.slice(0, -1).join("\n")}\n`, "utf8");
+        // …but the seal records 3 entries, so the count mismatch is caught.
+        expect(await log.verifyChain()).toBe(false);
+    });
+
+    it("detects a fully re-forged chain rebuilt from genesis", async () => {
+        const log = await seedSealed(2);
+        // A fresh, internally-valid chain the attacker recomputes (genesis prevHash,
+        // self-consistent hashes) — but it can't reproduce the sealed head, and the
+        // seal MAC can't be forged without the key.
+        const forged = await createFileAuditLog({path: join(dir, "forge.log")});
+        await forged.append({action: "evil", actorId: "attacker"});
+        const forgedLine = (await readFile(join(dir, "forge.log"), "utf8")).trim();
+        await writeFile(path, `${forgedLine}\n`, "utf8");
+        expect(await log.verifyChain()).toBe(false);
+    });
+
+    it("detects deletion of the seal file while entries remain", async () => {
+        const log = await seedSealed(2);
+        await rm(`${path}.seal`, {force: true});
+        expect(await log.verifyChain()).toBe(false);
+    });
+
+    it("without a seal secret, truncation is NOT detected (anchor disabled, backward compatible)", async () => {
+        const log = await createFileAuditLog({path}); // no sealSecret
+        for (let i = 0; i < 3; i++) await log.append({action: `a${i}`, actorId: "u1"});
+        const lines = (await readFile(path, "utf8")).split("\n").filter(Boolean);
+        await writeFile(path, `${lines.slice(0, -1).join("\n")}\n`, "utf8");
+        // Internal chain is still consistent and there is no anchor to catch it.
+        expect(await log.verifyChain()).toBe(true);
+    });
+});

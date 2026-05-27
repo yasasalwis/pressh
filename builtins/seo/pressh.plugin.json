@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "main": "index.mjs",
   "capabilities": ["storage.read:seo_meta", "storage.write:seo_meta"],
-  "panel": { "title": "SEO", "entry": "panel.html" },
+  "panel": {
+    "title": "SEO",
+    "entry": "panel.js"
+  },
   "panelActions": ["getAll", "saveDefaults", "saveOverride", "removeOverride"]
 }

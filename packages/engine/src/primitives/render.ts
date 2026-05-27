@@ -13,6 +13,7 @@
 import {safeUrl} from "../url.js";
 import {compileTreeCss, nodeClass, typeClass} from "./css.js";
 import {renderIcon} from "./icons.js";
+import {assertTreeWithinLimits} from "./limits.js";
 import type {CollectionItem, CollectionQuery, PrimitiveNode, PrimitiveRenderContext, RenderResult,} from "./types.js";
 
 export interface RenderOptions {
@@ -25,7 +26,7 @@ interface RenderEnv {
 }
 
 /** HTML-escape a value for text or attribute contexts. */
-export function e(value: unknown): string {
+function e(value: unknown): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -261,8 +262,17 @@ async function renderNode(
       }
 
     case "form": {
-      const action = safeUrl(resolveValue(node, "action", scope)) || "#";
       const fields = await containerInner(node, env, scope, "Empty form");
+        // `submitTo:"forms"` wires the form to the Forms plugin: the bundled site
+        // client (forms.ts) intercepts `[data-ps-form]`, serializes inputs to JSON,
+        // and POSTs /api/p/forms/submit. A hidden honeypot (`.ps-hp`) catches bots.
+        if (str(node.props?.["submitTo"]) === "forms") {
+            const formId = e(str(node.props?.["formId"]) || "default");
+            const honeypot =
+                `<div class="ps-hp" aria-hidden="true"><input type="text" name="_hp" tabindex="-1" autocomplete="off"></div>`;
+            return `<form ${cls} method="post" action="/api/p/forms/submit" data-ps-form data-ps-form-id="${formId}">${fields}${honeypot}</form>`;
+        }
+        const action = safeUrl(resolveValue(node, "action", scope)) || "#";
       return `<form ${cls} method="post" action="${e(action)}">${fields}</form>`;
     }
     case "input": {
@@ -304,6 +314,10 @@ export async function renderTree(
   ctx: PrimitiveRenderContext = NO_CTX,
   opts: RenderOptions = {},
 ): Promise<RenderResult> {
+    // Bound the work BEFORE the recursive render/CSS passes: the tree is
+    // attacker-influenced (a stored designer layout, or the studio preview body),
+    // so an unbounded one would be a CPU/stack DoS. Throws `validation` (400).
+    assertTreeWithinLimits(nodes);
   const env: RenderEnv = { ctx, editor: opts.editor === true };
   const parts: string[] = [];
   for (const node of nodes) parts.push(await renderNode(node, env, null));

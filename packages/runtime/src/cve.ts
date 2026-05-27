@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { AuditLog, Logger, Page, Result, StorageAdapter, StoredDoc } from "@pressh/core";
+import {randomUUID} from "node:crypto";
+import type {AuditLog, Logger, Page, Result, StorageAdapter, StoredDoc} from "@pressh/core";
 
 /**
  * Plugin CVE feed (ADR-011, baseline #11). A pluggable feed source provides
@@ -37,6 +37,11 @@ export interface CveServiceOptions {
 }
 
 const CVE = "plugin_cve";
+
+/** Canonical form for name/version matching so case/whitespace can't evade a flag. */
+function normalize(value: string): string {
+    return value.trim().toLowerCase();
+}
 
 interface CveRecord extends StoredDoc {
   name: string;
@@ -92,8 +97,14 @@ export function createCveService(opts: CveServiceOptions): CveService {
     },
 
     async isFlagged(name, version) {
-      const found = await records({ name });
-      return found.some((entry) => entry.version === "*" || entry.version === version);
+        // Compare on the normalized form (not a server-side exact-name filter) so a
+        // plugin republished as "Foo "/"FOO" with a flagged name can't slip the net.
+        const targetName = normalize(name);
+        const targetVersion = normalize(version);
+        const found = (await records()).filter((entry) => normalize(entry.name) === targetName);
+        return found.some(
+            (entry) => entry.version.trim() === "*" || normalize(entry.version) === targetVersion,
+        );
     },
 
     async list() {

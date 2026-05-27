@@ -1,0 +1,106 @@
+[
+  {
+    "id": "contact-form",
+    "name": "Contact Form",
+    "icon": "✉",
+    "category": "Forms",
+    "description": "A name/email/message form wired to capture submissions in the Forms plugin (with spam honeypot + GDPR linkage)",
+    "template": [
+      {
+        "id": "cf-sec",
+        "type": "section",
+        "styles": {
+          "base": {
+            "default": {
+              "paddingTop": "3rem",
+              "paddingBottom": "3rem"
+            }
+          }
+        },
+        "children": [
+          {
+            "id": "cf-cont",
+            "type": "container",
+            "styles": {
+              "base": {
+                "default": {
+                  "paddingLeft": "1.5rem",
+                  "paddingRight": "1.5rem",
+                  "maxWidth": "40rem"
+                }
+              }
+            },
+            "children": [
+              {
+                "id": "cf-h",
+                "type": "heading",
+                "props": {
+                  "text": "Get in touch",
+                  "level": 2
+                }
+              },
+              {
+                "id": "cf-form",
+                "type": "form",
+                "props": {
+                  "submitTo": "forms",
+                  "formId": "contact",
+                  "action": "#"
+                },
+                "styles": {
+                  "base": {
+                    "default": {
+                      "gap": "1rem"
+                    }
+                  }
+                },
+                "children": [
+                  {
+                    "id": "cf-name",
+                    "type": "input",
+                    "props": {
+                      "name": "name",
+                      "label": "Your name",
+                      "inputType": "text",
+                      "placeholder": "Jane Doe",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "cf-email",
+                    "type": "input",
+                    "props": {
+                      "name": "email",
+                      "label": "Email",
+                      "inputType": "email",
+                      "placeholder": "jane@example.com",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "cf-msg",
+                    "type": "textarea",
+                    "props": {
+                      "name": "message",
+                      "label": "Message",
+                      "rows": 5,
+                      "placeholder": "How can we help?",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "cf-submit",
+                    "type": "submit",
+                    "props": {
+                      "label": "Send message"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

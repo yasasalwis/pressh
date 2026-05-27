@@ -52,6 +52,22 @@ export function storageConformanceTests(
       expect(page.items).toHaveLength(2);
     });
 
+      it("filters by a numeric field consistently across backends", async () => {
+          unwrap(await store.put("posts", {id: "a", views: 5}));
+          unwrap(await store.put("posts", {id: "b", views: 7}));
+          const page = unwrap(await store.query("posts", {where: {views: 5}}));
+          expect(page.items.map((i) => i.id)).toEqual(["a"]);
+      });
+
+      it("filters by a boolean field consistently across backends", async () => {
+          unwrap(await store.put("posts", {id: "a", featured: true}));
+          unwrap(await store.put("posts", {id: "b", featured: false}));
+          const yes = unwrap(await store.query("posts", {where: {featured: true}}));
+          const no = unwrap(await store.query("posts", {where: {featured: false}}));
+          expect(yes.items.map((i) => i.id)).toEqual(["a"]);
+          expect(no.items.map((i) => i.id)).toEqual(["b"]);
+      });
+
     it("paginates deterministically with a cursor", async () => {
       for (let i = 0; i < 5; i++) {
         unwrap(await store.put("posts", { id: `conf-${i}`, n: i }));
@@ -79,7 +95,7 @@ export function storageConformanceTests(
       expect(collections).toContain("pages");
     });
 
-    it("runs a transaction", async () => {
+      it("commits a transaction whose body succeeds", async () => {
       const result = await store.transaction(async (tx) => {
         unwrap(await tx.put("posts", { id: "t1", x: 1 }));
         return "done";
@@ -87,5 +103,21 @@ export function storageConformanceTests(
       expect(result.ok).toBe(true);
       expect(unwrap(await store.get("posts", "t1"))).not.toBeNull();
     });
+
+      it("rolls back ALL writes when the transaction body throws (atomicity)", async () => {
+          // A pre-existing row that the transaction overwrites then must restore.
+          unwrap(await store.put("posts", {id: "keep", title: "original"}));
+
+          const result = await store.transaction(async (tx) => {
+              unwrap(await tx.put("posts", {id: "keep", title: "modified"}));
+              unwrap(await tx.put("posts", {id: "new", title: "added"}));
+              throw new Error("boom");
+          });
+
+          expect(result.ok).toBe(false);
+          // The new write is gone and the overwritten row is back to its original.
+          expect(unwrap(await store.get("posts", "new"))).toBeNull();
+          expect(unwrap(await store.get<{ title: string }>("posts", "keep"))?.title).toBe("original");
+      });
   });
 }

@@ -66,6 +66,7 @@ flowchart TB
         Runtime["@pressh/runtime<br/>plugin host · worker isolation"]
         Core["@pressh/core<br/>auth · storage · capabilities · audit"]
         SDK["@pressh/sdk<br/>plugin types · RPC protocol"]
+        PanelKit["@pressh/panel-kit<br/>React panel kit · build CLI"]
     end
 
     subgraph store["Persistent /data volume"]
@@ -160,6 +161,13 @@ npm run build
 npm run tests
 ```
 
+For local development, copy `.env.example` to `.env` in the project root and fill it in.
+The build and both apps load it automatically — including `PRESSH_MASTER_KEY`, which the
+build uses to sign the built-in plugins and the runtime uses to verify them, so the two
+must match. Real environment variables (systemd/Docker/your shell) always take precedence
+over `.env`, and a missing file is a no-op — so this only ever helps in dev. In production
+set the variables directly as described under [Deployment](#deployment).
+
 Start both apps with a single command (Studio on port 4000, Site on port 3000):
 
 ```bash
@@ -167,6 +175,17 @@ npm start
 ```
 
 Need just one process? Use `npm run studio` or `npm run site` (build first with `npm run build`).
+
+`npm run build` produces a **self-contained standalone build in `.pressh/`** (the same
+idea as Next.js's `.next/`): the two server bundles with their dependencies inlined, the
+signed built-in plugins, the native SQLite driver, the plugin-worker runtime, and an empty
+`plugins/` folder for external plugins. Run the app entirely from that folder with:
+
+```bash
+npm run start:standalone   # launches both processes from .pressh/
+```
+
+This is what the Docker image ships and runs (see Deployment).
 
 Open Studio at `http://localhost:4000` to create your first content type.
 
@@ -209,15 +228,23 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 > (SMTP credentials, plugin secrets, and the database connection string). If it changes,
 > that data is unrecoverable. Include `/data/secrets` in your `/data` backups.
 
-| Variable              | Purpose                                                       | Default                  |
-|-----------------------|---------------------------------------------------------------|--------------------------|
-| `NODE_ENV`            | `production` enforces TLS, signed plugins, and the master key | `development`            |
-| `PRESSH_MASTER_KEY`   | Encryption-vault seal (**required in prod**)                  | auto-generated in Docker |
-| `PRESSH_CSRF_SECRET`  | CSRF token signing (**required in prod**)                     | auto-generated in Docker |
-| `PRESSH_CONTENT_ROOT` | Content + audit log directory                                 | `./data/content`         |
-| `PRESSH_MEDIA_ROOT`   | Uploaded media directory                                      | `./data/media`           |
-| `PRESSH_SITE_PORT`    | Public site port                                              | `3000`                   |
-| `PRESSH_STUDIO_PORT`  | Admin studio port                                             | `4000`                   |
+| Variable               | Purpose                                                       | Default                  |
+|------------------------|---------------------------------------------------------------|--------------------------|
+| `NODE_ENV`             | `production` enforces TLS, signed plugins, and the master key | `development`            |
+| `PRESSH_MASTER_KEY`    | Encryption-vault seal (**required in prod**)                  | auto-generated in Docker |
+| `PRESSH_CSRF_SECRET`   | CSRF token signing (**required in prod**)                     | auto-generated in Docker |
+| `PRESSH_CONTENT_ROOT`  | Content + audit log directory                                 | `./data/content`         |
+| `PRESSH_MEDIA_ROOT`    | Uploaded media directory                                      | `./data/media`           |
+| `PRESSH_SITE_PORT`     | Public site port                                              | `3000`                   |
+| `PRESSH_STUDIO_PORT`   | Admin studio port                                             | `4000`                   |
+| `PRESSH_BUILTINS_DIR`  | First-party plugins dir                                       | `./builtins` (cwd)       |
+| `PRESSH_PLUGINS_DIR`   | External plugins drop-in dir                                  | _unset_ (none loaded)    |
+| `PRESSH_WORKER_SCRIPT` | Plugin-worker entry (scopes the sandbox fs-read grant)        | runtime's `worker-entry` |
+
+> The last three are set automatically by `npm run start:standalone` and the Docker image to
+> point at the `.pressh/` bundle. Set them yourself only for a hand-rolled standalone deploy.
+
+
 
 Both processes expose `GET /healthz` (liveness) and `GET /readyz` (readiness) for health checks.
 
@@ -232,10 +259,11 @@ git clone https://github.com/your-org/pressh.git
 cd pressh
 
 npm ci
-npm run build          # signs built-in plugins, compiles, bundles the site
+npm run build          # compiles, signs built-in plugins, and assembles .pressh/
 ```
 
-Export the environment and storage roots, then start both processes:
+Export the environment and storage roots, then start both processes from the standalone
+build:
 
 ```bash
 export NODE_ENV=production
@@ -244,7 +272,7 @@ export PRESSH_CSRF_SECRET=<32-byte hex>
 export PRESSH_CONTENT_ROOT=/var/lib/pressh/content
 export PRESSH_MEDIA_ROOT=/var/lib/pressh/media
 
-npm start              # launches Site (:3000) and Studio (:4000) together
+npm run start:standalone   # launches Site (:3000) and Studio (:4000) from .pressh/
 ```
 
 For production, run each process under `systemd` so they restart on failure and survive
@@ -259,7 +287,10 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/pressh
 EnvironmentFile=/etc/pressh.env
-ExecStart=/usr/bin/node apps/site/dist/server.js
+Environment=PRESSH_BUILTINS_DIR=/opt/pressh/.pressh/builtins
+Environment=PRESSH_PLUGINS_DIR=/opt/pressh/.pressh/plugins
+Environment=PRESSH_WORKER_SCRIPT=/opt/pressh/.pressh/site/runtime/worker-entry.js
+ExecStart=/usr/bin/node /opt/pressh/.pressh/site/server.js
 Restart=on-failure
 User=pressh
 
@@ -276,7 +307,10 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/pressh
 EnvironmentFile=/etc/pressh.env
-ExecStart=/usr/bin/node apps/studio/dist/server.js
+Environment=PRESSH_BUILTINS_DIR=/opt/pressh/.pressh/builtins
+Environment=PRESSH_PLUGINS_DIR=/opt/pressh/.pressh/plugins
+Environment=PRESSH_WORKER_SCRIPT=/opt/pressh/.pressh/studio/runtime/worker-entry.js
+ExecStart=/usr/bin/node /opt/pressh/.pressh/studio/server.js
 Restart=on-failure
 User=pressh
 
@@ -305,7 +339,9 @@ SSH tunnel (`ssh -L 4000:localhost:4000 host`), or a reverse proxy locked to you
 
 The repo ships a [`Dockerfile`](./Dockerfile) and [`docker-compose.yml`](./docker-compose.yml)
 that run Site and Studio as two services sharing a named volume. This is the simplest
-production setup on a single host.
+production setup on a single host. The image is built in two stages and ships **only the
+`.pressh/` standalone bundle** (no source tree, no dev dependencies, no package manager) —
+a small, self-contained runtime, the Next.js `standalone` model.
 
 ```bash
 docker compose up -d --build
@@ -355,8 +391,8 @@ one service, so this preserves the shared `/data` disk.
 
 1. **New Project → Deploy from GitHub repo**, select this repo. Railway detects the
    [`Dockerfile`](./Dockerfile) and builds from it.
-2. **Settings → Deploy → Custom Start Command:** `node scripts/run.mjs`
-   (launches Site and Studio together).
+2. **Settings → Deploy → Custom Start Command:** `node /app/run-standalone.mjs`
+   (the supervisor bundled into the standalone image — launches Site and Studio together).
 3. **Variables:** add `NODE_ENV=production`, `PRESSH_MASTER_KEY`, `PRESSH_CSRF_SECRET`,
    `PRESSH_CONTENT_ROOT=/data/content`, `PRESSH_MEDIA_ROOT=/data/media`,
    and `PRESSH_SITE_PORT=3000`.
@@ -435,31 +471,84 @@ All adapters implement the same `StorageAdapter` interface and pass the shared c
 
 1. Create a plugin directory with a manifest:
 
-```json
+```jsonc
 // my-plugin/pressh.plugin.json
 {
-  "id": "my-plugin",
+  "name": "my-plugin",
   "version": "1.0.0",
-  "entrypoint": "./handler.js",
+  "main": "index.mjs",
   "capabilities": ["storage.read:posts", "network.fetch:api.example.com"],
-  "adminPanel": "./panel.html"
+  "endpoints": [{ "method": "POST", "path": "/sync", "handler": "sync" }],
+  "panel": { "title": "My Plugin", "entry": "panel.js" },
+  "panelActions": ["sync"]
 }
 ```
 
-2. Implement the handler using the SDK:
+2. Implement the handlers using the SDK. Each runs in an isolated worker; the only host access is the capability-gated
+   `HostApi`:
 
 ```typescript
-import type { PluginManifest, HostApi } from "@pressh/sdk";
+import type { HostApi } from "@pressh/sdk";
 
-export async function handle(args: unknown, host: HostApi): Promise<unknown> {
-  const posts = await host.storage.list("posts");
-  return { count: posts.length };
+export async function sync(args: unknown, host: HostApi): Promise<unknown> {
+  const { items } = await host.storage.query("posts", { status: "published" });
+  return { count: items.length };
 }
 ```
 
 3. Drop the plugin folder into `plugins/` — Pressh loads it on next restart.
 
-Capabilities not listed in the manifest are rejected at the RPC boundary. The admin panel runs in a sandboxed iframe; it cannot touch the host DOM or parent window.
+Capabilities not listed in the manifest are rejected at the RPC boundary. A panel may only invoke the handlers named in
+`panelActions` (default-deny). The admin panel runs in a sandboxed iframe; it cannot touch the host DOM or parent
+window.
+
+### Admin panels in React + TypeScript
+
+Author panels in React + TypeScript with **`@pressh/panel-kit`** — plugins ship **no HTML**. The kit gives you a typed
+host bridge (`request`), a data hook (`usePanelQuery`), and a `mountPanel` helper. Its `pressh-build-panel` CLI bundles
+your `main.tsx` into a single self-contained `panel.js` (React and your CSS inlined into the one script); the Studio
+generates the surrounding iframe document and inlines the bundle. This is required because the panel iframe is
+opaque-origin under a strict CSP (`script-src 'unsafe-inline'`, no `'self'`), so an external `<script src>` can't load.
+
+```tsx
+// panel-src/main.tsx
+import { StrictMode } from "react";
+import { mountPanel } from "@pressh/panel-kit";
+import { App } from "./App";
+import "./styles.css";
+
+mountPanel(<StrictMode><App /></StrictMode>);
+```
+
+```tsx
+// panel-src/App.tsx
+import { request, usePanelQuery } from "@pressh/panel-kit";
+
+export function App() {
+  // usePanelQuery: loading / error / data + reload, over the host bridge.
+  const { data, loading, error, reload } = usePanelQuery<{ count: number }>("sync");
+  if (loading) return <p>Loading…</p>;
+  if (error) return <p>Error: {error}</p>;
+  // request(action, payload): `action` MUST be listed in the manifest's panelActions.
+  return (
+    <div>
+      <p>{data?.count} posts</p>
+      <button type="button" onClick={() => request("sync").then(reload)}>Re-sync</button>
+    </div>
+  );
+}
+```
+
+Build it (writes `panel.js` next to your manifest):
+
+```bash
+npx pressh-build-panel panel-src/main.tsx --out panel.js
+```
+
+Keep panel source **outside** the shipped/signed plugin folder — only the built `panel.js` is signed and loaded. A
+complete working example lives in [`plugins/hello`](plugins/hello): source under `panel-src/` (with its own
+`tsconfig.json`), the built `panel.js`, and a manifest declaring `panelActions`. Rebuild it with
+`npm run build:hello`.
 
 ### Built-in plugins
 
@@ -473,7 +562,11 @@ Pressh ships five first-party plugins in `builtins/` — same security model as 
 | **SEO**               | Per-page + site meta/OpenGraph tags injected into the public `<head>`.                                                                                                                  | `storage.read/write:seo_meta`                                                                                                                                                                             |
 | **Analytics**         | Cookieless server-side page-view counts. No cookies, IPs, or third parties.                                                                                                             | `storage.read/write:analytics_daily`                                                                                                                                                                      |
 
-Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. Re-run `npm run sign:builtins` after editing a built-in's code (it also runs as part of `npm run build`).
+Auth-critical collections (`users`, `sessions`, `invites`) are off-limits to every plugin. The built-ins' panels are
+authored in React + TypeScript under `panels/<plugin>/` and bundled into `builtins/<plugin>/panel.js` by
+`npm run build:panels` (the same `@pressh/panel-kit` pipeline third-party authors use). After editing a built-in's panel
+source re-run `npm run build:panels` then `npm run sign:builtins`; after editing its worker code just re-run
+`npm run sign:builtins`. Both run as part of `npm run build`.
 
 ---
 
@@ -662,24 +755,28 @@ published package is **private** — make it public in the package settings for 
 
 ## Operations
 
+The Studio CLI is bundled into the standalone build at `.pressh/studio/cli.js`. In a Docker
+deployment run it inside the container, e.g.
+`docker compose exec studio node /app/studio/cli.js backup --out /data/backups/db.tar.gz`.
+
 ### Backup and restore
 
 ```bash
 # Create a backup
-node apps/studio/dist/cli.js backup --out ./backups/$(date +%Y%m%d).tar.gz
+node .pressh/studio/cli.js backup --out ./backups/$(date +%Y%m%d).tar.gz
 
 # Restore
-node apps/studio/dist/cli.js restore --file ./backups/20260101.tar.gz
+node .pressh/studio/cli.js restore --file ./backups/20260101.tar.gz
 ```
 
 ### GDPR requests
 
 ```bash
 # Export all data for a subject
-node apps/studio/dist/cli.js gdpr export --subject user@example.com
+node .pressh/studio/cli.js gdpr export --subject user@example.com
 
 # Erase all data for a subject
-node apps/studio/dist/cli.js gdpr erase --subject user@example.com
+node .pressh/studio/cli.js gdpr erase --subject user@example.com
 ```
 
 ---
@@ -703,18 +800,18 @@ Full design and architecture documents live in [`docs/`](./docs/):
 
 ## Tech Stack
 
-| Layer | Choice |
-|---|---|
-| Runtime | Node.js 24 (ES modules) |
-| Language | TypeScript 6.0 (strict) |
-| HTTP framework | Hono 4.12 |
-| Build | Vite 8.0 |
-| Testing | Vitest 4.1 |
-| Password hashing | Argon2id |
-| Schema validation | Zod 4.4 |
-| Logging | Pino 9.0 |
-| Default storage | Filesystem + better-sqlite3 12 |
-| Containers | Docker + Compose |
+| Layer             | Choice                                                                                  |
+|-------------------|-----------------------------------------------------------------------------------------|
+| Runtime           | Node.js 24 (ES modules)                                                                 |
+| Language          | TypeScript 6.0 (strict)                                                                 |
+| HTTP framework    | Hono 4.12                                                                               |
+| Build             | TypeScript project refs + Vite 8.0 (client) + esbuild 0.28 (server bundle → `.pressh/`) |
+| Testing           | Vitest 4.1                                                                              |
+| Password hashing  | Argon2id                                                                                |
+| Schema validation | Zod 4.4                                                                                 |
+| Logging           | Pino 9.0                                                                                |
+| Default storage   | Filesystem + better-sqlite3 12                                                          |
+| Containers        | Docker + Compose                                                                        |
 
 ---
 

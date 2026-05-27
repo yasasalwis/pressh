@@ -1,4 +1,8 @@
 {
-  "algorithm": "sha256",
-  "hash": "aa77489162d89dfb030255f962325edf7741c6c50bb91dfe8ca7a9e834c59d46"
+  "algorithm": "hmac-sha256",
+  "files": {
+    "index.mjs": "64586337c8c7350f437ec2ac61e3f2d9962658d330260c3b1d0557b016cb75c3",
+    "panel.js": "1800c1eaae2387162596ee130dd16bd013db5b00d7abed57b8f5be242935b806",
+    "pressh.plugin.json": "a6bae130683dfa66d4d55b1849332f10d762480c8edfe44de7e76e7ce9823625"
+  }
 }

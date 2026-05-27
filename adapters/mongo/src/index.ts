@@ -1,7 +1,13 @@
 import type {Db} from "mongodb";
 import {MongoClient} from "mongodb";
 import type {Cursor, Filter, Page, Result, StorageAdapter, StoredDoc} from "@pressh/core";
-import {PressError} from "@pressh/core";
+import {journaledTransaction, PressError, STORAGE_INDEXES} from "@pressh/core";
+
+/** collection → hot field names to index (from the shared index config). */
+const INDEXED_FIELDS_BY_COLLECTION = STORAGE_INDEXES.reduce<Map<string, string[]>>((m, i) => {
+  m.set(i.collection, [...(m.get(i.collection) ?? []), i.field]);
+  return m;
+}, new Map());
 
 /**
  * MongoDB StorageAdapter. Each Pressh collection maps to a Mongo collection;
@@ -46,6 +52,8 @@ function strip<T extends StoredDoc>(raw: MongoDoc | null): T | null {
 class MongoStorageAdapter implements StorageAdapter {
   readonly #client: MongoClient;
   readonly #db: Db;
+  /** Collections whose hot-field indexes have already been ensured this process. */
+  readonly #indexed = new Set<string>();
 
   constructor(client: MongoClient, db: Db) {
     this.#client = client;
@@ -54,6 +62,19 @@ class MongoStorageAdapter implements StorageAdapter {
 
   #col(collection: string) {
     return this.#db.collection<MongoDoc>(collection);
+  }
+
+  async put(collection: string, doc: StoredDoc): Promise<Result<void>> {
+    try {
+      if (typeof doc.id !== "string" || doc.id.length === 0) {
+        throw new PressError("validation", "Document must have a non-empty string id");
+      }
+      await this.#ensureIndexes(collection);
+      await this.#col(collection).replaceOne({ _id: doc.id }, { ...doc }, { upsert: true });
+      return ok(undefined);
+    } catch (e) {
+      return fail(e);
+    }
   }
 
   async get<T extends StoredDoc = StoredDoc>(collection: string, id: string): Promise<Result<T | null>> {
@@ -65,15 +86,22 @@ class MongoStorageAdapter implements StorageAdapter {
     }
   }
 
-  async put(collection: string, doc: StoredDoc): Promise<Result<void>> {
-    try {
-      if (typeof doc.id !== "string" || doc.id.length === 0) {
-        throw new PressError("validation", "Document must have a non-empty string id");
-      }
-      await this.#col(collection).replaceOne({ _id: doc.id }, { ...doc }, { upsert: true });
-      return ok(undefined);
-    } catch (e) {
-      return fail(e);
+  /**
+   * Ensures the hot-field indexes for a collection exist (idempotent; cached so
+   * it runs once per collection per process). Done lazily on first write rather
+   * than at startup so we don't create empty collections for unused features.
+   * Equality queries on these fields then use the index automatically — no
+   * change to the query itself.
+   */
+  async #ensureIndexes(collection: string): Promise<void> {
+    if (this.#indexed.has(collection)) return;
+    this.#indexed.add(collection);
+    const fields = INDEXED_FIELDS_BY_COLLECTION.get(collection);
+    if (!fields) return;
+    for (const field of fields) {
+      // createIndex is idempotent; best-effort (a field that holds arrays in
+      // some docs can't be a plain index — don't fail the write over it).
+      await this.#col(collection).createIndex({[field]: 1}).catch(() => undefined);
     }
   }
 
@@ -121,11 +149,9 @@ class MongoStorageAdapter implements StorageAdapter {
   }
 
   async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<Result<T>> {
-    try {
-      return ok(await fn(this));
-    } catch (e) {
-      return fail(e);
-    }
+      // Journaled capture+restore rather than a Mongo session transaction, which
+      // would require a replica set (unavailable on a standalone mongod).
+      return journaledTransaction(this, fn);
   }
 
   async listCollections(): Promise<Result<string[]>> {

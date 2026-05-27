@@ -1,12 +1,14 @@
-import {createHash} from "node:crypto";
+import {createHash, timingSafeEqual} from "node:crypto";
 import {createReadStream, existsSync, statSync} from "node:fs";
-import {extname, resolve as resolvePath} from "node:path";
+import {extname, resolve as resolvePath, sep} from "node:path";
 import {Readable} from "node:stream";
 import {createElement} from "react";
 import {renderToString} from "react-dom/server";
 import type {Context} from "hono";
 import {Hono} from "hono";
-import type {Metrics, StorageAdapter} from "@pressh/core";
+import {getConnInfo} from "@hono/node-server/conninfo";
+import {deleteCookie, getCookie, setCookie} from "hono/cookie";
+import type {Member, MemberAuthService, Metrics, RedirectService, StorageAdapter} from "@pressh/core";
 import {createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
 import type {
   BlockNode,
@@ -17,9 +19,10 @@ import type {
   QueryResolver,
   ThemeService,
 } from "@pressh/engine";
-import {DESIGNER_LAYOUT_BLOCK, renderTree, SYSTEM_SLUGS} from "@pressh/engine";
+import {DESIGNER_LAYOUT_BLOCK, renderTree, subscribeConfirmEmail, SYSTEM_SLUGS} from "@pressh/engine";
 import type {RenderCache} from "./cache.js";
-import {escapeHtml, renderNotFound, renderPage} from "./render.js";
+import {escapeHtml, renderMaintenanceFallback, renderNotFound, renderPage, renderServerError,} from "./render.js";
+import {getMemberFromContext, MEMBER_COOKIE, SESSION_MAX_AGE} from "./members.js";
 import {Blocks} from "./components/Blocks.js";
 import {Page} from "./components/Page.js";
 import {getClientAssets} from "./manifest.js";
@@ -43,6 +46,10 @@ export interface SiteAppDeps {
   cache: RenderCache;
   themeService?: ThemeService;
   gdpr?: GdprService;
+    /** Operator-defined URL redirects, applied on a not-found before the 404. */
+    redirects?: RedirectService;
+    /** Enabled content locales (first = default). >1 enables hreflang + a switcher. */
+    locales?: string[];
   storage?: StorageAdapter;
   metrics?: Metrics;
   listPublishedPaths?: () => Promise<string[]>;
@@ -50,6 +57,21 @@ export interface SiteAppDeps {
   clientDir?: string;
   baseUrl?: string;
   production?: boolean;
+    /** When present, mounts member auth routes at /api/members. */
+    memberRouter?: import("hono").Hono;
+    /** When present, enables members-only content gating and built-in account pages. */
+    memberAuth?: MemberAuthService;
+  /** When present, subscription confirm/unsubscribe routes become active. */
+  email?: import("@pressh/engine").EmailService;
+  /** Needed to read siteName for subscription confirmation emails. */
+  settings?: import("@pressh/engine").SettingsService;
+}
+
+/** Constant-time string compare so a bearer-token check can't be timed out. */
+function timingSafeStrEqual(a: string, b: string): boolean {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
 function mapError(error: unknown): { status: 400 | 403 | 404 | 500; code: string } {
@@ -178,7 +200,10 @@ function makeSiteContext(
       );
       if (!result.ok) return [];
 
-      const entries = (result.value.items as ContentEntry[]).slice();
+        // System pages (header/footer chrome, 404/500/maintenance) are published
+        // but are not editorial content — they must never surface in a content feed
+        // like a "recent posts" list.
+        const entries = (result.value.items as ContentEntry[]).filter((e) => !e.system);
       entries.sort((a, b) => {
         const av = a.publishedAt ?? "";
         const bv = b.publishedAt ?? "";
@@ -257,11 +282,46 @@ async function renderMaintenancePage(deps: SiteAppDeps): Promise<string> {
     }
     return renderPage({ title, body: bodyHtml, locale: resolved.locale });
   } catch {
-    return renderPage({
-      title: "Down for maintenance",
-      body: "<h1>We&rsquo;ll be right back</h1><p>The site is temporarily offline for scheduled maintenance. Please check back shortly.</p>",
-    });
+    return renderMaintenanceFallback();
   }
+}
+
+/** Renders the public search results page (themed; no client JS — a GET form). */
+async function renderSearchPage(
+    deps: SiteAppDeps,
+    query: string,
+    hits: { slug: string; title: string; excerpt: string; locale: string }[],
+): Promise<string> {
+    const q = escapeHtml(query);
+    const style =
+        "<style>.pressh-search{max-width:48rem;margin:2rem auto;padding:0 1rem;font-family:system-ui,sans-serif}" +
+        ".pressh-search form{display:flex;gap:.5rem;margin-bottom:1.5rem}" +
+        ".pressh-search input{flex:1;padding:.6rem .8rem;font-size:1rem;border:1px solid #cbd5e1;border-radius:8px}" +
+        ".pressh-search button{padding:.6rem 1.1rem;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}" +
+        ".pressh-search article{padding:.9rem 0;border-bottom:1px solid #e2e8f0}" +
+        ".pressh-search h2{margin:0 0 .25rem;font-size:1.15rem}.pressh-search a{color:#1d4ed8;text-decoration:none}" +
+        ".pressh-search p{margin:0;color:#475569}.pressh-search .muted{color:#64748b}</style>";
+    const results = query.trim()
+        ? hits.length
+            ? hits
+                .map((h) => {
+                    const href = h.locale && h.locale !== "en" ? `/${h.locale}/${h.slug}` : `/${h.slug}`;
+                    return `<article><h2><a href="${escapeHtml(href)}">${escapeHtml(h.title)}</a></h2><p>${escapeHtml(h.excerpt)}</p></article>`;
+                })
+                .join("")
+            : `<p class="muted">No results for “${q}”.</p>`
+        : `<p class="muted">Enter a search term above.</p>`;
+    const body =
+        `${style}<div class="pressh-search"><form action="/search" method="get" role="search">` +
+        `<input type="search" name="q" value="${q}" placeholder="Search…" aria-label="Search"><button type="submit">Search</button></form>` +
+        (query.trim() ? `<p class="muted">${hits.length} result(s) for “${q}”.</p>` : "") +
+        `${results}</div>`;
+    const title = query.trim() ? `Search: ${query}` : "Search";
+    if (deps.themeService) {
+        const t = await deps.themeService.resolve();
+        return t.theme.layout({title, body, locale: "en", cssVars: t.cssVars, siteName: t.siteName});
+    }
+    return renderPage({title, body, locale: "en"});
 }
 
 /**
@@ -336,17 +396,104 @@ async function renderSystemDocument(deps: SiteAppDeps, slug: string): Promise<st
   }
 }
 
+/** Validates a `next` redirect target — only relative paths are allowed. */
+function safeNext(next: string | undefined | null, fallback = "/"): string {
+    if (!next) return fallback;
+    const decoded = decodeURIComponent(next);
+    return decoded.startsWith("/") && !decoded.startsWith("//") ? decoded : fallback;
+}
+
+/** Minimal built-in login form, rendered as a themed full page. */
+function renderLoginPage(opts: { next: string; error?: string }): string {
+    const nextEnc = escapeHtml(opts.next);
+    const errorHtml = opts.error
+        ? `<p style="color:#c0392b;margin:0 0 1rem">${escapeHtml(opts.error)}</p>`
+        : "";
+    const body = `
+<div style="max-width:420px;margin:4rem auto;padding:2rem;font-family:system-ui,sans-serif">
+  <h1 style="margin:0 0 1.5rem;font-size:1.5rem">Log in</h1>
+  ${errorHtml}
+  <form method="POST" action="/account/login" style="display:flex;flex-direction:column;gap:1rem">
+    <input type="hidden" name="next" value="${nextEnc}">
+    <label style="display:flex;flex-direction:column;gap:.25rem;font-size:.9rem">
+      Email
+      <input type="email" name="email" required autocomplete="email"
+        style="padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:.25rem;font-size:.9rem">
+      Password
+      <input type="password" name="password" required autocomplete="current-password"
+        style="padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+    </label>
+    <button type="submit"
+      style="padding:.6rem 1rem;background:#111;color:#fff;border:none;border-radius:4px;font-size:1rem;cursor:pointer">
+      Log in
+    </button>
+  </form>
+  <p style="margin-top:1.5rem;font-size:.85rem;color:#555">
+    <a href="/account/magic-link" style="color:inherit">Sign in with magic link</a>
+    &ensp;·&ensp;
+    <a href="/account/register" style="color:inherit">Create account</a>
+    &ensp;·&ensp;
+    <a href="/account/forgot-password" style="color:inherit">Forgot password?</a>
+  </p>
+</div>`;
+    return renderPage({title: "Log in", body});
+}
+
+/** Minimal built-in member profile page. */
+function renderProfilePage(member: Member): string {
+    const avatar = member.avatarUrl
+        ? `<img src="${escapeHtml(member.avatarUrl)}" alt="" width="80" height="80"
+        style="border-radius:50%;object-fit:cover;margin-bottom:1rem">`
+        : `<div style="width:80px;height:80px;border-radius:50%;background:#ddd;display:flex;align-items:center;justify-content:center;font-size:2rem;margin-bottom:1rem">
+        ${escapeHtml(member.displayName.charAt(0).toUpperCase())}
+      </div>`;
+    const bio = member.bio
+        ? `<p style="color:#555;margin:.5rem 0 0">${escapeHtml(member.bio)}</p>`
+        : "";
+    const body = `
+<div style="max-width:480px;margin:4rem auto;padding:2rem;font-family:system-ui,sans-serif">
+  ${avatar}
+  <h1 style="margin:0;font-size:1.5rem">${escapeHtml(member.displayName)}</h1>
+  <p style="color:#888;font-size:.9rem;margin:.25rem 0 0">${escapeHtml(member.email)}</p>
+  ${bio}
+  <hr style="margin:2rem 0;border:none;border-top:1px solid #eee">
+  <form method="POST" action="/api/members/logout">
+    <button type="submit"
+      style="padding:.5rem 1rem;background:#fff;color:#111;border:1px solid #ccc;border-radius:4px;cursor:pointer">
+      Log out
+    </button>
+  </form>
+</div>`;
+    return renderPage({title: member.displayName, body});
+}
+
 export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   const app = new Hono<SiteEnv>();
   const metrics = deps.metrics ?? createMetrics();
 
   // Per-IP throttle for the public write/compute endpoints (consent capture and
   // plugin dispatch) so a single source can't flood storage or worker invokes
-  // (baseline #12). Behind a proxy, x-forwarded-for identifies the client.
+  // (baseline #12). `x-forwarded-for`/`x-real-ip` are attacker-controllable, so
+  // they are trusted ONLY when the operator opts in (running behind a known
+  // proxy). Otherwise the non-forgeable socket peer address is the key — so an
+  // attacker can't reset their bucket by rotating a header.
+  const trustProxy = process.env["PRESSH_TRUST_PROXY"] === "1";
   const publicLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
   const clientKey = (c: Context<SiteEnv>): string => {
-    const xff = c.req.header("x-forwarded-for");
-    return (xff ? (xff.split(",")[0] ?? "").trim() : "") || c.req.header("x-real-ip") || "unknown";
+    if (trustProxy) {
+      const xff = c.req.header("x-forwarded-for");
+      const first = xff ? (xff.split(",")[0] ?? "").trim() : "";
+      if (first) return first;
+      const real = c.req.header("x-real-ip");
+      if (real) return real;
+    }
+    try {
+      return getConnInfo(c).remote.address ?? "unknown";
+    } catch {
+      return "unknown";
+    }
   };
   // /metrics requires a bearer token when PRESSH_METRICS_TOKEN is set.
   const metricsToken = process.env["PRESSH_METRICS_TOKEN"];
@@ -369,7 +516,7 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     return probe.ok ? c.json({ status: "ready" }) : c.json({ status: "unavailable" }, 503);
   });
   app.get("/metrics", (c) => {
-    if (metricsToken && c.req.header("authorization") !== `Bearer ${metricsToken}`) {
+      if (metricsToken && !timingSafeStrEqual(c.req.header("authorization") ?? "", `Bearer ${metricsToken}`)) {
       return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
     }
     return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
@@ -395,11 +542,13 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
 
   // Vite-built client assets — immutable cache since filenames are content-hashed.
   if (deps.clientDir) {
-    const safeRoot = resolvePath(deps.clientDir);
+      const assetsRoot = resolvePath(deps.clientDir, "assets");
     app.get("/assets/*", (c) => {
-      const rel = c.req.path.slice("/assets".length);
-      const abs = resolvePath(safeRoot, "assets", rel);
-      if (!abs.startsWith(safeRoot) || !existsSync(abs) || !statSync(abs).isFile()) {
+        // Strip the FULL "/assets/" prefix — keeping the leading slash makes the
+        // segment absolute and `resolve()` escapes the root (404 for every asset).
+        const rel = c.req.path.slice("/assets/".length);
+        const abs = resolvePath(assetsRoot, rel);
+        if (!abs.startsWith(assetsRoot + sep) || !existsSync(abs) || !statSync(abs).isFile()) {
         return c.notFound();
       }
       const mime = MIME_TYPES[extname(abs)] ?? "application/octet-stream";
@@ -456,6 +605,192 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
     );
   });
 
+    // Member auth routes (/api/members/*) — mounted when wired from the server bootstrap.
+    if (deps.memberRouter) {
+        app.route("/api/members", deps.memberRouter);
+    }
+
+    // ── Built-in account pages ─────────────────────────────────────────────────
+    // These routes provide a working fallback when the operator hasn't created
+    // custom content pages at these paths. They're mounted before the front-
+    // controller so they always take priority.
+
+    // GET /account/login — show the login form
+    app.get("/account/login", (c) => {
+        const next = safeNext(c.req.query("next"));
+        const html = renderLoginPage({next});
+        c.set("styleCsp", styleSrcDirective(html));
+        return c.html(html);
+    });
+
+    // POST /account/login — process form submission (pure HTML form, no JS required)
+    app.post("/account/login", async (c) => {
+        const next = safeNext(c.req.query("next"));
+        if (!deps.memberAuth) return c.redirect(next, 302);
+
+        let email = "";
+        let password = "";
+        let formNext = next;
+        try {
+            const fd = await c.req.formData();
+            email = String(fd.get("email") ?? "");
+            password = String(fd.get("password") ?? "");
+            formNext = safeNext(fd.get("next") as string | null, next);
+        } catch {
+            const html = renderLoginPage({next, error: "Invalid request"});
+            c.set("styleCsp", styleSrcDirective(html));
+            return c.html(html, 400);
+        }
+
+        try {
+            const {token} = await deps.memberAuth.authenticate({email, password});
+            setCookie(c, MEMBER_COOKIE, token, {
+                httpOnly: true,
+                sameSite: "Lax",
+                secure: deps.production === true,
+                maxAge: SESSION_MAX_AGE,
+                path: "/",
+            });
+            return c.redirect(formNext, 302);
+        } catch {
+            const html = renderLoginPage({next: formNext, error: "Invalid email or password"});
+            c.set("styleCsp", styleSrcDirective(html));
+            return c.html(html, 401);
+        }
+    });
+
+    // GET /account/profile — member profile (session required)
+    app.get("/account/profile", async (c) => {
+        if (!deps.memberAuth) return c.redirect("/account/login", 302);
+
+        const token = getCookie(c, MEMBER_COOKIE);
+        if (!token) return c.redirect(`/account/login?next=${encodeURIComponent("/account/profile")}`, 302);
+        const member = await deps.memberAuth.validateSession(token);
+        if (!member) {
+            deleteCookie(c, MEMBER_COOKIE, {path: "/"});
+            return c.redirect(`/account/login?next=${encodeURIComponent("/account/profile")}`, 302);
+        }
+
+        const html = renderProfilePage(member);
+        c.set("styleCsp", styleSrcDirective(html));
+        return c.html(html);
+    });
+
+  // ── Subscription routes ────────────────────────────────────────────────────
+
+  // POST /account/subscribe — initiate double opt-in
+  // Accepts both JSON and form POST so it works from a plain HTML form.
+  app.post("/account/subscribe", async (c) => {
+    if (!deps.pluginHost.has("subscriptions")) {
+      return c.json({error: {code: "not_found", message: "Subscriptions plugin not enabled"}}, 404);
+    }
+
+    let email = "";
+    let memberId: string | undefined;
+
+    const ct = c.req.header("content-type") ?? "";
+    if (ct.includes("application/json")) {
+      let body: Record<string, unknown> = {};
+      try {
+        body = (await c.req.json()) as Record<string, unknown>;
+      } catch {
+        return c.json({error: {code: "validation", message: "Invalid JSON"}}, 400);
+      }
+      email = String(body.email ?? "");
+    } else {
+      // application/x-www-form-urlencoded (plain HTML form)
+      try {
+        const fd = await c.req.formData();
+        email = String(fd.get("email") ?? "");
+      } catch {
+        return c.json({error: {code: "validation", message: "Invalid form data"}}, 400);
+      }
+    }
+
+    // Attach member identity if the visitor is logged in.
+    if (deps.memberAuth) {
+      const member = await getMemberFromContext(c, deps.memberAuth);
+      if (member) memberId = member.id;
+    }
+
+    let result: Record<string, unknown>;
+    try {
+      result = (await deps.pluginHost.invoke("subscriptions", "subscribe", {
+        email,
+        ...(memberId ? {memberId} : {}),
+      })) as Record<string, unknown>;
+    } catch (err) {
+      const {status, code} = mapError(err);
+      return c.json({error: {code, message: String((err as Error).message)}}, status);
+    }
+
+    if (result.alreadySubscribed) {
+      return c.json({ok: true, alreadySubscribed: true});
+    }
+
+    // Send confirmation email when email service is configured.
+    if (deps.email && result.confirmToken) {
+      const base = deps.baseUrl ?? "";
+      const siteName = deps.settings
+          ? ((await deps.settings.getSettings()) as { siteName?: string }).siteName ?? "Pressh"
+          : "Pressh";
+      const confirmUrl = `${base}/account/subscribe/confirm?token=${encodeURIComponent(String(result.confirmToken))}`;
+      const unsubscribeUrl = `${base}/account/unsubscribe?token=${encodeURIComponent(String(result.unsubscribeToken))}`;
+      const tpl = subscribeConfirmEmail({confirmUrl, unsubscribeUrl, siteName});
+      try {
+        await deps.email.send({to: email, subject: tpl.subject, html: tpl.html, text: tpl.text});
+      } catch {
+        // Email delivery failure is non-fatal; the subscription record is already created.
+      }
+    }
+
+    return c.json({ok: true});
+  });
+
+  // GET /account/subscribe/confirm?token=<raw> — single-click confirmation
+  app.get("/account/subscribe/confirm", async (c) => {
+    if (!deps.pluginHost.has("subscriptions")) {
+      return c.html("<p>Subscriptions are not enabled on this site.</p>", 404);
+    }
+
+    const token = c.req.query("token") ?? "";
+    try {
+      await deps.pluginHost.invoke("subscriptions", "confirm", {token});
+    } catch (err) {
+      const msg = err instanceof Error ? escapeHtml(err.message) : "Unknown error";
+      return c.html(
+          `<!DOCTYPE html><html><head><title>Subscription</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><p style="color:#dc2626">${msg}</p></body></html>`,
+          400,
+      );
+    }
+
+    return c.html(
+        `<!DOCTYPE html><html><head><title>Subscribed</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><h2>&#10003; You're subscribed!</h2><p>Your subscription has been confirmed. Thank you.</p></body></html>`,
+    );
+  });
+
+  // GET /account/unsubscribe?token=<raw> — one-click unsubscribe (GDPR-friendly)
+  app.get("/account/unsubscribe", async (c) => {
+    if (!deps.pluginHost.has("subscriptions")) {
+      return c.html("<p>Subscriptions are not enabled on this site.</p>", 404);
+    }
+
+    const token = c.req.query("token") ?? "";
+    try {
+      await deps.pluginHost.invoke("subscriptions", "unsubscribe", {token});
+    } catch (err) {
+      const msg = err instanceof Error ? escapeHtml(err.message) : "Unknown error";
+      return c.html(
+          `<!DOCTYPE html><html><head><title>Unsubscribe</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><p style="color:#dc2626">${msg}</p></body></html>`,
+          400,
+      );
+    }
+
+    return c.html(
+        `<!DOCTYPE html><html><head><title>Unsubscribed</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><h2>You've been unsubscribed</h2><p>Your email address has been removed from the mailing list.</p></body></html>`,
+    );
+  });
+
   // Dynamic plugin endpoints — runtime dispatch, manifest-enforced (FR-024).
   app.all("/api/p/:plugin/:action", async (c) => {
     if (!publicLimiter.check(clientKey(c))) {
@@ -479,12 +814,34 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
     }
 
-    let args: unknown = {};
+    let args: Record<string, unknown> = {};
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       try {
-        args = await c.req.json();
+        args = (await c.req.json()) as Record<string, unknown>;
       } catch {
         args = {};
+      }
+    } else {
+      // Forward query-string params as args for GET endpoints (e.g. comments list).
+      for (const [k, v] of Object.entries(c.req.query())) {
+        args[k] = v;
+      }
+    }
+
+    // Security boundary: strip any client-supplied `_member*` fields so a caller
+    // cannot forge server-injected member identity (open to all users, no auth).
+    for (const key of Object.keys(args)) {
+      if (key.startsWith("_member")) delete args[key];
+    }
+
+    // Inject the authenticated member identity (if any) from the session cookie.
+    // Plugin handlers that require a member (e.g. comments/submit) read _memberId
+    // from args and trust it as server-authoritative.
+    if (deps.memberAuth) {
+      const member = await getMemberFromContext(c, deps.memberAuth);
+      if (member) {
+        args["_memberId"] = member.id;
+        args["_memberDisplayName"] = member.displayName;
       }
     }
 
@@ -514,6 +871,15 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   });
 
   // Front controller — resolve any URL at request time (FR-030).
+    // Public content search (substring over published content; no JS — a GET form).
+    app.get("/search", async (c) => {
+        const query = (c.req.query("q") ?? "").slice(0, 200);
+        const hits = query.trim() ? await deps.resolver.search(query, {limit: 20}).catch(() => []) : [];
+        const html = await renderSearchPage(deps, query, hits);
+        c.set("styleCsp", styleSrcDirective(html));
+        return c.html(html);
+    });
+
   app.get("*", async (c) => {
     const path = c.req.path;
     try {
@@ -529,6 +895,15 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       ]);
 
       const resolved = await deps.resolver.resolvePath(path, { scope: "public" });
+
+        // Members-only gate: runs before the cache so anonymous users are always
+        // redirected, even when the rendered HTML is already cached for members.
+        if (resolved.requiresMembership && deps.memberAuth) {
+            const member = await getMemberFromContext(c, deps.memberAuth);
+            if (!member) {
+                return c.redirect(`/account/login?next=${encodeURIComponent(path)}`, 302);
+            }
+        }
 
       // Privacy-friendly analytics: server-side page-view count, fire-and-forget
       // so it never blocks the response. No cookies, no client JS, no third
@@ -636,6 +1011,60 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
         }
       }
 
+        // Cookie-consent banner config (GDPR). Injected as a CSP-safe JSON payload
+        // the bundled client reads; only present when the operator enabled it. The
+        // payload is cached with the page, so toggling consent takes effect as pages
+        // re-render (acceptable — it changes rarely).
+        if (deps.settings) {
+            try {
+                const consent = (await deps.settings.getSettings()).consent;
+                if (consent.enabled) {
+                    const payload = JSON.stringify({
+                        message: consent.message,
+                        policyUrl: consent.policyUrl,
+                    }).replace(/<\//g, "<\\/");
+                    html = html.replace(
+                        "</body>",
+                        `<script type="application/json" id="pressh-consent">${payload}</script></body>`,
+                    );
+                }
+            } catch {
+                // Best-effort — never block a page render on settings.
+            }
+        }
+
+        // i18n: when more than one locale is enabled, advertise sibling-locale
+        // versions of this page (hreflang) and render a small switcher. Skipped
+        // entirely for single-locale sites (no extra query/markup).
+        if (deps.locales && deps.locales.length > 1 && !isSystemSlug(resolved.slug)) {
+            try {
+                const defaultLocale = deps.locales[0] ?? "en";
+                const published = await deps.resolver.localesForSlug(resolved.slug);
+                const available = published.filter((l) => deps.locales!.includes(l));
+                if (available.length > 1) {
+                    const localeHref = (loc: string): string =>
+                        loc === defaultLocale ? `/${resolved.slug}` : `/${loc}/${resolved.slug}`;
+                    const hreflang = available
+                        .map((loc) => `<link rel="alternate" hreflang="${escapeHtml(loc)}" href="${escapeHtml(localeHref(loc))}">`)
+                        .join("");
+                    const switcher =
+                        `<style>.pressh-locales{font:13px/1.5 system-ui,sans-serif;text-align:center;padding:.75rem;color:#64748b}` +
+                        `.pressh-locales a{margin:0 .4rem;color:#2563eb;text-decoration:none}.pressh-locales a[aria-current]{font-weight:700;color:inherit}</style>` +
+                        `<nav class="pressh-locales" aria-label="Language">` +
+                        available
+                            .map((loc) => {
+                                const cur = loc === resolved.locale ? ' aria-current="true"' : "";
+                                return `<a href="${escapeHtml(localeHref(loc))}"${cur}>${escapeHtml(loc.toUpperCase())}</a>`;
+                            })
+                            .join("") +
+                        `</nav>`;
+                    html = html.replace("</head>", `${hreflang}</head>`).replace("</body>", `${switcher}</body>`);
+                }
+            } catch {
+                // Best-effort — i18n chrome never blocks a render.
+            }
+        }
+
       deps.cache.set(path, html, version, [`content:${resolved.id}`]);
       c.header("X-Cache", "MISS");
       c.header("Cache-Tag", `content:${resolved.id}`);
@@ -643,13 +1072,18 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       return c.html(html);
     } catch (error) {
       if (error instanceof PressError && error.code === "not_found") {
+          // Operator-defined redirects rescue retired/renamed URLs before the 404.
+          if (deps.redirects) {
+              const hit = await deps.redirects.resolve(path).catch(() => null);
+              if (hit) return c.redirect(hit.to, hit.code);
+          }
         const notFound = (await renderSystemDocument(deps, SYSTEM_SLUGS.notFound)) ?? renderNotFound();
         c.set("styleCsp", styleSrcDirective(notFound));
         return c.html(notFound, 404);
       }
       const errorPage =
           (await renderSystemDocument(deps, SYSTEM_SLUGS.serverError)) ??
-          renderPage({title: "Error", body: "<h1>500 — Server error</h1>"});
+          renderServerError();
       c.set("styleCsp", styleSrcDirective(errorPage));
       return c.html(errorPage, 500);
     }

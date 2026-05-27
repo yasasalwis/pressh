@@ -1,0 +1,102 @@
+:root {
+    color-scheme: light dark;
+}
+
+body {
+    font: 14px/1.5 system-ui, sans-serif;
+    margin: 0;
+    padding: 16px;
+    color: #1f2937;
+    background: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        color: #e5e7eb;
+        background: #0b1220;
+    }
+
+    .card {
+        border-color: #1f2a44;
+    }
+}
+
+h2 {
+    font-size: 16px;
+    margin: 0 0 4px;
+}
+
+.stats {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.stat {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 20px;
+    text-align: center;
+    min-width: 80px;
+}
+
+.stat .num {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.stat .label {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+}
+
+.head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+button {
+    font: inherit;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: inherit;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+button.danger {
+    color: #dc2626;
+}
+
+.muted {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.err {
+    color: #dc2626;
+}

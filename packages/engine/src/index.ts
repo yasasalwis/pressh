@@ -55,6 +55,17 @@ export type {
   SmtpSettings,
   UpdateSettingsInput,
 } from "./settings.js";
+export {createEmailService} from "./email.js";
+export type {EmailMessage, EmailService, EmailServiceOptions, EmailTransport} from "./email.js";
+export {
+  verificationEmail,
+  magicLinkEmail,
+  passwordResetEmail,
+  welcomeEmail,
+    subscribeConfirmEmail,
+  inviteEmail,
+} from "./email-templates.js";
+export type {EmailTemplate} from "./email-templates.js";
 export { createGdprService } from "./gdpr.js";
 export type {
   EncRef,
@@ -64,14 +75,19 @@ export type {
   SubjectScope,
 } from "./gdpr.js";
 export { createContentService, PUBLISH_JOB_TYPE } from "./content-service.js";
-export { createComponentRegistry } from "./components/registry.js";
-export type { ComponentRegistry } from "./components/registry.js";
-export type { ComponentDef, ComponentContext, ComponentPropDef, ComponentPropType, LayoutNode } from "./components/types.js";
-export { DESIGNER_LAYOUT_BLOCK } from "./components/types.js";
-export { registerBuiltinComponents } from "./components/builtin/index.js";
-export { renderLayout, collectStyles } from "./components/render.js";
+export {
+    protectSensitive,
+    revealEncRefs,
+    redactEncRefs,
+    isEncRef,
+    SENSITIVE_MASK,
+    REVEAL_CAPABILITY,
+} from "./sensitive.js";
+export {DESIGNER_LAYOUT_BLOCK} from "./primitives/types.js";
 export { renderTree } from "./primitives/render.js";
 export type { RenderOptions } from "./primitives/render.js";
+export {assertTreeWithinLimits, MAX_TREE_NODES, MAX_TREE_DEPTH} from "./primitives/limits.js";
+export type {TreeLimits} from "./primitives/limits.js";
 export {
   compileTreeCss,
   compileNodeCss,
@@ -91,6 +107,8 @@ export {
   instantiatePreset,
 } from "./primitives/presets.js";
 export type { PresetDef } from "./primitives/presets.js";
+export {getPrebuiltPage, prebuiltLayoutBlocks} from "./primitives/prebuilt.js";
+export type {PrebuiltPage} from "./primitives/prebuilt.js";
 export type {
   DesignNode,
   PrimitiveNode,
@@ -112,6 +130,7 @@ export type {
   CreateEntryInput,
   CreateTypeInput,
   SaveEntryInput,
+    SearchHit,
 } from "./content-service.js";
 export {
   SYSTEM_SLUGS,

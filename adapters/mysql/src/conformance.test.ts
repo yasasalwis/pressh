@@ -1,6 +1,7 @@
-import { describe, it } from "vitest";
-import { storageConformanceTests } from "../../conformance";
-import { createMysqlStorage } from "@pressh/adapter-mysql";
+import {describe, it} from "vitest";
+import {storageConformanceTests} from "../../conformance";
+import {typedTableConformanceTests} from "../../typed-conformance";
+import {createMysqlStorage} from "@pressh/adapter-mysql";
 
 // Requires a throwaway MySQL/MariaDB DB. Set PRESSH_TEST_MYSQL_URL to run;
 // otherwise skipped (matches the postgres/mongo conformance pattern).
@@ -25,6 +26,12 @@ if (uri) {
     },
     (adapter) => adapter.close(),
   );
+
+    typedTableConformanceTests(
+        "mysql",
+        () => createMysqlStorage({uri}),
+        (adapter) => adapter.close(),
+    );
 } else {
   describe.skip("StorageAdapter conformance: mysql (set PRESSH_TEST_MYSQL_URL)", () => {
     it("skipped — no live database", () => undefined);

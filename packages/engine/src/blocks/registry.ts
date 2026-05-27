@@ -1,6 +1,7 @@
 import sanitizeHtml from "sanitize-html";
-import type { BlockDefinition, BlockNode, BlockRegistry } from "./types.js";
-import { safeUrl } from "../url.js";
+import type {BlockDefinition, BlockNode, BlockRegistry} from "./types.js";
+import {safeUrl} from "../url.js";
+import {assertTreeWithinLimits} from "../primitives/limits.js";
 
 const INLINE_TAGS = ["b", "i", "em", "strong", "u", "s", "a", "br", "span", "code"];
 
@@ -34,6 +35,12 @@ const RICH: sanitizeHtml.IOptions = {
     "*": ["class"],
   },
   allowedSchemes: ["http", "https", "mailto"],
+    // Embedded frames must be absolute HTTPS — no http downgrade and no
+    // protocol-relative `//evil.com` (which inherits the page scheme). Combined
+    // with the forced sandbox below, a rawhtml author can embed an https widget
+    // but cannot point a scriptable frame at an arbitrary http origin.
+    allowedSchemesByTag: {iframe: ["https"]},
+    allowProtocolRelative: false,
   disallowedTagsMode: "discard",
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer" }, true),
@@ -100,10 +107,15 @@ export function builtinBlocks(): BlockDefinition[] {
     },
     {
       type: "designer-layout",
-      sanitize: (b) => ({
-        type: "designer-layout",
-        props: { nodes: Array.isArray(b.props?.["nodes"]) ? b.props["nodes"] : [] },
-      }),
+        sanitize: (b) => {
+            const nodes = Array.isArray(b.props?.["nodes"]) ? b.props["nodes"] : [];
+            // The node tree is stored verbatim and re-rendered on every public page
+            // request, so reject a pathological (huge / deeply-nested) tree at save
+            // time rather than letting it become a render-time DoS. Throws
+            // `validation` (→ 400) which the content API surfaces to the editor.
+            assertTreeWithinLimits(nodes);
+            return {type: "designer-layout", props: {nodes}};
+        },
     },
   ];
 }

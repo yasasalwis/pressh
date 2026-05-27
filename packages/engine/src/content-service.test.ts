@@ -193,15 +193,16 @@ describe("ContentService system pages", () => {
     }
   });
 
-  it("seeds standalone pages with starter content, fragments empty", async () => {
+    it("seeds every system page with a designed primitive layout", async () => {
     await svc.ensureSystemPages("owner-1");
-    const home = await svc.resolveBySlug(SYSTEM_SLUGS.home);
-    const homeRev = await svc.getRevision(home!.id, home!.currentRevision);
-    expect((homeRev?.blocks ?? []).length).toBeGreaterThan(0);
-
-    const header = await svc.resolveBySlug(SYSTEM_SLUGS.header);
-    const headerRev = await svc.getRevision(header!.id, header!.currentRevision);
-    expect(headerRev?.blocks).toEqual([]);
+        for (const slug of ALL_SLUGS) {
+            const entry = await svc.resolveBySlug(slug);
+            const rev = await svc.getRevision(entry!.id, entry!.currentRevision);
+            const blocks = (rev?.blocks ?? []) as Array<{ type: string; props?: { nodes?: unknown[] } }>;
+            const layout = blocks.find((b) => b.type === "designer-layout");
+            expect(layout, `expected "${slug}" to ship with a designer-layout block`).toBeTruthy();
+            expect((layout?.props?.nodes ?? []).length, `expected "${slug}" layout to have nodes`).toBeGreaterThan(0);
+        }
   });
 
   it("is idempotent — repeated calls never duplicate a system page", async () => {

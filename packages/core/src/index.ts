@@ -29,6 +29,13 @@ export { createFileSystemStorage } from "./storage/fs-adapter.js";
 export type { FileSystemStorageOptions } from "./storage/fs-adapter.js";
 export { runMigrations } from "./storage/migrations.js";
 export type { Cursor, Filter, Page, StorageAdapter, StoredDoc } from "./storage/types.js";
+export {journaledTransaction} from "./storage/transaction.js";
+export {STORAGE_INDEXES, STORAGE_INDEX_FIELDS} from "./storage/indexes.js";
+export type {StorageIndex} from "./storage/indexes.js";
+export {TABLE_SPECS, tableSpecFor} from "./storage/schema.js";
+export type {ColumnKind, ColumnSpec, ForeignKeySpec, TableSpec} from "./storage/schema.js";
+export {docToRow, fromStore, rowToDoc, toStore, typedColumns} from "./storage/typed-mapper.js";
+export type {SqlValue} from "./storage/typed-mapper.js";
 export { createStorageFromConfig, migrateStorage } from "./storage/migrate.js";
 export type { StorageConfig, StorageFactory } from "./storage/migrate.js";
 export {
@@ -45,13 +52,28 @@ export type {
   StorageBackend,
 } from "./storage/storage-config.js";
 
-export { createFileSecretsBackend, deriveMasterKey, MASTER_KEY_BYTES } from "./secrets.js";
-export type { SecretsBackend } from "./secrets.js";
+export {
+    createFileSecretsBackend,
+    deriveMasterKey,
+    openSecretsVault,
+    LEGACY_MASTER_KEY_SALT,
+    MASTER_KEY_BYTES,
+} from "./secrets.js";
+export type {KdfParams, SecretsBackend} from "./secrets.js";
 
 export { createFileAuditLog } from "./audit.js";
 export type { AuditEntry, AuditEntryInput, AuditLog, AuditQuery } from "./audit.js";
 
 export { hashPassword, verifyPassword } from "./auth/password.js";
+export {
+    base32Decode,
+    base32Encode,
+    generateTotpSecret,
+    otpauthUri,
+    totp,
+    verifyTotp,
+} from "./auth/totp.js";
+export type {TotpOptions} from "./auth/totp.js";
 export {
   ROLE_CAPABILITIES,
   ROLE_NAMES,
@@ -63,13 +85,45 @@ export { createCsrf } from "./auth/csrf.js";
 export type { CsrfProtection } from "./auth/csrf.js";
 export { createRateLimiter } from "./auth/rate-limit.js";
 export type { RateLimiter, RateLimiterOptions } from "./auth/rate-limit.js";
-export { createAuthService } from "./auth/service.js";
-export type { AuthService, AuthServiceOptions, Invite, LoginResult, User } from "./auth/service.js";
+export {createAuthService, isMfaChallenge} from "./auth/service.js";
+export type {
+    AuthService,
+    AuthServiceOptions,
+    Invite,
+    LoginResult,
+    MfaChallenge,
+    MfaEnrollment,
+    User,
+} from "./auth/service.js";
 
 export { createMetrics, requestId } from "./observability.js";
 export type { Labels, Metrics } from "./observability.js";
-export { createBackup, restoreBackup } from "./ops/backup.js";
-export type { BackupTargets } from "./ops/backup.js";
+export {
+    createBackup,
+    restoreBackup,
+    listBackups,
+    pruneBackups,
+    runScheduledBackup,
+    verifyBackup,
+    createFilesystemBackupTarget,
+} from "./ops/backup.js";
+export type {
+    BackupTargets,
+    BackupInfo,
+    BackupVerification,
+    BackupTarget,
+    ScheduledBackupOptions,
+} from "./ops/backup.js";
+
+export {createMemberAuthService} from "./members.js";
+export type {
+    Member,
+    MemberAuthService,
+    MemberAuthServiceOptions,
+    MemberLoginResult,
+} from "./members.js";
+export {createRedirectService} from "./redirects.js";
+export type {Redirect, RedirectCode, RedirectService} from "./redirects.js";
 
 export { createScheduler } from "./scheduler.js";
 export type {

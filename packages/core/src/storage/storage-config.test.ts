@@ -72,13 +72,35 @@ describe("storage-config", () => {
     adapter.close();
   });
 
-    it("anchors a relative backend path to the data dir, leaving absolute/:memory: alone", () => {
+    it("anchors a relative backend path to the data dir, leaving :memory: alone", () => {
         expect(resolveStoragePath("/var/data", "db.sqlite")).toBe(join("/var/data", "db.sqlite"));
         expect(resolveStoragePath("/var/data", "nested/db.sqlite")).toBe(join("/var/data", "nested/db.sqlite"));
-        expect(resolveStoragePath("/var/data", "/abs/db.sqlite")).toBe("/abs/db.sqlite");
         expect(resolveStoragePath("/var/data", ":memory:")).toBe(":memory:");
         // No baseDir → unchanged (caller opted out of anchoring).
         expect(resolveStoragePath(undefined, "db.sqlite")).toBe("db.sqlite");
+    });
+
+    it("rejects a relative path that escapes the data directory", () => {
+        expect(() => resolveStoragePath("/var/data", "../../etc/cron.d/x")).toThrow(/escapes/i);
+        expect(() => resolveStoragePath("/var/data", "../secret.sqlite")).toThrow(/escapes/i);
+        // A path that resolves back inside the dir is fine.
+        expect(resolveStoragePath("/var/data", "nested/../db.sqlite")).toBe(join("/var/data", "db.sqlite"));
+    });
+
+    it("CONFINES absolute paths to the data dir too (DB-Manager arbitrary-path guard)", () => {
+        // An absolute path inside the data dir is accepted (normalized).
+        expect(resolveStoragePath("/var/data", "/var/data/db.sqlite")).toBe(join("/var/data", "db.sqlite"));
+        expect(resolveStoragePath("/var/data", "/var/data/nested/db.sqlite")).toBe(
+            join("/var/data", "nested/db.sqlite"),
+        );
+        // An absolute path OUTSIDE the data dir is rejected — this is what stops
+        // an operator from pointing SQLite at (and later `rm`-ing) any host file.
+        expect(() => resolveStoragePath("/var/data", "/etc/cron.d/x")).toThrow(/escapes/i);
+        expect(() => resolveStoragePath("/var/data", "/abs/db.sqlite")).toThrow(/escapes/i);
+        // A sibling-prefix path must not slip past the boundary check.
+        expect(() => resolveStoragePath("/var/data", "/var/data-evil/db.sqlite")).toThrow(/escapes/i);
+        // `..` segments in an absolute path are collapsed before the check.
+        expect(() => resolveStoragePath("/var/data", "/var/data/../etc/x")).toThrow(/escapes/i);
     });
 
     it("forwards baseDir into the factory so a relative sqlite path can be anchored", async () => {

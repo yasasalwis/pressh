@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { defineConfig } from "vitest/config";
+import {resolve} from "node:path";
+import {defineConfig} from "vitest/config";
 
 const root = import.meta.dirname;
 
@@ -12,7 +12,7 @@ export default defineConfig({
       "@pressh/engine": resolve(root, "packages/engine/src/index.ts"),
       "@pressh/sdk": resolve(root, "packages/sdk/src/index.ts"),
       "@pressh/runtime": resolve(root, "packages/runtime/src/index.ts"),
-      "@pressh/ui-kit": resolve(root, "packages/ui-kit/src/index.ts"),
+        "@pressh/panel-kit": resolve(root, "packages/panel-kit/src/index.ts"),
       "@pressh/adapter-sqlite": resolve(root, "adapters/sqlite/src/index.ts"),
       "@pressh/adapter-postgres": resolve(root, "adapters/postgres/src/index.ts"),
       "@pressh/adapter-mysql": resolve(root, "adapters/mysql/src/index.ts"),
@@ -23,7 +23,10 @@ export default defineConfig({
   },
   test: {
     include: ["**/*.{test,spec}.ts"],
-    exclude: ["**/node_modules/**", "**/dist/**"],
+      // `.pressh/` is the standalone build output — it copies builtins (incl. their
+      // test files); running those duplicates is wasteful and flaky. `dist/` is
+      // compiled output. Neither is a source of truth for the suite.
+      exclude: ["**/node_modules/**", "**/dist/**", "**/.pressh/**"],
     passWithNoTests: false,
   },
 });

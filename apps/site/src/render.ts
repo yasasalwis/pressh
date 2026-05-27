@@ -1,6 +1,8 @@
-import type { BlockNode } from "@pressh/engine";
+import {createElement} from "react";
+import {renderToString} from "react-dom/server";
+import {Document} from "./components/Document.js";
 
-/** HTML-escape for text/attribute contexts. */
+/** HTML-escape for text/attribute contexts (meta tags, sitemap XML, asset hrefs). */
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -10,61 +12,49 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function clampLevel(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? Math.min(6, Math.max(1, Math.floor(n))) : 2;
-}
-
-/**
- * Renders a single block to HTML. Inputs were already sanitized at write time
- * (Phase 6); this layer additionally escapes anything inserted into text or
- * attribute contexts so rendering can never reintroduce XSS.
- */
-export function renderBlock(block: BlockNode): string {
-  switch (block.type) {
-    case "paragraph":
-      return `<p>${block.content ?? ""}</p>`;
-    case "quote":
-      return `<blockquote>${block.content ?? ""}</blockquote>`;
-    case "heading": {
-      const level = clampLevel(block.props?.["level"]);
-      return `<h${level}>${block.content ?? ""}</h${level}>`;
-    }
-    case "image": {
-      const src = typeof block.props?.["src"] === "string" ? block.props["src"] : "";
-      const alt = typeof block.props?.["alt"] === "string" ? block.props["alt"] : "";
-      return src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy">` : "";
-    }
-    case "code":
-      return `<pre><code>${escapeHtml(block.content ?? "")}</code></pre>`;
-    case "html":
-      // Already passed the rich sanitizer (script/handlers stripped) at write time.
-      return block.content ?? "";
-    default:
-      return "<!-- unsupported block -->";
-  }
-}
-
-export function renderBlocks(blocks: BlockNode[]): string {
-  return blocks
-    .map((block) => renderBlock(block) + (block.children?.length ? renderBlocks(block.children) : ""))
-    .join("\n");
-}
-
-export function renderPage(opts: { title: string; body: string; locale?: string; extraStyles?: string }): string {
-  const styles = opts.extraStyles ? `<style>${opts.extraStyles}</style>` : "";
-  return `<!DOCTYPE html>
-<html lang="${escapeHtml(opts.locale ?? "en")}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(opts.title)}</title>
-<style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif}</style>
-${styles}</head>
-<body>${opts.body}</body>
-</html>`;
+/** Wraps pre-rendered body HTML in the minimal standalone document shell. */
+export function renderPage(opts: {
+    title: string;
+    body: string;
+    locale?: string;
+    extraStyles?: string;
+}): string {
+    return (
+        "<!DOCTYPE html>" +
+        renderToString(
+            createElement(Document, {
+                title: opts.title,
+                locale: opts.locale ?? "en",
+                body: opts.body,
+                ...(opts.extraStyles ? {extraStyles: opts.extraStyles} : {}),
+            }),
+        )
+    );
 }
 
 export function renderNotFound(): string {
-  return renderPage({ title: "Not found", body: "<h1>404 — Not found</h1>" });
+    return renderPage({title: "Not found", body: renderToString(createElement("h1", null, "404 — Not found"))});
+}
+
+export function renderServerError(): string {
+    return renderPage({title: "Error", body: renderToString(createElement("h1", null, "500 — Server error"))});
+}
+
+/** Last-resort maintenance page when the operator's system page can't be resolved. */
+export function renderMaintenanceFallback(): string {
+    return renderPage({
+        title: "Down for maintenance",
+        body: renderToString(
+            createElement(
+                "div",
+                null,
+                createElement("h1", null, "We’ll be right back"),
+                createElement(
+                    "p",
+                    null,
+                    "The site is temporarily offline for scheduled maintenance. Please check back shortly.",
+                ),
+            ),
+        ),
+    });
 }

@@ -2,8 +2,17 @@
   "name": "forms",
   "version": "1.0.0",
   "main": "index.mjs",
-  "capabilities": ["storage.read:form_submissions", "storage.write:form_submissions"],
+  "capabilities": [
+    "storage.read:form_submissions",
+    "storage.write:form_submissions",
+    "pii.protect",
+    "pii.consent"
+  ],
   "endpoints": [{ "method": "POST", "path": "/submit", "handler": "submit" }],
-  "panel": { "title": "Form Submissions", "entry": "panel.html" },
+  "designerPresets": "presets.json",
+  "panel": {
+    "title": "Form Submissions",
+    "entry": "panel.js"
+  },
   "panelActions": ["list", "remove"]
 }

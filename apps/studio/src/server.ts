@@ -1,21 +1,24 @@
-import {dirname, join} from "node:path";
+import {join} from "node:path";
 import {pathToFileURL} from "node:url";
 import {readdir} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
 import {serve} from "@hono/node-server";
-import type {SecretsBackend} from "@pressh/core";
 import {
-  createAuthService,
-  createCsrf,
-  createFileAuditLog,
-  createFileSecretsBackend,
-  createScheduler,
-  deriveMasterKey,
-  loadStorageConfig,
-  MASTER_KEY_BYTES,
-  watchStorageConfig,
+    createAuthService,
+    createCsrf,
+    createFileAuditLog,
+    createMemberAuthService,
+    createRedirectService,
+    createScheduler,
+    listBackups,
+    PressError,
+    runScheduledBackup,
+    verifyBackup,
+    watchStorageConfig,
 } from "@pressh/core";
-import {buildStorage, STORAGE_FACTORIES} from "./storage.js";
+import type {BackupTargets} from "@pressh/core";
+import {STORAGE_FACTORIES} from "./storage.js";
+import {hasMasterSecret, openConfiguredStorage} from "./bootstrap.js";
 import {
   createContentService,
   createGdprService,
@@ -25,7 +28,7 @@ import {
 } from "@pressh/engine";
 import type {CveFeedSource} from "@pressh/runtime";
 import {createCveService, createPluginStateStore, PluginHost} from "@pressh/runtime";
-import type {PanelProvider, PluginControlProvider, PluginInfoProvider} from "./app.js";
+import type {BackupAdmin, PanelProvider, PluginControlProvider, PluginInfoProvider} from "./app.js";
 import {createStudioApp, seedDemoContent} from "./app.js";
 import {createMediaService} from "./media.js";
 import {createMigrationLock} from "./migration-lock.js";
@@ -48,8 +51,6 @@ async function registerPluginsFrom(host: PluginHost, dir: string, builtin: boole
   }
 }
 
-const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
-
 /**
  * Exit code used after a Database-Manager cutover so the process supervisor
  * restarts us on the new backend. `scripts/run.mjs` treats this code as
@@ -57,21 +58,6 @@ const MASTER_KEY_SALT = Buffer.from("pressh.secrets.v1");
  * matching constant in `apps/site/src/server.ts` and `scripts/run.mjs`.
  */
 const STORAGE_RESTART_EXIT_CODE = 75;
-
-/**
- * Parse the operator master key. A 32-byte key encoded as hex (64 chars) or
- * base64 is used directly; anything else is treated as a passphrase and
- * stretched with scrypt. Returns null for an empty/absent value.
- */
-function parseMasterKey(raw: string | undefined): Buffer | null {
-  if (!raw) return null;
-  const value = raw.trim();
-  if (value === "") return null;
-  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, "hex");
-  const b64 = Buffer.from(value, "base64");
-  if (b64.length === MASTER_KEY_BYTES) return b64;
-  return deriveMasterKey(value, MASTER_KEY_SALT);
-}
 
 export interface StudioServerOptions {
   contentRoot: string;
@@ -84,14 +70,23 @@ export interface StudioServerOptions {
   port?: number;
   production?: boolean;
   csrfSecret?: string;
-  /** 32-byte vault master key. When set, SMTP credentials can be sealed. */
-  masterKey?: Buffer;
+    /** Raw `PRESSH_MASTER_KEY` (32-byte hex/base64 key or passphrase). When set, SMTP credentials can be sealed. */
+    masterSecret?: string;
+    /** Raw master-key string used to derive the plugin-signing key (see PluginHost). */
+    signingSecret?: string;
   /** Path to the sealed secrets vault file. Defaults next to the content root. */
   secretsPath?: string;
   /** Path to the active-storage config (`storage.json`). Defaults next to the content root. */
   storageConfigPath?: string;
   /** Source of plugin CVE advisories (v1 default: empty/operator-supplied). */
   cveFeed?: CveFeedSource;
+    /**
+     * Path to the plugin-worker entry script. Defaults (dev) to the runtime's
+     * compiled `worker-entry.js`. The standalone `.pressh/` build sets it to
+     * `.pressh/<app>/runtime/worker-entry.js` so the worker's fs-read sandbox is
+     * scoped to that code-only dir instead of the whole app bundle dir.
+     */
+    workerScript?: string;
 }
 
 /**
@@ -99,38 +94,105 @@ export interface StudioServerOptions {
  * process (ADR-002). Boots its own storage/auth/content/media + CSRF.
  */
 export async function createStudioServer(opts: StudioServerOptions): Promise<{ start: () => void }> {
-  // Sealed vault for operator secrets (SMTP password, database connection
-  // strings). Built before storage because DB backends resolve their connection
-  // string from the vault. Optional in dev; when absent the Settings/Database
-  // screens report credential storage disabled.
-  const vaultPath = opts.secretsPath ?? join(opts.contentRoot, "..", "vault.json");
-  let secrets: SecretsBackend | undefined;
-  if (opts.masterKey) {
-    secrets = await createFileSecretsBackend({path: vaultPath, key: opts.masterKey});
-  }
-
-  // Active storage backend is chosen by `storage.json` (written by the Database
-  // Manager on cutover). Absent → the filesystem default, so a fresh install
-  // needs zero configuration.
-  const storageConfigPath = opts.storageConfigPath ?? join(opts.contentRoot, "..", "storage.json");
-  // Relative backend file paths (e.g. sqlite `path`) resolve against the data
-  // directory — never the process cwd — so both processes open the same file.
-  const dataDir = dirname(storageConfigPath);
-  const persistedStorage = await loadStorageConfig(storageConfigPath);
-  const storage = await buildStorage(persistedStorage, opts.contentRoot, secrets, dataDir);
+    // Open the backend selected by `storage.json` (a DB or the filesystem
+    // default) together with the secrets vault — via the shared helper the seed/
+    // admin CLIs also use, so a configured database holds ALL persisted data.
+    const {storage, secrets, vaultPath, storageConfigPath} = await openConfiguredStorage({
+        contentRoot: opts.contentRoot,
+        ...(opts.storageConfigPath ? {storageConfigPath: opts.storageConfigPath} : {}),
+        ...(opts.secretsPath ? {secretsPath: opts.secretsPath} : {}),
+        ...(opts.masterSecret ? {masterSecret: opts.masterSecret} : {}),
+    });
 
   const auditPath = opts.auditPath ?? join(opts.contentRoot, "..", "audit.log");
-  const audit = await createFileAuditLog({path: auditPath});
-  const auth = await createAuthService({ storage, audit });
+    const audit = await createFileAuditLog({
+        path: auditPath,
+        ...(opts.signingSecret ? {sealSecret: opts.signingSecret} : {}),
+    });
+    const auth = await createAuthService({storage, audit, ...(secrets ? {secrets} : {})});
+    // Site members live in shared storage; the Studio manages them (list/suspend/erase).
+    const memberAuth = await createMemberAuthService({storage, audit});
+    const redirects = createRedirectService({storage, audit});
   const scheduler = createScheduler({ storage, audit });
-  const content = createContentService({ storage, audit, scheduler });
+    const content = createContentService({storage, audit, scheduler, ...(secrets ? {secrets} : {})});
   scheduler.register(PUBLISH_JOB_TYPE, async (payload) => {
     const entryId = (payload as { entryId?: string }).entryId;
     if (entryId) {
       await content.transition(["content.publish"], entryId, "published").catch(() => undefined);
     }
   });
+
+    // Scheduled offsite backups (RUNBOOK DR). Deploy-time config: point
+    // PRESSH_BACKUP_DIR at a mounted offsite volume. Runs ONLY on the Studio
+    // (the Site has no scheduler) so backups never double-run. The job
+    // re-schedules itself, forming a single recurring chain that survives restarts.
+    const BACKUP_JOB = "backup.run";
+    const backupDir = process.env["PRESSH_BACKUP_DIR"]?.trim() || "";
+    const backupKeep = Math.max(1, Number(process.env["PRESSH_BACKUP_KEEP"] ?? 7) || 7);
+    const backupIntervalMs = Math.max(
+        60_000,
+        Number(process.env["PRESSH_BACKUP_INTERVAL_MS"] ?? 24 * 60 * 60 * 1000) || 24 * 60 * 60 * 1000,
+    );
+    const backupTargets: BackupTargets = {
+        contentRoot: opts.contentRoot,
+        mediaRoot: opts.mediaRoot,
+        vaultPath,
+        auditPath,
+    };
+    let backups: BackupAdmin | undefined;
+    if (backupDir) {
+        scheduler.register(BACKUP_JOB, async () => {
+            const r = await runScheduledBackup({targets: backupTargets, backupDir, keep: backupKeep});
+            await audit.append(
+                r.ok
+                    ? {
+                        action: "backup.run",
+                        actorId: null,
+                        detail: {name: r.value.name, items: r.value.items, pruned: r.value.pruned}
+                    }
+                    : {action: "backup.failed", actorId: null, detail: {error: r.error.message}},
+            );
+            // Always chain the next run so one failure can't stop scheduled backups.
+            await scheduler.schedule({type: BACKUP_JOB, runAt: Date.now() + backupIntervalMs});
+        });
+        backups = {
+            dir: backupDir,
+            intervalMs: backupIntervalMs,
+            keep: backupKeep,
+            run: async () => {
+                const r = await runScheduledBackup({targets: backupTargets, backupDir, keep: backupKeep});
+                if (!r.ok) throw r.error;
+                await audit.append({action: "backup.run", actorId: null, detail: {...r.value, manual: true}});
+                return r.value;
+            },
+            list: async () => {
+                const r = await listBackups(backupDir);
+                if (!r.ok) throw r.error;
+                return r.value.map((b) => ({name: b.name, createdAt: b.createdAt, sizeBytes: b.sizeBytes}));
+            },
+            verify: async (name) => {
+                const listed = await listBackups(backupDir);
+                if (!listed.ok) throw listed.error;
+                const target = name ? listed.value.find((b) => b.name === name) : listed.value[0];
+                if (!target) throw new PressError("not_found", "No backup available to verify");
+                const v = await verifyBackup(target.path);
+                if (!v.ok) throw v.error;
+                await audit.append({
+                    action: "backup.verify",
+                    actorId: null,
+                    detail: {name: target.name, ok: v.value.ok}
+                });
+                return v.value;
+            },
+        };
+    }
+
   scheduler.start();
+
+    // Boot-schedule a single recurring backup chain if none is pending yet.
+    if (backupDir && !(await scheduler.pending()).some((j) => j.type === BACKUP_JOB)) {
+        await scheduler.schedule({type: BACKUP_JOB, runAt: Date.now() + backupIntervalMs});
+    }
   const media = createMediaService({ storage, audit, mediaRoot: opts.mediaRoot });
   const theme = createThemeService({ storage, audit });
 
@@ -139,6 +201,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   const gdpr = createGdprService({
     storage,
     audit,
+      // Secrets let GDPR export reveal sealed PII (e.g. encrypted form fields).
+      ...(secrets ? {secrets} : {}),
     scopes: [
       { collection: "form_submissions", subjectField: "subjectRef", timestampField: "at" },
       { collection: "media", subjectField: "ownerRef" },
@@ -166,7 +230,17 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
   // The state store decides which registered plugins actually spawn a worker —
   // disabled ones (the default) cost nothing.
   const pluginState = createPluginStateStore(storage);
-  const pluginHost = new PluginHost({ storage, audit, allowUnsigned: !opts.production, cve, state: pluginState });
+    const pluginHost = new PluginHost({
+        storage,
+        audit,
+        allowUnsigned: !opts.production,
+        cve,
+        state: pluginState,
+        // Gated PII primitives for plugins (parity with the Site host).
+        pii: gdpr,
+        ...(opts.signingSecret ? {signingSecret: opts.signingSecret} : {}),
+        ...(opts.workerScript ? {workerScript: opts.workerScript} : {}),
+    });
   if (opts.builtinsDir) await registerPluginsFrom(pluginHost, opts.builtinsDir, true);
   if (opts.pluginsDir) await registerPluginsFrom(pluginHost, opts.pluginsDir, false);
 
@@ -209,6 +283,10 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     storage,
     audit,
     settings,
+      memberAuth,
+      redirects,
+      ...(backups ? {backups} : {}),
+      ...(secrets ? {secrets} : {}),
     panels,
     pluginInfo,
     pluginControl,
@@ -264,8 +342,8 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
 async function runFromEnv(): Promise<void> {
   const port = Number(process.env["PRESSH_STUDIO_PORT"] ?? 4000);
   const production = process.env["NODE_ENV"] === "production";
-  const masterKey = parseMasterKey(process.env["PRESSH_MASTER_KEY"]);
-  if (production && !masterKey) {
+    const masterSecret = process.env["PRESSH_MASTER_KEY"]?.trim() || undefined;
+    if (production && !hasMasterSecret(masterSecret)) {
     throw new Error(
       "PRESSH_MASTER_KEY is required in production (32-byte hex/base64 key, or a passphrase). " +
         "It seals the secrets vault used for SMTP credentials.",
@@ -276,10 +354,12 @@ async function runFromEnv(): Promise<void> {
     mediaRoot: process.env["PRESSH_MEDIA_ROOT"] ?? "./data/media",
     port,
     production,
-    ...(masterKey ? { masterKey } : {}),
+      ...(masterSecret ? {masterSecret} : {}),
+      ...(process.env["PRESSH_MASTER_KEY"] ? {signingSecret: process.env["PRESSH_MASTER_KEY"]} : {}),
     ...(process.env["PRESSH_CSRF_SECRET"] ? { csrfSecret: process.env["PRESSH_CSRF_SECRET"] } : {}),
     ...(process.env["PRESSH_PLUGINS_DIR"] ? { pluginsDir: process.env["PRESSH_PLUGINS_DIR"] } : {}),
     ...(process.env["PRESSH_STORAGE_CONFIG"] ? { storageConfigPath: process.env["PRESSH_STORAGE_CONFIG"] } : {}),
+      ...(process.env["PRESSH_WORKER_SCRIPT"] ? {workerScript: process.env["PRESSH_WORKER_SCRIPT"]} : {}),
     builtinsDir: process.env["PRESSH_BUILTINS_DIR"] ?? join(process.cwd(), "builtins"),
   });
   server.start();
@@ -287,6 +367,13 @@ async function runFromEnv(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    // Load a project-root .env for local dev. loadEnvFile never overrides vars
+    // already in the environment, so a real OS/secret-manager key still wins; a
+    // missing file is a no-op.
+    try {
+        process.loadEnvFile();
+    } catch { /* no .env — rely on the real environment */
+    }
   runFromEnv().catch((e: unknown) => {
     process.stderr.write(`Pressh Studio failed to start: ${e instanceof Error ? e.message : String(e)}\n`);
     process.exit(1);

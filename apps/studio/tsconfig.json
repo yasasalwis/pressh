@@ -14,5 +14,10 @@
     { "path": "../../adapters/mongo" }
   ],
   "include": ["src/**/*"],
-  "exclude": ["**/*.test.ts", "**/*.spec.ts", "dist"]
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "dist",
+    "src/client/**"
+  ]
 }

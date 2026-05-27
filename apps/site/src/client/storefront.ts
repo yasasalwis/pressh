@@ -282,12 +282,19 @@ async function renderCheckout(widget: Element): Promise<void> {
     }
     summary.appendChild(totalsEl(data));
 
+    // Honeypot: hidden off-screen field (see .ps-hp in storefront.css). Bots fill
+    // every input; humans never see it, so a non-empty value means "drop this".
+    const honeypot = el("div", {class: "ps-hp", "aria-hidden": "true"}, [
+        el("label", {text: "Leave this field empty"}),
+        el("input", {name: "_hp", type: "text", tabindex: "-1", autocomplete: "off"}),
+    ]);
     const form = el("form", {class: "ps-checkout-form"}, [
         field("name", "Name", "text", true),
         field("email", "Email", "email", true),
         field("phone", "Phone", "tel", false),
         field("address", "Shipping address", "text", false, true),
         field("note", "Order note", "text", false, true),
+        honeypot,
     ]);
     const msg = el("div", {class: "ps-msg"});
     const submit = el("button", {class: "ps-btn", type: "submit", text: "Place order"});
@@ -304,6 +311,7 @@ async function renderCheckout(widget: Element): Promise<void> {
             address: String(fd.get("address") ?? "").trim(),
         };
         const note = String(fd.get("note") ?? "").trim();
+        const hp = String(fd.get("_hp") ?? "");
         if (!customer.name || !customer.email) {
             msg.textContent = "Please enter your name and email.";
             msg.className = "ps-msg ps-err";
@@ -312,7 +320,7 @@ async function renderCheckout(widget: Element): Promise<void> {
         (submit as HTMLButtonElement).disabled = true;
         msg.textContent = "Placing your order…";
         msg.className = "ps-msg";
-        void api<{ orderNumber: number; totalLabel: string }>("checkout", {items: getCart(), customer, note})
+        void api<{ orderNumber: number; totalLabel: string }>("checkout", {items: getCart(), customer, note, _hp: hp})
             .then((res) => {
                 setCart([]);
                 widget.replaceChildren(
