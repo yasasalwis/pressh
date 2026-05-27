@@ -1,17 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomBytes, randomUUID } from "node:crypto";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes, randomUUID} from "node:crypto";
+import type {AuditLog, SecretsBackend, StorageAdapter} from "@pressh/core";
 import {
   capabilitiesForRoles,
   createFileAuditLog,
   createFileSecretsBackend,
   createFileSystemStorage,
 } from "@pressh/core";
-import type { AuditLog, SecretsBackend, StorageAdapter } from "@pressh/core";
-import { createGdprService } from "@pressh/engine";
-import type { GdprService } from "@pressh/engine";
+import type {GdprService} from "@pressh/engine";
+import {createGdprService} from "@pressh/engine";
 
 const ADMIN = capabilitiesForRoles(["admin"]); // has gdpr.manage
 const AUTHOR = capabilitiesForRoles(["author"]); // does not
@@ -85,8 +85,11 @@ describe("GdprService", () => {
     await gdpr.recordConsent("a@b.com", "analytics", false);
     clock += 10;
     await gdpr.recordConsent("a@b.com", "analytics", true);
-    expect(await gdpr.getConsent("a@b.com", "analytics")).toBe(true);
-    expect(await gdpr.getConsent("a@b.com", "unknown")).toBeNull();
+      expect(await gdpr.getConsent(ADMIN, "a@b.com", "analytics")).toBe(true);
+      expect(await gdpr.getConsent(ADMIN, "a@b.com", "unknown")).toBeNull();
+      await expect(gdpr.getConsent(AUTHOR, "a@b.com", "analytics")).rejects.toMatchObject({
+          code: "capability_denied",
+      });
   });
 
   it("purges records past their retention window", async () => {

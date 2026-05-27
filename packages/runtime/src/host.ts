@@ -271,6 +271,16 @@ export class PluginHost {
   readonly #registry = new Map<string, PluginRecord>();
 
   constructor(opts: PluginHostOptions) {
+      // Defense-in-depth: even if a caller wires `allowUnsigned` true, never let it
+      // stand in production — that would disable signature verification for the
+      // whole host (ADR-011). Fail loud at construction rather than silently run
+      // unsigned plugins in a live deployment.
+      if (opts.allowUnsigned && process.env["NODE_ENV"] === "production") {
+          throw new PressError(
+              "forbidden",
+              "allowUnsigned must not be enabled in production — unsigned plugins are refused.",
+          );
+      }
     this.#opts = opts;
     this.#timeout = opts.invokeTimeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
     this.#workerScript = opts.workerScript ?? fileURLToPath(new URL("./worker-entry.js", import.meta.url));
@@ -472,10 +482,19 @@ export class PluginHost {
       // the plugin's import path must both be real-path'd or they won't match
       // (e.g. macOS `/tmp` vs `/private/tmp`).
       const realDir = PERMISSION_MODEL_SUPPORTED ? realpathSync(pluginDir) : pluginDir;
+        // Re-verify the signature here — immediately before the worker imports the
+        // plugin — so the bytes that execute are the bytes we just checked. This
+        // shrinks the TOCTOU window between #validate (at register/enable) and the
+        // actual import to near-zero.
+        await this.#verifySignature(pluginDir, manifest);
     const worker = new Worker(this.#workerScript, {
       env: {},
         execArgv: this.#sandboxExecArgv(realDir),
         resourceLimits: {maxOldGenerationSizeMb: this.#opts.maxMemoryMb ?? DEFAULT_MAX_MEMORY_MB},
+        // The sandbox loader confines the plugin's own (relative/absolute/file:)
+        // imports to this directory at the JS layer — defense-in-depth so a broad
+        // fs-read grant can't be abused to import host/runtime files.
+        workerData: {pluginRoot: realDir},
     });
     const instance = new PluginInstance(
       manifest,

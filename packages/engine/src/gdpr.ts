@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { CapabilityGate, PressError } from "@pressh/core";
-import type { AuditLog, Page, Result, SecretsBackend, StorageAdapter, StoredDoc } from "@pressh/core";
+import {createHash, randomUUID} from "node:crypto";
+import type {AuditLog, Page, Result, SecretsBackend, StorageAdapter, StoredDoc} from "@pressh/core";
+import {CapabilityGate, PressError} from "@pressh/core";
 
 /**
  * GDPR data-subject features (FR-040..043). Personal data lives in a set of
@@ -42,7 +42,8 @@ export interface GdprService {
   export(capabilities: string[], subjectRef: string): Promise<GdprExport>;
   erase(capabilities: string[], subjectRef: string): Promise<{ tombstoneId: string; erasedCount: number }>;
   recordConsent(subjectRef: string, scope: string, granted: boolean): Promise<void>;
-  getConsent(subjectRef: string, scope: string): Promise<boolean | null>;
+
+    getConsent(capabilities: string[], subjectRef: string, scope: string): Promise<boolean | null>;
   applyRetention(): Promise<{ purged: number }>;
   protect(subjectRef: string, value: string): Promise<EncRef>;
   reveal(ref: EncRef): Promise<string>;
@@ -171,7 +172,11 @@ export function createGdprService(opts: GdprServiceOptions): GdprService {
       });
     },
 
-    async getConsent(subjectRef, scope) {
+      async getConsent(capabilities, subjectRef, scope) {
+          // Reading a subject's consent state exposes their PII-keyed record, so it
+          // is admin-only. (recordConsent stays ungated — anonymous visitors must be
+          // able to capture their own consent.)
+          gate.assert(capabilities, "gdpr.manage");
       const all = (await recordsForSubject(
         { collection: CONSENT_COLLECTION, subjectField: "subjectRef" },
         subjectRef,

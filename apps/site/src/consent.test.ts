@@ -1,13 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createFileAuditLog, createFileSystemStorage } from "@pressh/core";
-import type { StorageAdapter } from "@pressh/core";
-import { createContentService, createGdprService, createQueryResolver } from "@pressh/engine";
-import { createSiteApp } from "./app";
-import type { SitePluginHost } from "./app";
-import { createRenderCache } from "./cache";
+import {afterEach, describe, expect, it} from "vitest";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import type {StorageAdapter} from "@pressh/core";
+import {createFileAuditLog, createFileSystemStorage} from "@pressh/core";
+import {createContentService, createGdprService, createQueryResolver} from "@pressh/engine";
+import type {SitePluginHost} from "./app";
+import {createSiteApp} from "./app";
+import {createRenderCache} from "./cache";
 
 const noPlugins: SitePluginHost = { has: () => false, endpoints: () => [], invoke: async () => null };
 
@@ -39,7 +39,7 @@ describe("public consent endpoint", () => {
       body: JSON.stringify({ subjectRef: "visitor-1", scope: "analytics", granted: true }),
     });
     expect(ok.status).toBe(200);
-    expect(await gdpr.getConsent("visitor-1", "analytics")).toBe(true);
+      expect(await gdpr.getConsent(["gdpr.manage"], "visitor-1", "analytics")).toBe(true);
 
     const bad = await app.request("/api/consent", {
       method: "POST",

@@ -1,15 +1,10 @@
 // `parentPort` and `register` are imported (and bound) BEFORE the sandbox
 // loader is installed, so blocking `node:worker_threads`/`node:module` for the
 // plugin below does not break the worker's own RPC channel.
-import { parentPort } from "node:worker_threads";
+import {parentPort, workerData} from "node:worker_threads";
 import {register} from "node:module";
-import { pathToFileURL } from "node:url";
-import type {
-  HostApi,
-  HostToWorker,
-  PluginModule,
-  WorkerToHost,
-} from "@pressh/sdk";
+import {pathToFileURL} from "node:url";
+import type {HostApi, HostToWorker, PluginModule, WorkerToHost,} from "@pressh/sdk";
 
 /**
  * The script that runs INSIDE each plugin worker thread. It owns no host state;
@@ -27,8 +22,16 @@ import type {
  */
 
 // Layer 2: only pure-computation builtins and the plugin's own files may be
-// imported; network/process/fs builtins and npm deps are denied.
-register("./sandbox-loader.js", import.meta.url);
+// imported; network/process/fs builtins and npm deps are denied. The plugin's
+// own directory (passed by the host) confines file/relative/absolute imports so
+// the plugin cannot reach host/runtime files even under a broad fs-read grant.
+const pluginRoot =
+    workerData && typeof workerData === "object" && typeof (workerData as {
+        pluginRoot?: unknown
+    }).pluginRoot === "string"
+        ? (workerData as { pluginRoot: string }).pluginRoot
+        : "";
+register("./sandbox-loader.js", import.meta.url, {data: {pluginRoot}});
 
 // Layer 3: scrub process.env (host secrets) and the most dangerous globals.
 // `fetch`/`WebSocket` are network egress the import allowlist cannot see; the

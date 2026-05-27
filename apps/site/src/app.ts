@@ -6,6 +6,7 @@ import {createElement} from "react";
 import {renderToString} from "react-dom/server";
 import type {Context} from "hono";
 import {Hono} from "hono";
+import {getConnInfo} from "@hono/node-server/conninfo";
 import {deleteCookie, getCookie, setCookie} from "hono/cookie";
 import type {Member, MemberAuthService, Metrics, StorageAdapter} from "@pressh/core";
 import {createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
@@ -428,11 +429,25 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
 
   // Per-IP throttle for the public write/compute endpoints (consent capture and
   // plugin dispatch) so a single source can't flood storage or worker invokes
-  // (baseline #12). Behind a proxy, x-forwarded-for identifies the client.
+  // (baseline #12). `x-forwarded-for`/`x-real-ip` are attacker-controllable, so
+  // they are trusted ONLY when the operator opts in (running behind a known
+  // proxy). Otherwise the non-forgeable socket peer address is the key — so an
+  // attacker can't reset their bucket by rotating a header.
+  const trustProxy = process.env["PRESSH_TRUST_PROXY"] === "1";
   const publicLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
   const clientKey = (c: Context<SiteEnv>): string => {
-    const xff = c.req.header("x-forwarded-for");
-    return (xff ? (xff.split(",")[0] ?? "").trim() : "") || c.req.header("x-real-ip") || "unknown";
+    if (trustProxy) {
+      const xff = c.req.header("x-forwarded-for");
+      const first = xff ? (xff.split(",")[0] ?? "").trim() : "";
+      if (first) return first;
+      const real = c.req.header("x-real-ip");
+      if (real) return real;
+    }
+    try {
+      return getConnInfo(c).remote.address ?? "unknown";
+    } catch {
+      return "unknown";
+    }
   };
   // /metrics requires a bearer token when PRESSH_METRICS_TOKEN is set.
   const metricsToken = process.env["PRESSH_METRICS_TOKEN"];
@@ -636,12 +651,34 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
     }
 
-    let args: unknown = {};
+    let args: Record<string, unknown> = {};
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       try {
-        args = await c.req.json();
+        args = (await c.req.json()) as Record<string, unknown>;
       } catch {
         args = {};
+      }
+    } else {
+      // Forward query-string params as args for GET endpoints (e.g. comments list).
+      for (const [k, v] of Object.entries(c.req.query())) {
+        args[k] = v;
+      }
+    }
+
+    // Security boundary: strip any client-supplied `_member*` fields so a caller
+    // cannot forge server-injected member identity (open to all users, no auth).
+    for (const key of Object.keys(args)) {
+      if (key.startsWith("_member")) delete args[key];
+    }
+
+    // Inject the authenticated member identity (if any) from the session cookie.
+    // Plugin handlers that require a member (e.g. comments/submit) read _memberId
+    // from args and trust it as server-authoritative.
+    if (deps.memberAuth) {
+      const member = await getMemberFromContext(c, deps.memberAuth);
+      if (member) {
+        args["_memberId"] = member.id;
+        args["_memberDisplayName"] = member.displayName;
       }
     }
 

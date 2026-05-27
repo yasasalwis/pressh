@@ -1,4 +1,25 @@
 import {isBuiltin} from "node:module";
+import {fileURLToPath} from "node:url";
+import {resolve as resolvePath, sep} from "node:path";
+
+/**
+ * The plugin's own directory, supplied by the host via `register(..., {data})`.
+ * File/relative/absolute imports are confined to it so the OS permission model
+ * is not the ONLY thing keeping a plugin from importing host/runtime code.
+ */
+let pluginRoot = "";
+
+export async function initialize(data?: { pluginRoot?: unknown }): Promise<void> {
+    if (data && typeof data.pluginRoot === "string") pluginRoot = data.pluginRoot;
+}
+
+/** True when `absPath` is the plugin root or sits inside it. */
+function withinPluginRoot(absPath: string): boolean {
+    if (!pluginRoot) return true; // not configured → defer to the OS permission model
+    const base = resolvePath(pluginRoot);
+    const target = resolvePath(absPath);
+    return target === base || target.startsWith(base + sep);
+}
 
 /**
  * ESM resolve hook registered inside every plugin worker (see worker-entry).
@@ -64,14 +85,29 @@ export async function resolve(
         if (!SAFE_BUILTINS.has(bare)) denied(specifier);
         return nextResolve(specifier, context);
     }
-    // Relative / absolute / file URL: the plugin's own bundle. The permission
-    // model confines these reads to the plugin's directory.
+    // Relative / absolute / file URL: the plugin's own bundle. Confine the
+    // resolved path to the plugin directory at the JS layer (not just the OS
+    // permission model) so a single fs-read-grant gap can't be turned into an
+    // import of host/runtime code.
     if (
         specifier.startsWith("./") ||
         specifier.startsWith("../") ||
         specifier.startsWith("/") ||
         specifier.startsWith("file:")
     ) {
+        let abs: string | null = null;
+        try {
+            if (specifier.startsWith("file:")) {
+                abs = fileURLToPath(specifier);
+            } else if (specifier.startsWith("/")) {
+                abs = specifier;
+            } else if (context.parentURL) {
+                abs = fileURLToPath(new URL(specifier, context.parentURL));
+            }
+        } catch {
+            denied(specifier);
+        }
+        if (abs === null || !withinPluginRoot(abs)) denied(specifier);
         return nextResolve(specifier, context);
     }
     // Anything else is a bare npm specifier — denied.

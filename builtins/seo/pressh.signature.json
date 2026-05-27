@@ -1,7 +1,7 @@
 {
   "algorithm": "hmac-sha256",
   "files": {
-    "index.mjs": "7c0c718219df7bd887bc69be0abc5c3c1ece2c59c16e17bf9343040da05791a3",
+    "index.mjs": "5e570fcae004af2c4c42c99ac69e23bed62a479e245607de1853b3d042887e78",
     "panel.js": "b7232a4d01d553cebf03698b3cc21d0c60aca104b34d032465d65e9b5388d064",
     "pressh.plugin.json": "1e7a705f5c4196a5380c1563a291db97e61615de72c8f5c8cff617f4aa721fe4"
   }

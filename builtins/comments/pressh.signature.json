@@ -1,0 +1,9 @@
+{
+  "algorithm": "hmac-sha256",
+  "files": {
+    "comments.test.ts": "c92345cdcf7ecc16f80b28362801587344e9a9e016c68710ca38c0eb8a5f09fa",
+    "index.mjs": "5c1579f51e8552df413513e751034b4072a7faede9c9c69f9989dca403651a5c",
+    "panel.js": "dcc7ddf80ffc681b1a4023bebf316ff7be35a5fd5fe46052f856ec47a2e7cebe",
+    "pressh.plugin.json": "ffb88fa76d46d744a8783fc2804ed389d5a04d8c64dc0527d224335a786267a6"
+  }
+}

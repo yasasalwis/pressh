@@ -1,0 +1,95 @@
+:root {
+    color-scheme: light dark;
+}
+
+body {
+    font: 14px/1.5 system-ui, sans-serif;
+    margin: 0;
+    padding: 16px;
+    color: #1f2937;
+    background: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        color: #e5e7eb;
+        background: #0b1220;
+    }
+
+    .field {
+        border-color: #1f2a44 !important;
+    }
+}
+
+h2 {
+    font-size: 16px;
+    margin: 0 0 4px;
+}
+
+.card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+}
+
+button {
+    font: inherit;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: inherit;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+button.danger {
+    color: #dc2626;
+}
+
+.row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.fields {
+    display: grid;
+    grid-template-columns: minmax(80px, max-content) 1fr;
+    gap: 2px 12px;
+    font-size: 13px;
+}
+
+.field {
+    display: contents;
+}
+
+.field .k {
+    color: #6b7280;
+}
+
+.field .v {
+    word-break: break-word;
+}
+
+.muted {
+    color: #6b7280;
+}
+
+.err {
+    color: #dc2626;
+}

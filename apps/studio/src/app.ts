@@ -31,6 +31,11 @@ function timingSafeStrEqual(a: string, b: string): boolean {
     return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
+/** Basic email shape check for the first-run setup wizard. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** The first Owner is the most privileged account, so require a longer password than the 8-char floor. */
+const MIN_OWNER_PASSWORD_LEN = 12;
+
 // React admin bundle (built by scripts/build-admin.mjs into dist/admin-next.html,
 // a sibling of this compiled module). Read once and cached; `null` when absent.
 let _adminNextHtml: string | null | undefined;
@@ -213,6 +218,18 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     return c.text(metrics.render(), 200, { "content-type": "text/plain; version=0.0.4" });
   });
 
+    // Session cookies must be Secure whenever the connection is HTTPS — not only
+    // when NODE_ENV=production. Honoring x-forwarded-proto covers the common case
+    // of a TLS-terminating proxy where the app itself sees plain HTTP; localhost
+    // dev over HTTP still gets a usable (non-Secure) cookie.
+    const cookieSecure = (c: Context<Vars>): boolean =>
+        (deps.production ?? false) ||
+        (c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase() === "https");
+
+    // First-run setup serializer (one Studio process): prevents a race where two
+    // concurrent setup requests both create an Owner before either persists.
+    let setupInFlight = false;
+
   const requireSession = async (c: Context<Vars>, next: Next): Promise<Response | undefined> => {
     const token = getCookie(c, SESSION_COOKIE);
     const user = token ? await deps.auth.validateSession(token) : null;
@@ -280,17 +297,37 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   });
 
   app.post("/admin/api/setup", rateLimit(authLimiter), async (c) => {
-    if (await deps.auth.hasAnyUser()) {
-      return c.json({ error: { code: "conflict", message: "Already configured" } }, 409);
-    }
-    const { email, password } = await c.req.json<{ email: string; password: string }>();
-    try {
+      // Synchronous guard (set before the first await) so two concurrent requests
+      // on a fresh install can't both pass hasAnyUser() and create two Owners.
+      if (setupInFlight) {
+          return c.json({error: {code: "conflict", message: "Setup already in progress"}}, 409);
+      }
+      setupInFlight = true;
+      try {
+          if (await deps.auth.hasAnyUser()) {
+              return c.json({error: {code: "conflict", message: "Already configured"}}, 409);
+          }
+          const {email, password} = await c.req.json<{ email: string; password: string }>();
+          if (typeof email !== "string" || !EMAIL_RE.test(email)) {
+              return c.json({error: {code: "validation", message: "A valid email is required"}}, 400);
+          }
+          if (typeof password !== "string" || password.length < MIN_OWNER_PASSWORD_LEN) {
+              return c.json(
+                  {
+                      error: {
+                          code: "validation",
+                          message: `Owner password must be at least ${MIN_OWNER_PASSWORD_LEN} characters`,
+                      },
+                  },
+                  400,
+              );
+          }
       await deps.auth.createUser({ email, password, roles: ["owner"] });
       const { token, user } = await deps.auth.authenticate({ email, password });
       setCookie(c, SESSION_COOKIE, token, {
         httpOnly: true,
         sameSite: "Lax",
-        secure: deps.production ?? false,
+          secure: cookieSecure(c),
         path: "/",
       });
       await seedDemoContent(deps.content, user.id, deps.auth.capabilitiesFor(user)).catch(() => {});
@@ -299,6 +336,8 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     } catch (error) {
       const { status, code } = mapError(error);
       return c.json({ error: { code, message: code } }, status);
+      } finally {
+          setupInFlight = false;
     }
   });
 
@@ -310,7 +349,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       setCookie(c, SESSION_COOKIE, token, {
         httpOnly: true,
         sameSite: "Lax",
-        secure: deps.production ?? false,
+          secure: cookieSecure(c),
         path: "/",
       });
       return c.json({ user });
@@ -599,6 +638,13 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
     if (!gate.check(caps(c), "media.write")) {
       return c.json({ error: { code: "forbidden", message: "forbidden" } }, 403);
     }
+      // Reject by declared size BEFORE parseBody buffers the whole multipart body
+      // into memory. 64KB of slack covers multipart boundaries/headers so a file at
+      // the limit still passes; the exact per-file check below is authoritative.
+      const declaredLength = Number(c.req.header("content-length") ?? "0");
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_BYTES + 64 * 1024) {
+          return c.json({error: {code: "validation", message: "File too large"}}, 413);
+      }
     const form = await c.req.parseBody();
     const file = form["file"];
     if (!(file instanceof File)) {
@@ -693,7 +739,7 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
       setCookie(c, SESSION_COOKIE, session, {
         httpOnly: true,
         sameSite: "Lax",
-        secure: deps.production ?? false,
+          secure: cookieSecure(c),
         path: "/",
       });
       return c.json({ user });

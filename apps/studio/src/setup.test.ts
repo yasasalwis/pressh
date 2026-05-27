@@ -1,18 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
-import {
-  createAuthService,
-  createCsrf,
-  createFileAuditLog,
-  createFileSystemStorage,
-} from "@pressh/core";
-import type { StorageAdapter } from "@pressh/core";
-import { createContentService, createSettingsService, createThemeService } from "@pressh/engine";
-import { createStudioApp } from "./app";
-import { createMediaService } from "./media";
+import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes} from "node:crypto";
+import type {StorageAdapter} from "@pressh/core";
+import {createAuthService, createCsrf, createFileAuditLog, createFileSystemStorage,} from "@pressh/core";
+import {createContentService, createSettingsService, createThemeService} from "@pressh/engine";
+import {createStudioApp} from "./app";
+import {createMediaService} from "./media";
 
 let dir: string;
 let storage: StorageAdapter;
@@ -46,7 +41,7 @@ describe("first-run setup wizard", () => {
     const res = await app.request("/admin/api/setup", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "owner@example.com", password: "supersecret" }),
+        body: JSON.stringify({email: "owner@example.com", password: "supersecret-pw"}),
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toContain("pressh_session=");
@@ -62,7 +57,7 @@ describe("first-run setup wizard", () => {
     await app.request("/admin/api/setup", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "owner@example.com", password: "supersecret" }),
+        body: JSON.stringify({email: "owner@example.com", password: "supersecret-pw"}),
     });
 
     const status = (await (await app.request("/admin/api/setup/status")).json()) as { needsSetup: boolean };
@@ -75,4 +70,24 @@ describe("first-run setup wizard", () => {
     });
     expect(second.status).toBe(409);
   });
+
+    it("rejects a weak owner password and a malformed email", async () => {
+        const short = await app.request("/admin/api/setup", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email: "owner@example.com", password: "short"}),
+        });
+        expect(short.status).toBe(400);
+
+        const badEmail = await app.request("/admin/api/setup", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email: "not-an-email", password: "supersecret-pw"}),
+        });
+        expect(badEmail.status).toBe(400);
+
+        // Setup is still available after rejected attempts (no Owner was created).
+        const status = (await (await app.request("/admin/api/setup/status")).json()) as { needsSetup: boolean };
+        expect(status.needsSetup).toBe(true);
+    });
 });

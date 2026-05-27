@@ -720,6 +720,12 @@ export async function cartPreview(args, host) {
  * @param {import('@pressh/sdk').HostApi} host
  */
 export async function checkout(args, host) {
+  // Honeypot: a hidden `_hp` field no human fills. A filled value is a bot, so
+  // silently succeed without creating an order or touching stock (matches the
+  // forms plugin's abuse defence; the per-IP rate limit is the other layer).
+  if (typeof args?._hp === "string" && args._hp.trim() !== "") {
+    return {ok: true, orderId: "", orderNumber: 0, total: 0, totalLabel: ""};
+  }
   const items = Array.isArray(args?.items)
       ? args.items.map((i) => ({itemId: i?.itemId, variantId: i?.variantId, qty: i?.qty}))
       : [];
