@@ -27,6 +27,47 @@ function revisionId(entryId: string, version: number): string {
   return `${entryId}.${version}`;
 }
 
+/** A public content search result. */
+export interface SearchHit {
+    slug: string;
+    title: string;
+    excerpt: string;
+    locale: string;
+}
+
+const SEARCH_SCAN_CAP = 500;
+const EXCERPT_RADIUS = 80;
+
+/** Collects plain-string text from arbitrary field/block values; skips objects
+ * (including `{$enc}` sensitive refs) and arrays of non-strings — so encrypted
+ * values are never indexed and the haystack stays human text. */
+function collectText(value: unknown, out: string[], depth = 0): void {
+    if (depth > 6) return;
+    if (typeof value === "string") {
+        out.push(value);
+    } else if (Array.isArray(value)) {
+        for (const v of value) collectText(v, out, depth + 1);
+    } else if (value && typeof value === "object") {
+        // Skip sensitive encrypted refs entirely.
+        if ("$enc" in (value as Record<string, unknown>)) return;
+        for (const v of Object.values(value as Record<string, unknown>)) collectText(v, out, depth + 1);
+    }
+}
+
+function buildSearchText(title: string, fields: Record<string, unknown>, blocks: unknown[]): string {
+    const parts: string[] = [title];
+    collectText(fields, parts);
+    collectText(blocks, parts);
+    // Strip tags so HTML-ish richtext doesn't pollute matches/excerpts.
+    return parts.join(" ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function makeExcerpt(text: string, matchIndex: number, matchLen: number): string {
+    const start = Math.max(0, matchIndex - EXCERPT_RADIUS);
+    const end = Math.min(text.length, matchIndex + matchLen + EXCERPT_RADIUS);
+    return (start > 0 ? "…" : "") + text.slice(start, end).trim() + (end < text.length ? "…" : "");
+}
+
 export interface CreateTypeInput {
   name: string;
   slug: string;
@@ -91,6 +132,20 @@ export interface ContentService {
     opts?: { publicOnly?: boolean },
   ): Promise<ContentEntry | null>;
   /**
+   * Substring search over PUBLISHED, non-system content (title + text fields +
+   * block text). In-memory (storage has no full-text index) and capped, so it's
+   * sized for SMB content volumes. Sensitive (encrypted) field values are never
+   * indexed — only plain string values are.
+   */
+  searchPublished(
+      query: string,
+      opts?: { limit?: number; locale?: string },
+  ): Promise<SearchHit[]>;
+
+    /** Locales that have a PUBLISHED entry for a slug — drives hreflang + switcher. */
+    publishedLocalesForSlug(slug: string): Promise<string[]>;
+
+    /**
    * Idempotent: creates the built-in system pages (header, footer, home, 404,
    * 500, maintenance) if they do not yet exist, published and marked
    * non-deletable. A pre-existing page sharing a system slug (e.g. a seeded
@@ -366,6 +421,44 @@ class ContentServiceImpl implements ContentService {
     if (opts.publicOnly && entry.status !== "published") return null;
     return entry;
   }
+
+    async searchPublished(
+        query: string,
+        opts: { limit?: number; locale?: string } = {},
+    ): Promise<SearchHit[]> {
+        const q = query.trim().toLowerCase();
+        if (!q) return [];
+        const limit = Math.min(Math.max(1, opts.limit ?? 20), 50);
+        const where: Record<string, string> = {status: "published"};
+        if (opts.locale) where["locale"] = opts.locale;
+        const page = must(
+            await this.#storage.query<ContentEntry>(ENTRIES, {where}, {limit: SEARCH_SCAN_CAP}),
+        );
+        const hits: SearchHit[] = [];
+        for (const entry of page.items) {
+            if (entry.system) continue;
+            const revision = await this.getRevision(entry.id, entry.currentRevision);
+            if (!revision) continue;
+            const title =
+                typeof revision.fields["title"] === "string"
+                    ? (revision.fields["title"] as string)
+                    : entry.slug;
+            const text = buildSearchText(title, revision.fields, revision.blocks);
+            const idx = text.toLowerCase().indexOf(q);
+            if (idx === -1) continue;
+            hits.push({slug: entry.slug, title, excerpt: makeExcerpt(text, idx, q.length), locale: entry.locale});
+            if (hits.length >= limit) break;
+        }
+        return hits;
+    }
+
+    async publishedLocalesForSlug(slug: string): Promise<string[]> {
+        const page = must(await this.#storage.query<ContentEntry>(ENTRIES, {where: {slug}}));
+        const locales = page.items
+            .filter((e) => e.status === "published" && !e.system)
+            .map((e) => e.locale);
+        return [...new Set(locales)].sort();
+    }
 
   async ensureSystemPages(ownerId: string): Promise<void> {
     // Find or create a shared "page" content type for system pages.

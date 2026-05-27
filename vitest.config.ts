@@ -23,7 +23,10 @@ export default defineConfig({
   },
   test: {
     include: ["**/*.{test,spec}.ts"],
-    exclude: ["**/node_modules/**", "**/dist/**"],
+      // `.pressh/` is the standalone build output — it copies builtins (incl. their
+      // test files); running those duplicates is wasteful and flaky. `dist/` is
+      // compiled output. Neither is a source of truth for the suite.
+      exclude: ["**/node_modules/**", "**/dist/**", "**/.pressh/**"],
     passWithNoTests: false,
   },
 });

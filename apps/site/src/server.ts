@@ -6,6 +6,7 @@ import type {SecretsBackend} from "@pressh/core";
 import {
   createFileAuditLog,
   createMemberAuthService,
+    createRedirectService,
   loadStorageConfig,
   openSecretsVault,
   watchStorageConfig,
@@ -98,7 +99,11 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
       ...(opts.signingSecret ? {sealSecret: opts.signingSecret} : {}),
   });
   const content = createContentService({ storage, audit });
-  const resolver = createQueryResolver({ content });
+    // Enabled content locales drive locale-prefixed routing (/fr/…), hreflang, and
+    // the switcher. Read once at boot (adding a locale takes effect on restart).
+    const settingsForLocales = await createSettingsService({storage, audit}).getSettings().catch(() => null);
+    const enabledLocales = settingsForLocales?.locales ?? ["en"];
+    const resolver = createQueryResolver({content, locales: enabledLocales});
   const themeService = createThemeService({ storage, audit });
   const gdpr = createGdprService({
     storage,
@@ -176,6 +181,8 @@ export async function createSiteServer(opts: SiteServerOptions): Promise<{
     cache,
     themeService,
     gdpr,
+      redirects: createRedirectService({storage, audit}),
+      locales: enabledLocales,
     storage,
     listPublishedPaths,
     clientDir,

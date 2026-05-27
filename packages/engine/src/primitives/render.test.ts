@@ -95,6 +95,24 @@ describe("renderTree — URL sink hardening", () => {
     expect(html).toContain('type="email"');
     expect(html).toContain('type="submit"');
   });
+
+    it("wires a form to the Forms plugin when submitTo is 'forms' (data attrs + honeypot, no inline style)", async () => {
+        const tree: PrimitiveNode[] = [
+            {
+                id: "f",
+                type: "form",
+                props: {submitTo: "forms", formId: "contact"},
+                children: [{id: "sb", type: "submit", props: {label: "Send"}}],
+            },
+        ];
+        const {html} = await renderTree(tree, emptyCtx);
+        expect(html).toContain('data-ps-form');
+        expect(html).toContain('data-ps-form-id="contact"');
+        expect(html).toContain('action="/api/p/forms/submit"');
+        expect(html).toContain('class="ps-hp"');
+        expect(html).toContain('name="_hp"');
+        expect(html).not.toMatch(/\sstyle=/); // honeypot uses the .ps-hp class, not inline style
+    });
 });
 
 describe("renderTree — editor mode", () => {

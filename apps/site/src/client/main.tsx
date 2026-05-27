@@ -3,6 +3,7 @@ import {Blocks} from "../components/Blocks";
 import type {PageData} from "../components/Page";
 import {initStorefront} from "./storefront";
 import {initConsentBanner} from "./consent";
+import {initForms} from "./forms";
 
 const dataEl = document.getElementById("pressh-data");
 if (dataEl?.textContent) {
@@ -19,3 +20,6 @@ initStorefront();
 
 // Cookie-consent banner — no-op unless the operator enabled it (no #pressh-consent).
 initConsentBanner();
+
+// Designer-placed forms wired to the Forms plugin (no-op when no [data-ps-form]).
+initForms();

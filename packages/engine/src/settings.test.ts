@@ -163,3 +163,22 @@ describe("consent settings", () => {
         ).rejects.toMatchObject({code: "capability_denied"});
     });
 });
+
+describe("locale settings", () => {
+    it("defaults to just the default locale", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        expect((await svc.getSettings()).locales).toEqual(["en"]);
+    });
+
+    it("enables extra locales with the default always first", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        const s = await svc.updateSettings(ADMIN, {locales: ["fr", "en", "de-DE"]});
+        expect(s.locales[0]).toBe("en"); // default leads
+        expect(s.locales).toEqual(["en", "fr", "de-DE"]);
+    });
+
+    it("rejects malformed locale codes", async () => {
+        const svc = createSettingsService({storage, audit, secrets});
+        await expect(svc.updateSettings(ADMIN, {locales: ["english"]})).rejects.toMatchObject({code: "validation"});
+    });
+});

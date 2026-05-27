@@ -9,6 +9,7 @@
     "pii.consent"
   ],
   "endpoints": [{ "method": "POST", "path": "/submit", "handler": "submit" }],
+  "designerPresets": "presets.json",
   "panel": {
     "title": "Form Submissions",
     "entry": "panel.js"

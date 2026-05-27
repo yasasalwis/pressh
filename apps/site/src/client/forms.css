@@ -1,0 +1,18 @@
+.ps-form-msg {
+    margin: 0.75rem 0 0;
+    padding: 0.6rem 0.85rem;
+    border-radius: 8px;
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.ps-form-msg--ok {
+    background: #ecfdf5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+.ps-form-msg--err {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}

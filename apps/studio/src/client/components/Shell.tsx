@@ -47,6 +47,7 @@ const GROUPS: NavGroup[] = [
             {section: "plugins", label: "Plugins", icon: "🧩", cap: "plugins.manage"},
             {section: "database", label: "Database", icon: "💾", cap: "db.manage"},
             {section: "backups", label: "Backups", icon: "🗄", cap: "backups.manage"},
+            {section: "redirects", label: "Redirects", icon: "↪", cap: "redirects.manage"},
             {section: "privacy", label: "Privacy & GDPR", icon: "🔒", cap: "gdpr.manage"},
             {section: "audit", label: "Audit Log", icon: "📜", cap: "audit.read"},
         ],

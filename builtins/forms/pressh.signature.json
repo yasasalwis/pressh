@@ -1,9 +1,10 @@
 {
   "algorithm": "hmac-sha256",
   "files": {
-    "forms.test.ts": "8b41e2e30b84d817bfdeb28b1bdbb3f1ef56dad294374fcf9f5d9ae309472160",
-    "index.mjs": "8256830c62ba043db4cbde9b7bd24cb8cf7f539213d967c0787631b658981f96",
+    "forms.test.ts": "3247aa7d0db918670573df5258555cdb7b4269e990101ed6b34e94d112dd5bd5",
+    "index.mjs": "322615ccbf6856c4cbfa23324b81fe01ac4b2d0d77d40e891f7c5acd8604c808",
     "panel.js": "f232bc14339d06e5dc3740251fba8b69f5e428351e653bd4675176cf745af9bd",
-    "pressh.plugin.json": "34fa33e1b6924c3262cd0525f36c47f88da3940e6a7757bfdba1217f04b334bd"
+    "presets.json": "bc1dc11bce7f690166b7565fd541078cb5dd67ea755cb7c3133420b8969055da",
+    "pressh.plugin.json": "57e80a0b4f8acf241144a077075ba48a1e17ea03ca274d206721b02a46e67bd2"
   }
 }

@@ -45,6 +45,8 @@ interface StoredGeneralSettings extends StoredDoc {
   connectedSources?: string[];
   maintenanceMode?: boolean;
     consent?: ConsentSettings;
+    /** Enabled content locales (always includes defaultLocale). */
+    locales?: string[];
 }
 
 /** Public view: adds whether an SMTP password is on file, never the value. */
@@ -63,6 +65,8 @@ export interface GeneralSettings {
   maintenanceMode: boolean;
     /** Cookie-consent banner config (disabled by default). */
     consent: ConsentSettings;
+    /** Enabled content locales for multi-language sites; first is the default. */
+    locales: string[];
 }
 
 export interface UpdateSettingsInput {
@@ -81,6 +85,8 @@ export interface UpdateSettingsInput {
   maintenanceMode?: boolean;
     /** Cookie-consent banner config. */
     consent?: Partial<ConsentSettings>;
+    /** Enabled content locales (e.g. ["en","fr"]). defaultLocale is auto-included. */
+    locales?: string[];
 }
 
 export interface SettingsService {
@@ -112,6 +118,7 @@ const DEFAULTS = {
   connectedSources: [] as string[],
   maintenanceMode: false,
     consent: CONSENT_DEFAULT,
+    locales: ["en"] as string[],
 };
 
 function isValidTimezone(tz: string): boolean {
@@ -121,6 +128,19 @@ function isValidTimezone(tz: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Dedupes + ensures the default locale leads the enabled-locales list. */
+function normalizeLocales(locales: string[], defaultLocale: string): string[] {
+    const seen = new Set<string>([defaultLocale]);
+    const out = [defaultLocale];
+    for (const l of locales) {
+        if (!seen.has(l)) {
+            seen.add(l);
+            out.push(l);
+        }
+    }
+    return out;
 }
 
 function validateSmtp(smtp: SmtpSettings): void {
@@ -159,6 +179,8 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
       connectedSources: doc.connectedSources ?? [],
       maintenanceMode: doc.maintenanceMode ?? false,
         consent: {...CONSENT_DEFAULT, ...(doc.consent ?? {})},
+        // Always surface at least the default locale, and put it first.
+        locales: normalizeLocales(doc.locales ?? [], doc.defaultLocale),
     };
   }
 
@@ -239,6 +261,18 @@ export function createSettingsService(opts: SettingsServiceOptions): SettingsSer
                 next.policyUrl = url;
             }
             doc.consent = next;
+        }
+        if (partial.locales !== undefined) {
+            if (!Array.isArray(partial.locales)) {
+                throw new PressError("validation", "locales must be an array");
+            }
+            for (const l of partial.locales) {
+                if (typeof l !== "string" || !LOCALE_RE.test(l)) {
+                    throw new PressError("validation", `Invalid locale: ${String(l)} (use 'en' or 'en-US')`);
+                }
+            }
+            // The default locale is always enabled and listed first.
+            doc.locales = normalizeLocales(partial.locales, doc.defaultLocale);
         }
       if (partial.smtpPassword !== undefined && partial.smtpPassword !== "") {
         if (!opts.secrets) {

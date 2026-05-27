@@ -239,6 +239,17 @@ export const TABLE_SPECS: readonly TableSpec[] = [
             {column: "memberId", refTable: "member_accounts", refColumn: "id", onDelete: "cascade"},
         ],
     },
+    {
+        collection: "redirects",
+        table: "redirects",
+        columns: [
+            {field: "from", kind: "text", notNull: true, unique: true}, // exact source path
+            {field: "to", kind: "text", notNull: true},
+            {field: "code", kind: "integer"}, // 301 | 302
+            {field: "createdAt", kind: "text"},
+        ],
+        indexes: ["from"], // the Site looks up redirects by exact source path
+    },
   // NOTE: `settings` is intentionally NOT normalized. It is a POLYMORPHIC
   // singleton collection — it holds both the `general` settings doc and the
   // `theme` doc (different shapes) keyed by id — so a single typed table can't

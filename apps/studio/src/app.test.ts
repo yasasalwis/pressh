@@ -11,6 +11,7 @@ import {
     createFileSecretsBackend,
     createFileSystemStorage,
     createMemberAuthService,
+    createRedirectService,
     totp,
 } from "@pressh/core";
 import type {AuthService, MemberAuthService, SecretsBackend} from "@pressh/core";
@@ -703,5 +704,83 @@ describe("studio backups endpoints", () => {
             ok: true,
             totalRecords: 2
         });
+    });
+});
+
+describe("studio redirects endpoints", () => {
+    let rdir: string;
+    let rstorage: StorageAdapter;
+    let rapp: ReturnType<typeof createStudioApp>;
+
+    async function sess(email: string, password: string): Promise<{ cookie: string; csrf: string }> {
+        const res = await rapp.request("/admin/api/auth/login", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify({email, password}),
+        });
+        const token = /pressh_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
+        const cookie = `pressh_session=${token}`;
+        const me = (await (await rapp.request("/admin/api/me", {headers: {cookie}})).json()) as { csrfToken: string };
+        return {cookie, csrf: me.csrfToken};
+    }
+
+    beforeEach(async () => {
+        rdir = await mkdtemp(join(tmpdir(), "pressh-studio-rd-"));
+        rstorage = createFileSystemStorage({root: join(rdir, "content")});
+        const audit = await createFileAuditLog({path: join(rdir, "audit.log")});
+        const auth = await createAuthService({storage: rstorage, audit});
+        await auth.createUser({email: "owner@x.com", password: "ownerpass1", roles: ["owner"]});
+        await auth.createUser({email: "author@x.com", password: "authorpass1", roles: ["author"]});
+        const content = createContentService({storage: rstorage, audit});
+        const media = createMediaService({storage: rstorage, audit, mediaRoot: join(rdir, "media")});
+        const theme = createThemeService({storage: rstorage, audit});
+        const settings = createSettingsService({storage: rstorage, audit});
+        const csrf = createCsrf(randomBytes(32));
+        rapp = createStudioApp({
+            auth, content, media, theme, settings, csrf, storage: rstorage, audit,
+            redirects: createRedirectService({storage: rstorage, audit}),
+        });
+    });
+
+    afterEach(async () => {
+        rstorage.close();
+        await rm(rdir, {recursive: true, force: true});
+    });
+
+    it("creates, lists, and deletes redirects (owner); forbids an author", async () => {
+        const owner = await sess("owner@x.com", "ownerpass1");
+        const hdr = {cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json"};
+
+        const created = await rapp.request("/admin/api/redirects", {
+            method: "POST", headers: hdr, body: JSON.stringify({from: "/old", to: "/new", code: 301}),
+        });
+        expect(created.status).toBe(200);
+        const id = ((await created.json()) as { data: { id: string } }).data.id;
+
+        const list = await (await rapp.request("/admin/api/redirects", {headers: {cookie: owner.cookie}})).json();
+        expect((list as { data: { items: unknown[] } }).data.items).toHaveLength(1);
+
+        const del = await rapp.request(`/admin/api/redirects/${id}`, {method: "DELETE", headers: hdr});
+        expect(del.status).toBe(200);
+
+        const author = await sess("author@x.com", "authorpass1");
+        const denied = await rapp.request("/admin/api/redirects", {headers: {cookie: author.cookie}});
+        expect(denied.status).toBe(403);
+    });
+
+    it("requires CSRF and rejects invalid redirects", async () => {
+        const owner = await sess("owner@x.com", "ownerpass1");
+        const noCsrf = await rapp.request("/admin/api/redirects", {
+            method: "POST", headers: {cookie: owner.cookie, "content-type": "application/json"},
+            body: JSON.stringify({from: "/a", to: "/b"}),
+        });
+        expect(noCsrf.status).toBe(403);
+
+        const bad = await rapp.request("/admin/api/redirects", {
+            method: "POST",
+            headers: {cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json"},
+            body: JSON.stringify({from: "no-slash", to: "/b"}),
+        });
+        expect(bad.status).toBe(400);
     });
 });

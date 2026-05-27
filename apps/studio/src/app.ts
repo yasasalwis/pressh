@@ -10,6 +10,7 @@ import type {
     AuthService,
     CsrfProtection,
     MemberAuthService,
+    RedirectService,
     RoleName,
     SecretsBackend,
     StorageAdapter,
@@ -129,6 +130,8 @@ export interface StudioAppDeps {
     secrets?: SecretsBackend;
     /** Site-member management (list/suspend/erase) — shares the Site's member store. */
     memberAuth?: MemberAuthService;
+    /** URL redirect management (operator-defined from→to). */
+    redirects?: RedirectService;
     /** Scheduled-backup admin (list / run now / restore drill). Absent when unconfigured. */
     backups?: BackupAdmin;
   panels?: PanelProvider;
@@ -537,6 +540,37 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
         const {name} = await c.req.json<{ name?: string }>().catch(() => ({name: undefined}));
         return run(c, () => requireBackups(c).verify(typeof name === "string" ? name : undefined));
     });
+
+    // --- URL redirects (capability: redirects.manage) ---
+    const requireRedirects = (c: Context<Vars>): RedirectService => {
+        if (!gate.check(caps(c), "redirects.manage")) throw new PressError("forbidden", "forbidden");
+        if (!deps.redirects) throw new PressError("not_found", "Redirects are not available");
+        return deps.redirects;
+    };
+
+    app.get("/admin/api/redirects", requireSession, async (c) =>
+        run(c, async () => ({items: await requireRedirects(c).list()})),
+    );
+
+    app.post("/admin/api/redirects", requireSession, requireCsrf, async (c) => {
+        const body = await c.req
+            .json<{ from?: string; to?: string; code?: number }>()
+            .catch(() => ({}) as { from?: string; to?: string; code?: number });
+        return run(c, () =>
+            requireRedirects(c).create({
+                from: String(body.from ?? ""),
+                to: String(body.to ?? ""),
+                ...(body.code !== undefined ? {code: Number(body.code)} : {}),
+            }),
+        );
+    });
+
+    app.delete("/admin/api/redirects/:id", requireSession, requireCsrf, async (c) =>
+        run(c, async () => {
+            await requireRedirects(c).remove(c.req.param("id") ?? "");
+            return {ok: true};
+        }),
+    );
 
   app.get("/admin/api/me", requireSession, (c) => {
     const user = c.get("user");
@@ -956,6 +990,12 @@ export function createStudioApp(deps: StudioAppDeps): Hono<Vars> {
   app.get("/admin/api/settings", requireSession, requireCap("settings.manage"), async (c) =>
     c.json({ settings: await deps.settings.getSettings() }),
   );
+
+    // Enabled locales — readable by any authed user (content authors need it to
+    // pick a locale, even without settings.manage).
+    app.get("/admin/api/locales", requireSession, async (c) =>
+        c.json({locales: (await deps.settings.getSettings()).locales}),
+    );
 
   app.put("/admin/api/settings", requireSession, requireCsrf, requireCap("settings.manage"), async (c) => {
     const body = await c.req.json();

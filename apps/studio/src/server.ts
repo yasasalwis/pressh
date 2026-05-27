@@ -8,6 +8,7 @@ import {
     createCsrf,
     createFileAuditLog,
     createMemberAuthService,
+    createRedirectService,
     createScheduler,
     listBackups,
     PressError,
@@ -111,6 +112,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     const auth = await createAuthService({storage, audit, ...(secrets ? {secrets} : {})});
     // Site members live in shared storage; the Studio manages them (list/suspend/erase).
     const memberAuth = await createMemberAuthService({storage, audit});
+    const redirects = createRedirectService({storage, audit});
   const scheduler = createScheduler({ storage, audit });
     const content = createContentService({storage, audit, scheduler, ...(secrets ? {secrets} : {})});
   scheduler.register(PUBLISH_JOB_TYPE, async (payload) => {
@@ -282,6 +284,7 @@ export async function createStudioServer(opts: StudioServerOptions): Promise<{ s
     audit,
     settings,
       memberAuth,
+      redirects,
       ...(backups ? {backups} : {}),
       ...(secrets ? {secrets} : {}),
     panels,

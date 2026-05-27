@@ -9,6 +9,7 @@ interface Entry {
     status: string;
     currentRevision?: number;
     system?: boolean;
+    locale?: string;
 }
 
 interface ContentType {
@@ -44,14 +45,17 @@ export function Pages({can}: { can: (cap: string) => boolean }) {
         const c = await api<{ items?: Entry[] }>("/admin/api/content");
         const t = await api<{ items?: ContentType[] }>("/admin/api/types");
         const s = canNav ? await api<{ settings?: { headerNav?: string[] } }>("/admin/api/settings") : null;
+        const l = await api<{ locales?: string[] }>("/admin/api/locales");
         return {
             items: c.body.items || [],
             types: t.body.items || [],
             headerNav: s?.body.settings?.headerNav || [],
+            locales: l.body.locales || ["en"],
         };
     });
 
     const [showNew, setShowNew] = useState(false);
+    const [filter, setFilter] = useState("");
     const [revisionsFor, setRevisionsFor] = useState<{ id: string; slug: string } | null>(null);
     // optimistic header-nav set
     const [navOverride, setNavOverride] = useState<string[] | null>(null);
@@ -81,11 +85,24 @@ export function Pages({can}: { can: (cap: string) => boolean }) {
     const typeName = (id: string | undefined) => data.types.find((t) => t.id === id)?.name;
     const fragments = data.items.filter((p) => isSystem(p) && isFragment(p));
     const systemPages = data.items.filter((p) => isSystem(p) && !isFragment(p));
-    const pages = data.items.filter((p) => !isSystem(p));
+    const allPages = data.items.filter((p) => !isSystem(p));
+    const q = filter.trim().toLowerCase();
+    const pages = q
+        ? allPages.filter((p) => p.slug.toLowerCase().includes(q) || (typeName(p.typeId) ?? "").toLowerCase().includes(q))
+        : allPages;
 
     return (
         <>
             <RowHead title="Pages">
+                {allPages.length > 0 && (
+                    <input
+                        type="search"
+                        placeholder="Filter pages…"
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                        style={{maxWidth: "14rem"}}
+                    />
+                )}
                 {canCreate && (
                     <button className="btn-sm" onClick={() => setShowNew((s) => !s)}>
                         + New page
@@ -93,7 +110,7 @@ export function Pages({can}: { can: (cap: string) => boolean }) {
                 )}
             </RowHead>
 
-            {canCreate && showNew && <NewPageForm onCancel={() => setShowNew(false)}/>}
+            {canCreate && showNew && <NewPageForm locales={data.locales} onCancel={() => setShowNew(false)}/>}
 
             <LockedCard title="Layout fragments" sub="Injected into every page · always published" rows={fragments}/>
             <LockedCard title="System pages" sub="Built-in pages · non-deletable" rows={systemPages}/>
@@ -101,7 +118,8 @@ export function Pages({can}: { can: (cap: string) => boolean }) {
             <div className="card">
                 {!pages.length ? (
                     <div className="empty">
-                        <span className="ico">📄</span>No pages yet. Create your first one.
+                        <span className="ico">📄</span>
+                        {q ? "No pages match your filter." : "No pages yet. Create your first one."}
                     </div>
                 ) : (
                     pages.map((p) => {
@@ -114,6 +132,9 @@ export function Pages({can}: { can: (cap: string) => boolean }) {
                                         /{p.slug} · rev {p.currentRevision || 1}
                                     </div>
                                 </div>
+                                {data.locales.length > 1 && p.locale ? (
+                                    <span className="tag" title="Locale">{p.locale}</span>
+                                ) : null}
                                 <span className={"badge b-" + p.status}>{p.status}</span>
                                 {canNav && (
                                     <>
@@ -194,10 +215,11 @@ function LockedCard({title, sub, rows}: { title: string; sub: string; rows: Entr
     );
 }
 
-function NewPageForm({onCancel}: { onCancel: () => void }) {
+function NewPageForm({locales, onCancel}: { locales: string[]; onCancel: () => void }) {
     const [title, setTitle] = useState("");
     const [slug, setSlug] = useState("");
     const [slugTouched, setSlugTouched] = useState(false);
+    const [locale, setLocale] = useState(locales[0] ?? "en");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
 
@@ -224,7 +246,8 @@ function NewPageForm({onCancel}: { onCancel: () => void }) {
                 typeId: tr.body.data?.id,
                 slug: slug.trim(),
                 fields: {title: title.trim()},
-                blocks: []
+                blocks: [],
+                locale,
             }),
         });
         if (er.status !== 200) {
@@ -259,6 +282,16 @@ function NewPageForm({onCancel}: { onCancel: () => void }) {
                     setSlugTouched(true);
                 }}
             />
+            {locales.length > 1 && (
+                <>
+                    <label>Language</label>
+                    <select value={locale} onChange={(e) => setLocale(e.target.value)}>
+                        {locales.map((l) => (
+                            <option key={l} value={l}>{l}</option>
+                        ))}
+                    </select>
+                </>
+            )}
             {error && <div className="alert">{error}</div>}
             <div style={{display: "flex", gap: ".5rem", marginTop: ".8rem"}}>
                 <button className="btn-sm" onClick={() => create(false)} disabled={busy}>

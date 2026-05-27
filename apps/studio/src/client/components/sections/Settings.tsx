@@ -25,6 +25,7 @@ interface SettingsData {
     smtp?: Smtp;
     smtpAvailable?: boolean;
     consent?: Consent;
+    locales?: string[];
 }
 
 export function Settings() {
@@ -54,7 +55,18 @@ function SettingsForm({initial}: { initial: SettingsData }) {
     const [consentOn, setConsentOn] = useState(!!consent.enabled);
     const [consentMsg, setConsentMsg] = useState(consent.message || "");
     const [consentPolicy, setConsentPolicy] = useState(consent.policyUrl || "");
+    // Enabled locales (the default is always implicitly included by the server).
+    const [locales, setLocales] = useState<string[]>(initial.locales ?? [initial.defaultLocale || "en"]);
+    const [newLocale, setNewLocale] = useState("");
     const [error, setError] = useState("");
+
+    function addLocale() {
+        const v = newLocale.trim();
+        if (!/^[a-z]{2}(-[A-Z]{2})?$/.test(v)) return setError("Locale must look like 'en' or 'en-US'.");
+        if (!locales.includes(v)) setLocales([...locales, v]);
+        setNewLocale("");
+        setError("");
+    }
 
     async function save() {
         setError("");
@@ -63,6 +75,7 @@ function SettingsForm({initial}: { initial: SettingsData }) {
             defaultLocale: locale.trim(),
             timezone: tz.trim(),
             maintenanceMode: maint,
+            locales,
             consent: {
                 enabled: consentOn,
                 message: consentMsg.trim(),
@@ -121,6 +134,42 @@ function SettingsForm({initial}: { initial: SettingsData }) {
                         <label>Timezone</label>
                         <input placeholder="UTC" value={tz} onChange={(e) => setTz(e.target.value)}/>
                     </div>
+                </div>
+            </div>
+
+            <div className="card">
+                <h3>Languages</h3>
+                <p className="hint">
+                    Enable additional content locales for a multi-language site. The default locale
+                    (<code>{locale.trim() || "en"}</code>) is always active. With more than one locale, pages gain
+                    locale-prefixed URLs (e.g. <code>/fr/about</code>), a switcher, and hreflang tags. Adding a locale
+                    takes effect after the site restarts.
+                </p>
+                <div className="tag-list" style={{display: "flex", flexWrap: "wrap", gap: ".4rem", margin: ".4rem 0"}}>
+                    {locales.map((l) => (
+                        <span className="tag" key={l}>
+                            {l}
+                            {l !== (locale.trim() || "en") && (
+                                <button
+                                    className="iconbtn"
+                                    title="Remove locale"
+                                    style={{marginLeft: ".3rem"}}
+                                    onClick={() => setLocales(locales.filter((x) => x !== l))}
+                                >×</button>
+                            )}
+                        </span>
+                    ))}
+                </div>
+                <div style={{display: "flex", gap: ".5rem", maxWidth: "20rem"}}>
+                    <input placeholder="e.g. fr or fr-CA" value={newLocale}
+                           onChange={(e) => setNewLocale(e.target.value)}
+                           onKeyDown={(e) => {
+                               if (e.key === "Enter") {
+                                   e.preventDefault();
+                                   addLocale();
+                               }
+                           }}/>
+                    <button className="ghost" onClick={addLocale}>Add</button>
                 </div>
             </div>
 

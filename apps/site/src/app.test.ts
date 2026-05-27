@@ -4,7 +4,7 @@ import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import type {StorageAdapter} from "@pressh/core";
-import {capabilitiesForRoles, createFileAuditLog, createFileSystemStorage,} from "@pressh/core";
+import {capabilitiesForRoles, createFileAuditLog, createFileSystemStorage, createRedirectService,} from "@pressh/core";
 import {createContentService, createQueryResolver, createSettingsService, DESIGNER_LAYOUT_BLOCK} from "@pressh/engine";
 import type {SitePluginHost} from "./app";
 import {createSiteApp} from "./app";
@@ -277,5 +277,83 @@ describe("static client assets", () => {
         // Path traversal must not escape the assets root.
         expect((await assetApp.request("/assets/../secret.txt")).status).toBe(404);
         expect((await assetApp.request("/assets/nope.js")).status).toBe(404);
+    });
+});
+
+describe("redirects", () => {
+    it("redirects a not-found path to its target (and 404s unknown paths)", async () => {
+        const audit = await createFileAuditLog({path: join(dir, "audit-redir.log")});
+        const redirects = createRedirectService({storage, audit});
+        await redirects.create({from: "/old-home", to: "/about", code: 301});
+        const resolver = createQueryResolver({content});
+        const rapp = createSiteApp({resolver, pluginHost: stubHost, cache: createRenderCache(), redirects});
+
+        const hit = await rapp.request("/old-home");
+        expect(hit.status).toBe(301);
+        expect(hit.headers.get("location")).toBe("/about");
+
+        // A path with no redirect and no content still 404s.
+        expect((await rapp.request("/never-existed")).status).toBe(404);
+        // A real published page is served normally, not redirected.
+        expect((await rapp.request("/about")).status).toBe(200);
+    });
+});
+
+describe("content search", () => {
+    it("returns a results page that links matching published pages", async () => {
+        const resolver = createQueryResolver({content});
+        const sapp = createSiteApp({resolver, pluginHost: stubHost, cache: createRenderCache()});
+
+        const hit = await sapp.request("/search?q=about");
+        expect(hit.status).toBe(200);
+        const html = await hit.text();
+        expect(html).toContain('href="/about"'); // the published "About Us" page
+        expect(html).toContain("result");
+
+        // No query → prompt, no results.
+        const empty = await sapp.request("/search");
+        expect((await empty.text())).toContain("Enter a search term");
+
+        // A query that matches nothing.
+        const none = await sapp.request("/search?q=zzzznomatch");
+        expect(await none.text()).toContain("No results");
+    });
+});
+
+describe("i18n", () => {
+    it("routes /fr/, advertises hreflang, and renders a switcher when a page has multiple locales", async () => {
+        // The default-locale "about" page exists from beforeEach; add a French sibling.
+        const type = await content.createType(ADMIN, {
+            name: "I18nPage", slug: "i18npage",
+            fields: [{id: "1", name: "title", type: "text", required: true}],
+        });
+        const fr = await content.createEntry(EDITOR, {
+            typeId: type.id, slug: "about", authorId: "u1", fields: {title: "À propos de nous"}, locale: "fr",
+        });
+        await content.transition(EDITOR, fr.id, "published");
+
+        const resolver = createQueryResolver({content, locales: ["en", "fr"]});
+        const iapp = createSiteApp({
+            resolver, pluginHost: stubHost, cache: createRenderCache(), locales: ["en", "fr"],
+        });
+
+        const en = await iapp.request("/about");
+        const enHtml = await en.text();
+        expect(enHtml).toContain('hreflang="fr"');
+        expect(enHtml).toContain('href="/fr/about"');
+        expect(enHtml).toContain("pressh-locales"); // the switcher
+
+        // The locale-prefixed URL resolves to the French entry.
+        const frRes = await iapp.request("/fr/about");
+        expect(frRes.status).toBe(200);
+        expect(await frRes.text()).toContain("À propos de nous");
+    });
+
+    it("adds no hreflang/switcher for a single-locale site", async () => {
+        const resolver = createQueryResolver({content});
+        const sapp = createSiteApp({resolver, pluginHost: stubHost, cache: createRenderCache(), locales: ["en"]});
+        const html = await (await sapp.request("/about")).text();
+        expect(html).not.toContain("pressh-locales");
+        expect(html).not.toContain("hreflang");
     });
 });

@@ -122,6 +122,8 @@ export type {
     MemberAuthServiceOptions,
     MemberLoginResult,
 } from "./members.js";
+export {createRedirectService} from "./redirects.js";
+export type {Redirect, RedirectCode, RedirectService} from "./redirects.js";
 
 export { createScheduler } from "./scheduler.js";
 export type {

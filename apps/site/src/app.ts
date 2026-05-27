@@ -8,7 +8,7 @@ import type {Context} from "hono";
 import {Hono} from "hono";
 import {getConnInfo} from "@hono/node-server/conninfo";
 import {deleteCookie, getCookie, setCookie} from "hono/cookie";
-import type {Member, MemberAuthService, Metrics, StorageAdapter} from "@pressh/core";
+import type {Member, MemberAuthService, Metrics, RedirectService, StorageAdapter} from "@pressh/core";
 import {createMetrics, createRateLimiter, PressError, requestId} from "@pressh/core";
 import type {
   BlockNode,
@@ -46,6 +46,10 @@ export interface SiteAppDeps {
   cache: RenderCache;
   themeService?: ThemeService;
   gdpr?: GdprService;
+    /** Operator-defined URL redirects, applied on a not-found before the 404. */
+    redirects?: RedirectService;
+    /** Enabled content locales (first = default). >1 enables hreflang + a switcher. */
+    locales?: string[];
   storage?: StorageAdapter;
   metrics?: Metrics;
   listPublishedPaths?: () => Promise<string[]>;
@@ -280,6 +284,44 @@ async function renderMaintenancePage(deps: SiteAppDeps): Promise<string> {
   } catch {
     return renderMaintenanceFallback();
   }
+}
+
+/** Renders the public search results page (themed; no client JS — a GET form). */
+async function renderSearchPage(
+    deps: SiteAppDeps,
+    query: string,
+    hits: { slug: string; title: string; excerpt: string; locale: string }[],
+): Promise<string> {
+    const q = escapeHtml(query);
+    const style =
+        "<style>.pressh-search{max-width:48rem;margin:2rem auto;padding:0 1rem;font-family:system-ui,sans-serif}" +
+        ".pressh-search form{display:flex;gap:.5rem;margin-bottom:1.5rem}" +
+        ".pressh-search input{flex:1;padding:.6rem .8rem;font-size:1rem;border:1px solid #cbd5e1;border-radius:8px}" +
+        ".pressh-search button{padding:.6rem 1.1rem;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}" +
+        ".pressh-search article{padding:.9rem 0;border-bottom:1px solid #e2e8f0}" +
+        ".pressh-search h2{margin:0 0 .25rem;font-size:1.15rem}.pressh-search a{color:#1d4ed8;text-decoration:none}" +
+        ".pressh-search p{margin:0;color:#475569}.pressh-search .muted{color:#64748b}</style>";
+    const results = query.trim()
+        ? hits.length
+            ? hits
+                .map((h) => {
+                    const href = h.locale && h.locale !== "en" ? `/${h.locale}/${h.slug}` : `/${h.slug}`;
+                    return `<article><h2><a href="${escapeHtml(href)}">${escapeHtml(h.title)}</a></h2><p>${escapeHtml(h.excerpt)}</p></article>`;
+                })
+                .join("")
+            : `<p class="muted">No results for “${q}”.</p>`
+        : `<p class="muted">Enter a search term above.</p>`;
+    const body =
+        `${style}<div class="pressh-search"><form action="/search" method="get" role="search">` +
+        `<input type="search" name="q" value="${q}" placeholder="Search…" aria-label="Search"><button type="submit">Search</button></form>` +
+        (query.trim() ? `<p class="muted">${hits.length} result(s) for “${q}”.</p>` : "") +
+        `${results}</div>`;
+    const title = query.trim() ? `Search: ${query}` : "Search";
+    if (deps.themeService) {
+        const t = await deps.themeService.resolve();
+        return t.theme.layout({title, body, locale: "en", cssVars: t.cssVars, siteName: t.siteName});
+    }
+    return renderPage({title, body, locale: "en"});
 }
 
 /**
@@ -829,6 +871,15 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
   });
 
   // Front controller — resolve any URL at request time (FR-030).
+    // Public content search (substring over published content; no JS — a GET form).
+    app.get("/search", async (c) => {
+        const query = (c.req.query("q") ?? "").slice(0, 200);
+        const hits = query.trim() ? await deps.resolver.search(query, {limit: 20}).catch(() => []) : [];
+        const html = await renderSearchPage(deps, query, hits);
+        c.set("styleCsp", styleSrcDirective(html));
+        return c.html(html);
+    });
+
   app.get("*", async (c) => {
     const path = c.req.path;
     try {
@@ -982,6 +1033,38 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
             }
         }
 
+        // i18n: when more than one locale is enabled, advertise sibling-locale
+        // versions of this page (hreflang) and render a small switcher. Skipped
+        // entirely for single-locale sites (no extra query/markup).
+        if (deps.locales && deps.locales.length > 1 && !isSystemSlug(resolved.slug)) {
+            try {
+                const defaultLocale = deps.locales[0] ?? "en";
+                const published = await deps.resolver.localesForSlug(resolved.slug);
+                const available = published.filter((l) => deps.locales!.includes(l));
+                if (available.length > 1) {
+                    const localeHref = (loc: string): string =>
+                        loc === defaultLocale ? `/${resolved.slug}` : `/${loc}/${resolved.slug}`;
+                    const hreflang = available
+                        .map((loc) => `<link rel="alternate" hreflang="${escapeHtml(loc)}" href="${escapeHtml(localeHref(loc))}">`)
+                        .join("");
+                    const switcher =
+                        `<style>.pressh-locales{font:13px/1.5 system-ui,sans-serif;text-align:center;padding:.75rem;color:#64748b}` +
+                        `.pressh-locales a{margin:0 .4rem;color:#2563eb;text-decoration:none}.pressh-locales a[aria-current]{font-weight:700;color:inherit}</style>` +
+                        `<nav class="pressh-locales" aria-label="Language">` +
+                        available
+                            .map((loc) => {
+                                const cur = loc === resolved.locale ? ' aria-current="true"' : "";
+                                return `<a href="${escapeHtml(localeHref(loc))}"${cur}>${escapeHtml(loc.toUpperCase())}</a>`;
+                            })
+                            .join("") +
+                        `</nav>`;
+                    html = html.replace("</head>", `${hreflang}</head>`).replace("</body>", `${switcher}</body>`);
+                }
+            } catch {
+                // Best-effort — i18n chrome never blocks a render.
+            }
+        }
+
       deps.cache.set(path, html, version, [`content:${resolved.id}`]);
       c.header("X-Cache", "MISS");
       c.header("Cache-Tag", `content:${resolved.id}`);
@@ -989,6 +1072,11 @@ export function createSiteApp(deps: SiteAppDeps): Hono<SiteEnv> {
       return c.html(html);
     } catch (error) {
       if (error instanceof PressError && error.code === "not_found") {
+          // Operator-defined redirects rescue retired/renamed URLs before the 404.
+          if (deps.redirects) {
+              const hit = await deps.redirects.resolve(path).catch(() => null);
+              if (hit) return c.redirect(hit.to, hit.code);
+          }
         const notFound = (await renderSystemDocument(deps, SYSTEM_SLUGS.notFound)) ?? renderNotFound();
         c.set("styleCsp", styleSrcDirective(notFound));
         return c.html(notFound, 404);

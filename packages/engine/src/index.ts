@@ -130,6 +130,7 @@ export type {
   CreateEntryInput,
   CreateTypeInput,
   SaveEntryInput,
+    SearchHit,
 } from "./content-service.js";
 export {
   SYSTEM_SLUGS,

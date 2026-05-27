@@ -183,3 +183,69 @@ describe("QueryResolver — sensitive fields", () => {
         expect(JSON.stringify(rev!.fields)).not.toContain("123-45-6789");
     });
 });
+
+describe("QueryResolver — search", () => {
+    let dir: string;
+    let storage: StorageAdapter;
+    let audit: AuditLog;
+    let secrets: SecretsBackend;
+    let svc: ContentService;
+    let resolver: QueryResolver;
+
+    beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), "pressh-search-"));
+        storage = createFileSystemStorage({root: join(dir, "content")});
+        audit = await createFileAuditLog({path: join(dir, "audit.log")});
+        secrets = await createFileSecretsBackend({path: join(dir, "vault.json"), key: randomBytes(32)});
+        svc = createContentService({storage, audit, secrets});
+        resolver = createQueryResolver({content: svc});
+
+        const type = await svc.createType(ADMIN, {
+            name: "Article",
+            slug: "article",
+            fields: [
+                {id: "1", name: "title", type: "text", required: true},
+                {id: "2", name: "body", type: "text", required: false},
+                {id: "3", name: "ssn", type: "text", required: false, sensitive: true},
+            ],
+        });
+        const published = await svc.createEntry(EDITOR, {
+            typeId: type.id, slug: "elephants", authorId: "u1",
+            fields: {title: "All about Elephants", body: "Elephants are the largest land animals.", ssn: "111-22-3333"},
+            blocks: [{type: "paragraph", content: "They have remarkable memory."}],
+        });
+        await svc.transition(EDITOR, published.id, "published");
+        // A draft that must NOT appear in public search.
+        await svc.createEntry(EDITOR, {
+            typeId: type.id, slug: "secret-draft", authorId: "u1",
+            fields: {title: "Draft about Elephants", body: "hidden"},
+        });
+    });
+
+    afterEach(async () => {
+        storage.close();
+        await rm(dir, {recursive: true, force: true});
+    });
+
+    it("finds published content by title and body, with an excerpt", async () => {
+        const byTitle = await resolver.search("elephants");
+        expect(byTitle).toHaveLength(1);
+        expect(byTitle[0]!.slug).toBe("elephants");
+        expect(byTitle[0]!.excerpt.toLowerCase()).toContain("elephant");
+
+        const byBlock = await resolver.search("remarkable memory");
+        expect(byBlock.map((h) => h.slug)).toEqual(["elephants"]);
+    });
+
+    it("excludes drafts and never indexes sensitive (encrypted) fields", async () => {
+        // The draft also says "Elephants" but must not surface in public search.
+        const hits = await resolver.search("elephants");
+        expect(hits.some((h) => h.slug === "secret-draft")).toBe(false);
+        // The SSN value is encrypted at rest, so it is not searchable.
+        expect(await resolver.search("111-22-3333")).toEqual([]);
+    });
+
+    it("returns nothing for an empty query", async () => {
+        expect(await resolver.search("   ")).toEqual([]);
+    });
+});

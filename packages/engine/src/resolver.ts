@@ -1,7 +1,7 @@
 import type {SecretsBackend} from "@pressh/core";
 import {CapabilityGate, PressError} from "@pressh/core";
 import type {BlockNode} from "./blocks/types.js";
-import type {ContentService} from "./content-service.js";
+import type {ContentService, SearchHit} from "./content-service.js";
 import {redactEncRefs, REVEAL_CAPABILITY, revealEncRefs} from "./sensitive.js";
 import type {ContentStatus} from "./types.js";
 
@@ -74,6 +74,12 @@ export interface QueryResolver {
     path: string,
     opts: { scope: ResolveScope; capabilities?: string[] },
   ): Promise<ResolvedContent>;
+
+    /** Public substring search over published content. */
+    search(query: string, opts?: { limit?: number; locale?: string }): Promise<SearchHit[]>;
+
+    /** Locales that have a published entry for a slug (for hreflang + switcher). */
+    localesForSlug(slug: string): Promise<string[]>;
 }
 
 export interface QueryResolverOptions {
@@ -152,5 +158,13 @@ export function createQueryResolver(opts: QueryResolverOptions): QueryResolver {
     });
   }
 
-  return { resolve, resolvePath };
+    async function search(query: string, o: { limit?: number; locale?: string } = {}): Promise<SearchHit[]> {
+        return opts.content.searchPublished(query, o);
+    }
+
+    async function localesForSlug(slug: string): Promise<string[]> {
+        return opts.content.publishedLocalesForSlug(slug);
+    }
+
+    return {resolve, resolvePath, search, localesForSlug};
 }

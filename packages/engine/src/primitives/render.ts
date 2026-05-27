@@ -262,8 +262,17 @@ async function renderNode(
       }
 
     case "form": {
-      const action = safeUrl(resolveValue(node, "action", scope)) || "#";
       const fields = await containerInner(node, env, scope, "Empty form");
+        // `submitTo:"forms"` wires the form to the Forms plugin: the bundled site
+        // client (forms.ts) intercepts `[data-ps-form]`, serializes inputs to JSON,
+        // and POSTs /api/p/forms/submit. A hidden honeypot (`.ps-hp`) catches bots.
+        if (str(node.props?.["submitTo"]) === "forms") {
+            const formId = e(str(node.props?.["formId"]) || "default");
+            const honeypot =
+                `<div class="ps-hp" aria-hidden="true"><input type="text" name="_hp" tabindex="-1" autocomplete="off"></div>`;
+            return `<form ${cls} method="post" action="/api/p/forms/submit" data-ps-form data-ps-form-id="${formId}">${fields}${honeypot}</form>`;
+        }
+        const action = safeUrl(resolveValue(node, "action", scope)) || "#";
       return `<form ${cls} method="post" action="${e(action)}">${fields}</form>`;
     }
     case "input": {

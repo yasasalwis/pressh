@@ -19,6 +19,7 @@ import {Settings} from "./components/sections/Settings";
 import {Plugins} from "./components/sections/Plugins";
 import {Database} from "./components/sections/Database";
 import {Backups} from "./components/sections/Backups";
+import {Redirects} from "./components/sections/Redirects";
 import {Privacy} from "./components/sections/Privacy";
 import {Audit} from "./components/sections/Audit";
 import {Designer} from "./components/designer/Designer";
@@ -57,6 +58,7 @@ const SECTION_TITLE: Record<string, string> = {
   audit: "Audit Log",
   database: "Database",
     backups: "Backups",
+  redirects: "Redirects",
 };
 
 const SECTION_CAP: Record<string, string> = {
@@ -71,6 +73,7 @@ const SECTION_CAP: Record<string, string> = {
   audit: "audit.read",
   database: "db.manage",
     backups: "backups.manage",
+  redirects: "redirects.manage",
 };
 
 function renderSection(section: string, can: (cap: string) => boolean): ReactNode {
@@ -97,6 +100,8 @@ function renderSection(section: string, can: (cap: string) => boolean): ReactNod
       return <Database/>;
       case "backups":
           return <Backups/>;
+    case "redirects":
+      return <Redirects/>;
     case "privacy":
       return <Privacy/>;
     case "audit":
