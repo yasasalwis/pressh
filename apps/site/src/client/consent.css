@@ -1,0 +1,68 @@
+.pressh-consent {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 2147483000;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+    max-width: 56rem;
+    margin: 0 auto;
+    padding: 1rem 1.25rem;
+    background: #111827;
+    color: #f9fafb;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.pressh-consent__msg {
+    margin: 0;
+    flex: 1 1 18rem;
+}
+
+.pressh-consent__link {
+    color: #93c5fd;
+    text-decoration: underline;
+}
+
+.pressh-consent__actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.pressh-consent__btn {
+    appearance: none;
+    border: 0;
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    background: #2563eb;
+    color: #fff;
+}
+
+.pressh-consent__btn:hover {
+    background: #1d4ed8;
+}
+
+.pressh-consent__btn--ghost {
+    background: transparent;
+    color: #d1d5db;
+    border: 1px solid #4b5563;
+}
+
+.pressh-consent__btn--ghost:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-color-scheme: light) {
+    .pressh-consent {
+        background: #1f2937;
+    }
+}
